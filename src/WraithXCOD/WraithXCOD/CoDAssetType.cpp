@@ -388,6 +388,16 @@ CoDRawFile_t::~CoDRawFile_t()
     // Defaults
 }
 
+CoDTerrain_t::CoDTerrain_t()
+{
+    AssetType = WraithAssetType::Terrain;
+    AssetSize = -1;
+}
+
+CoDTerrain_t::~CoDTerrain_t()
+{
+}
+
 bool CoDRawFile_t::Compare(const CoDAsset_t* candidate, const AssetCompareMethod compareMethod) const
 {
     // For easy copying from our existing sort method, store with same var names temp

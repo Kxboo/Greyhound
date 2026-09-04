@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -54,6 +54,7 @@
       <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp14</LanguageStandard>
       <ExceptionHandling>Async</ExceptionHandling>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -75,6 +76,7 @@
       <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp14</LanguageStandard>
       <ExceptionHandling>Async</ExceptionHandling>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -103,6 +105,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AssetCli.cpp" />
     <ClCompile Include="AnimSettings.cpp" />
     <ClCompile Include="CascFileSystem.cpp" />
     <ClCompile Include="CoDAssets.cpp" />
@@ -165,6 +168,7 @@
     <ClCompile Include="SettingsWindow.cpp" />
     <ClCompile Include="Siren.cpp" />
     <ClCompile Include="SoundSettings.cpp" />
+    <ClCompile Include="TerrainSettings.cpp" />
     <ClCompile Include="VGXPAKCache.cpp" />
     <ClCompile Include="XSUBCacheV2.cpp" />
     <ClCompile Include="WinFileSystem.cpp" />
@@ -175,6 +179,7 @@
     <ClCompile Include="XSUBCacheV3.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AssetCli.h" />
     <ClInclude Include="AboutWindow.h" />
     <ClInclude Include="AnimSettings.h" />
     <ClInclude Include="CascFileSystem.h" />
@@ -242,6 +247,10 @@
     <ClInclude Include="SettingsWindow.h" />
     <ClInclude Include="Siren.h" />
     <ClInclude Include="SoundSettings.h" />
+    <ClInclude Include="TerrainSettings.h" />
+    <ClInclude Include="TerrainLayout.h" />
+    <ClInclude Include="TerrainResearchCapture.h" />
+    <ClInclude Include="TerrainResearchPolicy.h" />
     <ClInclude Include="VGXPAKCache.h" />
     <ClInclude Include="XSUBCacheV2.h" />
     <ClInclude Include="WinFileSystem.h" />

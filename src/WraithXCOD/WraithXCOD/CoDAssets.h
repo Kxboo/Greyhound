@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <atomic>
+#include <functional>
 
 // We need the following WraithX classes
 #include "ProcessReader.h"
@@ -218,9 +219,17 @@ public:
 
     // The latest export path
     static std::string LatestExportPath;
+    // True only when native terrain export succeeded but source organization
+    // or integrity sealing failed.
+    static bool LatestTerrainFinalizationFailed;
+
+    // Returns the deterministic output directory used by ExportAsset.
+    static std::string GetExportPath(const CoDAsset_t* Asset);
 
     // Exports the game asset
-    static ExportGameResult ExportAsset(const CoDAsset_t* Asset);
+    static ExportGameResult ExportAsset(const CoDAsset_t* Asset,
+        void* ProgressCaller = nullptr, uint32_t ProgressStart = 0,
+        uint32_t ProgressSpan = 100);
 
     // Gets a model asset for previewing
     static std::unique_ptr<WraithModel> GetModelForPreview(const CoDModel_t* Model);
@@ -265,14 +274,20 @@ private:
     static ExportGameResult ExportSoundAsset(const CoDSound_t* Sound, const std::string& ExportPath, const std::string& SoundExtension);
     // Exports a game rawfile asset
     static ExportGameResult ExportRawfileAsset(const CoDRawFile_t* Rawfile, const std::string& ExportPath);
+    // Exports an opaque TerrainGfx header and research metadata
+    static ExportGameResult ExportTerrainAsset(const CoDTerrain_t* Terrain, const std::string& ExportPath,
+        const std::function<void(uint32_t)>& ReportProgress);
     // Exports a game rawfile asset
     static ExportGameResult ExportMaterialAsset(const CoDMaterial_t* Material, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension);
 
-    // Exports Material Image Names
+public:
+    // Exports material semantic/image names and readable settings. Terrain
+    // dependency exporters use this for material pointers that are not exposed
+    // through the normal asset-list selection path (for example decals).
     static void ExportMaterialImageNames(const XMaterial_t& Material, const std::string& ExportPath);
-
     // Exports images from a specific game material
     static void ExportMaterialImages(const XMaterial_t& Material, const std::string& ImagesPath, const std::string& ImageExtension, ImageFormat ImageFormatType);
+private:
 
     // Export a WraithModel to the various formats specified in settings
     static void ExportWraithModel(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath);

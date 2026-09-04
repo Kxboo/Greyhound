@@ -1,5 +1,18 @@
 [![Releases](https://img.shields.io/github/downloads/Scobalula/Greyhound/total.svg)](https://github.com/Scobalula/Greyhound/releases) [![License](https://img.shields.io/github/license/Scobalula/Greyhound.svg)](https://github.com/Scobalula/Greyhound/blob/master/LICENSE) [![Discord](https://img.shields.io/badge/chat-Discord-blue.svg)](https://discord.gg/eY2Y5p2PEp)
 
+## Kxboo terrain fork
+
+This fork adds Black Ops Cold War `TerrainGfx` discovery and exports complete,
+portable source captures. Greyhound does not reconstruct terrain, bake OMPV,
+or generate BO3 maps. Reconstruction lives in the separate
+[`superterrainhoundprivate`](https://github.com/Kxboo/superterrainhoundprivate)
+repository and runs after Greyhound has exited.
+
+The interchange boundary is the sealed terrain export: native arrays and
+dependencies under `_source/capture/` plus `_source/research_capture.report.json`.
+Greyhound treats that capture as immutable once its SHA-256 inventory is
+written.
+
 Greyhound is an asset extractor various titles running on the IW Engine (primarily Call of Duty games), and is based off the famous [Wraith Archon](https://github.com/dtzxporter/WraithXArchon/) that was originally developed by DTZxPorter.
 
 Greyhound's aim is to provide people access to assets from the games for various purposes including working mods such custom zombie maps or weapon mods, 3D Art, and thumbnails for content creation.

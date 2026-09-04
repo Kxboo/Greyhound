@@ -49,6 +49,13 @@ public:
     void WaitForPackageCacheLoad();
     // Returns if a cache object exists
     virtual bool Exists(uint64_t CacheID) { return CacheObjects.find(CacheID) != CacheObjects.end(); }
+    // Read-only provenance for research exports, called after cache loading.
+    bool DescribePackageObject(uint64_t CacheID, PackageCacheObject& Info, std::string& Path) const
+    {
+        const auto Found = CacheObjects.find(CacheID);
+        if (Found == CacheObjects.end() || Found->second.PackageFileIndex >= PackageFilePaths.size()) return false;
+        Info = Found->second; Path = PackageFilePaths[Info.PackageFileIndex]; return true;
+    }
     // Returns the literal cache object with no /decompression applied (nullptr if not found)
     virtual std::unique_ptr<uint8_t[]> ExtractPackageObjectRaw(uint64_t CacheID, uint32_t& ResultSize) { return nullptr; }
     // Returns a cache object (nullptr if not found)

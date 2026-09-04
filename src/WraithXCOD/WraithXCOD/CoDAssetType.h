@@ -154,6 +154,15 @@ public:
     bool Compare(const CoDAsset_t* candidate, const AssetCompareMethod compareMethod) const;
 };
 
+// A runtime TerrainGfx asset. The private game structure is intentionally kept
+// opaque until its fields have been verified for the supported BOCW builds.
+class CoDTerrain_t : public CoDAsset_t
+{
+public:
+    CoDTerrain_t();
+    virtual ~CoDTerrain_t();
+};
+
 // Types of sound assets
 enum class SoundDataTypes
 {

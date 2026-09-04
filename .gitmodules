@@ -10,3 +10,6 @@
 [submodule "src/External/DirectXShaderCompiler"]
 	path = src/External/DirectXShaderCompiler
 	url = https://github.com/microsoft/DirectXShaderCompiler
+[submodule "src/External/spdlog"]
+	path = src/External/spdlog
+	url = https://github.com/gabime/spdlog.git

@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <set>
+#include <vector>
 #include "stdafx.h"
 
 // The class we are implementing
@@ -16,6 +19,7 @@
 #include "SettingsManager.h"
 #include "HalfFloats.h"
 #include "Sound.h"
+#include "TerrainResearchCapture.h"
 
 // We need Opus
 #include "../../External/Opus/include/opus.h"
@@ -138,6 +142,19 @@ struct BOCWStreamInfo
 // Verify that our pool data is exactly 0x20
 static_assert(sizeof(BOCWXAssetPoolData) == 0x20, "Invalid Pool Data Size (Expected 0x20)");
 
+namespace
+{
+    constexpr uint32_t BOCWTerrainGfxPoolIndex = 0xB1;
+    // Recorded when offsets resolve, so pool enumeration can reach the same
+    // directory later.  LoadOffsets is the only place that knows it.
+    uint64_t BOCWDBAssetPoolsOffset = 0;
+    constexpr uint64_t MaximumTerrainPoolBytes = 512ull * 1024ull * 1024ull;
+
+    uint64_t TerrainGfxPoolPtr = 0;
+    uint32_t TerrainGfxPoolSize = 0;
+    uint32_t TerrainGfxAssetSize = 0;
+}
+
 bool GameBlackOpsCW::LoadOffsets()
 {
     // ----------------------------------------------------
@@ -147,6 +164,10 @@ bool GameBlackOpsCW::LoadOffsets()
     //    On Black Ops CW, (0x04647533e968c910) will be the first xmodel
     //    Black Ops CW stringtable, check entries, results may vary
     // ----------------------------------------------------
+
+    TerrainGfxPoolPtr = 0;
+    TerrainGfxPoolSize = 0;
+    TerrainGfxAssetSize = 0;
 
     // Attempt to load the game offsets
     if (CoDAssets::GameInstance == nullptr)
@@ -164,6 +185,7 @@ bool GameBlackOpsCW::LoadOffsets()
         auto ImagePoolData      = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 0x10));
         auto MaterialPoolData   = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 10));
         auto SoundAssetPoolData = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 19));
+        auto TerrainPoolData    = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * BOCWTerrainGfxPoolIndex));
 
         // Apply game offset info
         CoDAssets::GameOffsetInfos.emplace_back(AnimPoolData.PoolPtr);
@@ -190,6 +212,10 @@ bool GameBlackOpsCW::LoadOffsets()
                 CoDAssets::GamePoolSizes.emplace_back(ImagePoolData.PoolSize);
                 CoDAssets::GamePoolSizes.emplace_back(MaterialPoolData.PoolSize);
                 CoDAssets::GamePoolSizes.emplace_back(SoundAssetPoolData.PoolSize);
+                TerrainGfxPoolPtr = TerrainPoolData.PoolPtr;
+                TerrainGfxPoolSize = TerrainPoolData.PoolSize;
+                TerrainGfxAssetSize = TerrainPoolData.AssetSize;
+                BOCWDBAssetPoolsOffset = BaseAddress + GameOffsets.DBAssetPools;
                 // Return success
                 return true;
             }
@@ -230,6 +256,7 @@ bool GameBlackOpsCW::LoadOffsets()
         auto ImagePoolData = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 0x10));
         auto MaterialPoolData = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 10));
         auto SoundAssetPoolData = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * 19));
+        auto TerrainPoolData = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BOCWXAssetPoolData) * BOCWTerrainGfxPoolIndex));
 
         // Apply game offset info
         CoDAssets::GameOffsetInfos.emplace_back(AnimPoolData.PoolPtr);
@@ -259,6 +286,12 @@ bool GameBlackOpsCW::LoadOffsets()
                 CoDAssets::GamePoolSizes.emplace_back(ImagePoolData.PoolSize);
                 CoDAssets::GamePoolSizes.emplace_back(MaterialPoolData.PoolSize);
                 CoDAssets::GamePoolSizes.emplace_back(SoundAssetPoolData.PoolSize);
+                TerrainGfxPoolPtr = TerrainPoolData.PoolPtr;
+                TerrainGfxPoolSize = TerrainPoolData.PoolSize;
+                TerrainGfxAssetSize = TerrainPoolData.AssetSize;
+                // This branch's DBAssetPools is already absolute -- unlike the
+                // one above, it is not rebased -- so record it as-is.
+                BOCWDBAssetPoolsOffset = GameOffsets.DBAssetPools;
 
                 // Return success
                 return true;
@@ -286,6 +319,559 @@ uint64_t CWCalculateHash(const std::string& Name)
     return Result & 0xFFFFFFFFFFFFFFF;
 }
 
+std::string GameBlackOpsCW::DescribeAssetPools(uint32_t MaximumPoolIndex)
+{
+    // Read-only walk of the pool directory, the same table and struct the
+    // terrain loader already uses -- no new access technique, just every index
+    // instead of one.  Reports the shape of each pool so an unknown asset type
+    // can be identified by its entry count and header size, plus the first
+    // name hash so it can be matched against the wni dictionaries offline.
+    std::string Report = "index,pool_ptr,asset_size,pool_size,assets_loaded,first_name_hash\n";
+
+    if (CoDAssets::GameInstance == nullptr)
+        return Report;
+
+    if (BOCWDBAssetPoolsOffset == 0)
+        return Report;
+
+    for (uint32_t Index = 0; Index <= MaximumPoolIndex; Index++)
+    {
+        const uint64_t Entry = BOCWDBAssetPoolsOffset +
+            (sizeof(BOCWXAssetPoolData) * Index);
+        auto Pool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(Entry);
+
+        if (Pool.PoolPtr == 0 || Pool.AssetsLoaded == 0 || Pool.AssetSize == 0)
+            continue;
+        if (Pool.AssetSize > 0x10000 || Pool.PoolSize == 0)
+            continue;
+
+        uint64_t FirstHash = 0;
+        FirstHash = CoDAssets::GameInstance->Read<uint64_t>(Pool.PoolPtr);
+
+        Report += Strings::Format("0x%X,0x%llX,%u,%u,%u,0x%llX\n",
+            Index, Pool.PoolPtr, Pool.AssetSize, Pool.PoolSize,
+            Pool.AssetsLoaded, FirstHash & 0xFFFFFFFFFFFFFFF);
+    }
+
+    return Report;
+}
+
+bool GameBlackOpsCW::DumpAssetPool(uint32_t PoolIndex,
+    const std::string& OutputPath, uint32_t MaximumAssets)
+{
+    if (CoDAssets::GameInstance == nullptr || BOCWDBAssetPoolsOffset == 0)
+        return false;
+
+    auto Pool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+        BOCWDBAssetPoolsOffset + (sizeof(BOCWXAssetPoolData) * PoolIndex));
+
+    if (Pool.PoolPtr == 0 || Pool.AssetSize == 0 || Pool.AssetsLoaded == 0)
+        return false;
+    if (Pool.AssetSize > 0x10000 || Pool.AssetsLoaded > Pool.PoolSize)
+        return false;
+
+    uint32_t Count = Pool.AssetsLoaded;
+    if (MaximumAssets != 0 && Count > MaximumAssets)
+        Count = MaximumAssets;
+
+    const uint64_t Bytes = static_cast<uint64_t>(Pool.AssetSize) * Count;
+    if (Bytes == 0 || Bytes > 256ull * 1024ull * 1024ull)
+        return false;
+
+    uintptr_t BytesRead = 0;
+    auto Buffer = CoDAssets::GameInstance->Read(Pool.PoolPtr,
+        static_cast<uintptr_t>(Bytes), BytesRead);
+    if (Buffer == nullptr)
+        return false;
+
+    std::ofstream Output(OutputPath, std::ios::binary | std::ios::trunc);
+    Output.write(reinterpret_cast<const char*>(Buffer), BytesRead);
+    Output.close();
+    delete[] Buffer;
+    return BytesRead > 0;
+}
+
+std::string GameBlackOpsCW::DumpAssetArrays(uint32_t PoolIndex,
+    const std::string& OutputDirectory)
+{
+    std::string Report;
+    if (CoDAssets::GameInstance == nullptr || BOCWDBAssetPoolsOffset == 0)
+        return Report;
+
+    auto Pool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+        BOCWDBAssetPoolsOffset + (sizeof(BOCWXAssetPoolData) * PoolIndex));
+    if (Pool.PoolPtr == 0 || Pool.AssetSize == 0 || Pool.AssetSize > 0x10000)
+        return Report;
+
+    // Walk many assets, not just the first.  Reading only asset[0] meant a pool
+    // holding thousands of records was searched one record deep, which is why
+    // earlier sweeps found nothing -- a negative result over one asset says
+    // nothing about the pool.
+    const uint32_t MaximumAssets = 48;
+    uint32_t AssetCount = Pool.AssetsLoaded;
+    if (AssetCount > MaximumAssets)
+        AssetCount = MaximumAssets;
+
+    std::set<uint64_t> SeenPointers;
+    uint64_t TotalBytes = 0;
+    const uint64_t PoolByteBudget = 48ull * 1024ull * 1024ull;
+
+    for (uint32_t AssetIndex = 0; AssetIndex < AssetCount; AssetIndex++)
+    {
+        const uint64_t AssetAddress = Pool.PoolPtr +
+            (static_cast<uint64_t>(AssetIndex) * Pool.AssetSize);
+
+        uintptr_t HeaderRead = 0;
+        auto Header = CoDAssets::GameInstance->Read(AssetAddress, Pool.AssetSize, HeaderRead);
+        if (Header == nullptr)
+            continue;
+
+        std::vector<std::pair<uint64_t, uint64_t>> Entries;
+        for (uint32_t Offset = 0; Offset + 16 <= HeaderRead; Offset += 8)
+        {
+            uint64_t Count = 0, Pointer = 0;
+            std::memcpy(&Count, Header + Offset, sizeof(Count));
+            std::memcpy(&Pointer, Header + Offset + 8, sizeof(Pointer));
+            if (Count > 1000000)
+                Count &= 0xFFFFFFFF;
+            if (Count > 1000000)
+                Count >>= 16;
+            if (Count == 0 || Count > 1000000)
+                continue;
+            if (Pointer < 0x10000 || Pointer > 0x7FF000000000)
+                continue;
+            Entries.emplace_back(Count, Pointer);
+        }
+        delete[] Header;
+
+        for (size_t i = 0; i < Entries.size(); i++)
+        {
+            const uint64_t Count = Entries[i].first;
+            const uint64_t Pointer = Entries[i].second;
+            if (SeenPointers.count(Pointer) != 0)
+                continue;
+            SeenPointers.insert(Pointer);
+
+            uint64_t Stride = 64;
+            if (i + 1 < Entries.size() && Entries[i + 1].second > Pointer)
+            {
+                const uint64_t Span = Entries[i + 1].second - Pointer;
+                if (Span / Count > 0 && Span / Count <= 4096)
+                    Stride = Span / Count;
+            }
+
+            uint64_t Bytes = Count * Stride;
+            if (Bytes > 1024ull * 1024ull)
+                Bytes = 1024ull * 1024ull;
+            if (TotalBytes + Bytes > PoolByteBudget)
+                return Report;
+
+            uintptr_t BytesRead = 0;
+            auto Buffer = CoDAssets::GameInstance->Read(Pointer,
+                static_cast<uintptr_t>(Bytes), BytesRead);
+            if (Buffer == nullptr)
+                continue;
+            TotalBytes += BytesRead;
+
+            const std::string Path = FileSystems::CombinePath(OutputDirectory,
+                Strings::Format("pool_%03X_a%03u_i%02zu_n%llu_s%llu.bin",
+                    PoolIndex, AssetIndex, i, Count, Stride));
+            std::ofstream Output(Path, std::ios::binary | std::ios::trunc);
+            Output.write(reinterpret_cast<const char*>(Buffer), BytesRead);
+            Output.close();
+            delete[] Buffer;
+
+            Report += Strings::Format("  a%u array %zu: count=%llu stride=%llu ptr=0x%llX\n",
+                AssetIndex, i, Count, Stride, Pointer);
+        }
+    }
+
+    return Report;
+}
+
+std::string GameBlackOpsCW::DumpAllPools(uint32_t MaximumPoolIndex,
+    const std::string& OutputDirectory)
+{
+    std::string Report;
+    if (CoDAssets::GameInstance == nullptr || BOCWDBAssetPoolsOffset == 0)
+        return Report;
+
+    for (uint32_t Index = 0; Index <= MaximumPoolIndex; Index++)
+    {
+        auto Pool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+            BOCWDBAssetPoolsOffset + (sizeof(BOCWXAssetPoolData) * Index));
+        if (Pool.PoolPtr == 0 || Pool.AssetSize == 0 || Pool.AssetsLoaded == 0)
+            continue;
+        if (Pool.AssetSize > 0x10000 || Pool.AssetsLoaded > Pool.PoolSize)
+            continue;
+
+        const std::string HeaderPath = FileSystems::CombinePath(OutputDirectory,
+            Strings::Format("sweep_%03X_hdr_n%u_s%u.bin",
+                Index, Pool.AssetsLoaded, Pool.AssetSize));
+        DumpAssetPool(Index, HeaderPath, 512);
+
+        Report += Strings::Format("pool 0x%X assets=%u size=%u\n",
+            Index, Pool.AssetsLoaded, Pool.AssetSize);
+
+        // Resolve what we can from the loaded name dictionaries; most asset
+        // types are absent from them, so an unresolved hash is expected.
+        for (uint32_t i = 0; i < Pool.AssetsLoaded && i < 60000; i++)
+        {
+            uint64_t Hash = CoDAssets::GameInstance->Read<uint64_t>(
+                Pool.PoolPtr + (static_cast<uint64_t>(i) * Pool.AssetSize));
+            Hash &= 0xFFFFFFFFFFFFFFF;
+            auto Found = AssetNameCache.NameDatabase.find(Hash);
+            if (Found != AssetNameCache.NameDatabase.end())
+                Report += Strings::Format("    [%u] 0x%llX %s\n", i, Hash,
+                    Found->second.c_str());
+            else
+                Report += Strings::Format("    [%u] 0x%llX\n", i, Hash);
+        }
+
+        Report += DumpAssetArrays(Index, OutputDirectory);
+    }
+
+    return Report;
+}
+
+bool GameBlackOpsCW::PeekMemory(uint64_t Address, uint32_t Bytes,
+    const std::string& OutputPath)
+{
+    if (CoDAssets::GameInstance == nullptr)
+        return false;
+    if (Address < 0x10000 || Address >= 0x0000800000000000ull ||
+        Bytes == 0 || Bytes > 16u * 1024u * 1024u || Bytes > 0x0000800000000000ull - Address)
+        return false;
+
+    uintptr_t BytesRead = 0;
+    auto Buffer = CoDAssets::GameInstance->Read(Address, Bytes, BytesRead);
+    if (Buffer == nullptr)
+        return false;
+
+    std::ofstream Output(OutputPath, std::ios::binary | std::ios::trunc);
+    Output.write(reinterpret_cast<const char*>(Buffer), BytesRead);
+    Output.close();
+    delete[] Buffer;
+    return BytesRead == Bytes && Output.good();
+}
+
+std::string GameBlackOpsCW::ResolveNameHash(uint64_t Address)
+{
+    if (CoDAssets::GameInstance == nullptr)
+        return std::string();
+    uint64_t Hash = CoDAssets::GameInstance->Read<uint64_t>(Address);
+    Hash &= 0xFFFFFFFFFFFFFFF;
+    auto Found = AssetNameCache.NameDatabase.find(Hash);
+    if (Found == AssetNameCache.NameDatabase.end())
+        return std::string();
+    return Found->second;
+}
+
+std::string GameBlackOpsCW::ExportTerrainDecals(const std::string& ExportPath)
+{
+    std::string Manifest;
+    if (CoDAssets::GameInstance == nullptr || BOCWDBAssetPoolsOffset == 0)
+        return Manifest;
+
+    // Material pool bounds are the discriminator: a decal record carries a raw
+    // pointer to its material, so an array of 48-byte records whose +0x20 qword
+    // lands inside this range is the decal list.  Nothing else in the scene
+    // matches that shape, so no pool or array index needs to be remembered.
+    auto MaterialPool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+        BOCWDBAssetPoolsOffset + (sizeof(BOCWXAssetPoolData) * 0x0A));
+    if (MaterialPool.PoolPtr == 0 || MaterialPool.AssetSize == 0)
+        return Manifest;
+    const uint64_t MaterialLow = MaterialPool.PoolPtr;
+    const uint64_t MaterialHigh = MaterialPool.PoolPtr +
+        (static_cast<uint64_t>(MaterialPool.AssetSize) * MaterialPool.PoolSize);
+
+    const uint32_t RecordSize = 48;
+    std::vector<uint8_t> Records;
+    uint64_t FoundCount = 0;
+    uint32_t FoundPool = 0;
+    uint64_t FoundPointer = 0, FoundHeader = 0;
+    uint32_t FoundOffset = 0;
+
+    for (uint32_t Index = 0; Index <= 0xDC && Records.empty(); Index++)
+    {
+        auto Pool = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+            BOCWDBAssetPoolsOffset + (sizeof(BOCWXAssetPoolData) * Index));
+        if (Pool.PoolPtr == 0 || Pool.AssetSize == 0 || Pool.AssetsLoaded == 0)
+            continue;
+        if (Pool.AssetSize > 0x10000 || Pool.AssetsLoaded > Pool.PoolSize)
+            continue;
+
+        uintptr_t HeaderRead = 0;
+        auto Header = CoDAssets::GameInstance->Read(Pool.PoolPtr, Pool.AssetSize, HeaderRead);
+        if (Header == nullptr)
+            continue;
+
+        for (uint32_t Offset = 0; Offset + 16 <= HeaderRead && Records.empty(); Offset += 8)
+        {
+            uint64_t Count = 0, Pointer = 0;
+            std::memcpy(&Count, Header + Offset, sizeof(Count));
+            std::memcpy(&Pointer, Header + Offset + 8, sizeof(Pointer));
+            if (Count < 16 || Count > 1000000)
+                continue;
+            if (Pointer < 0x10000 || Pointer > 0x7FF000000000)
+                continue;
+
+            // Probe a handful of records; every one must reference a material.
+            bool Matches = true;
+            for (uint32_t Probe = 0; Probe < 8 && Matches; Probe++)
+            {
+                const uint64_t Material = CoDAssets::GameInstance->Read<uint64_t>(
+                    Pointer + (static_cast<uint64_t>(Probe) * RecordSize) + 0x20);
+                if (Material < MaterialLow || Material >= MaterialHigh)
+                    Matches = false;
+                else if ((Material - MaterialLow) % MaterialPool.AssetSize != 0)
+                    Matches = false;
+            }
+            if (!Matches)
+                continue;
+
+            const uint64_t Bytes = Count * RecordSize;
+            if (Bytes > 64ull * 1024ull * 1024ull)
+                continue;
+            uintptr_t BytesRead = 0;
+            auto Buffer = CoDAssets::GameInstance->Read(Pointer,
+                static_cast<uintptr_t>(Bytes), BytesRead);
+            if (Buffer == nullptr || BytesRead != Bytes)
+            {
+                delete[] Buffer;
+                continue;
+            }
+            Records.assign(Buffer, Buffer + BytesRead);
+            delete[] Buffer;
+            FoundCount = Count;
+            FoundPool = Index;
+            FoundPointer = Pointer;
+            FoundHeader = Pool.PoolPtr;
+            FoundOffset = Offset;
+        }
+        delete[] Header;
+    }
+
+    if (Records.empty())
+        return Manifest;
+
+    const std::string DecalPath = FileSystems::CombinePath(ExportPath, "decals");
+    FileSystems::CreateDirectory(DecalPath);
+    const std::string BinaryPath = FileSystems::CombinePath(DecalPath, "decal_records.bin");
+    std::ofstream Binary(BinaryPath, std::ios::binary | std::ios::trunc);
+    Binary.write(reinterpret_cast<const char*>(Records.data()), Records.size());
+    Binary.close();
+
+    std::set<uint64_t> Materials;
+    for (uint64_t i = 0; i < FoundCount; i++)
+    {
+        uint64_t Pointer = 0;
+        std::memcpy(&Pointer, Records.data() + (i * RecordSize) + 0x20, sizeof(Pointer));
+        Materials.insert(Pointer);
+    }
+
+    Manifest += "{\n";
+    Manifest += "  \"schema\": \"superterrain-decals-v2\",\n";
+    Manifest += Strings::Format("  \"sourcePool\": \"0x%X\",\n", FoundPool);
+    Manifest += Strings::Format("  \"sourcePointer\": \"0x%llX\",\n", FoundPointer);
+    Manifest += Strings::Format("  \"sourceHeader\": \"0x%llX\",\n", FoundHeader);
+    Manifest += Strings::Format("  \"countOffset\": %u,\n", FoundOffset);
+    Manifest += Strings::Format("  \"records\": %llu,\n", FoundCount);
+    Manifest += "  \"recordSize\": 48,\n";
+    Manifest += "  \"recordFile\": \"decal_records.bin\",\n";
+    Manifest += "  \"materials\": [\n";
+
+    bool First = true;
+    for (const uint64_t Pointer : Materials)
+    {
+        auto Material = ReadXMaterial(Pointer);
+        uint64_t Used = 0;
+        for (uint64_t i = 0; i < FoundCount; i++)
+        {
+            uint64_t Each = 0;
+            std::memcpy(&Each, Records.data() + (i * RecordSize) + 0x20, sizeof(Each));
+            if (Each == Pointer)
+                Used++;
+        }
+
+        // Preserve the same semantic and parameter sidecars as a normal
+        // XMaterial export. The raw decal manifest already records semantic
+        // hashes, but these files retain Greyhound's canonical labels and the
+        // readable settings needed to cross-reference road paint/asphalt.
+        CoDAssets::ExportMaterialImageNames(Material, DecalPath);
+        CoDAssets::ExportMaterialImages(Material, DecalPath, ".png",
+            ImageFormat::Standard_PNG);
+
+        if (!First)
+            Manifest += ",\n";
+        First = false;
+        Manifest += "    {\n";
+        Manifest += Strings::Format("      \"materialPointer\": \"0x%llX\",\n", Pointer);
+        Manifest += Strings::Format("      \"materialNameHash\": \"0x%llX\",\n",
+            CoDAssets::GameInstance->Read<uint64_t>(Pointer) & 0x0FFFFFFFFFFFFFFFull);
+        Manifest += Strings::Format("      \"name\": \"%s\",\n",
+            Material.MaterialName.c_str());
+        Manifest += Strings::Format("      \"decals\": %llu,\n", Used);
+        Manifest += "      \"images\": [";
+        for (size_t i = 0; i < Material.Images.size(); i++)
+        {
+            if (i != 0)
+                Manifest += ", ";
+            Manifest += Strings::Format("{\"semantic\": %u, \"name\": \"%s\"}",
+                Material.Images[i].SemanticHash,
+                Material.Images[i].ImageName.c_str());
+        }
+        Manifest += "]\n    }";
+    }
+    Manifest += "\n  ]\n}\n";
+
+    const std::string ManifestPath = FileSystems::CombinePath(DecalPath, "decals.json");
+    std::ofstream Output(ManifestPath, std::ios::binary | std::ios::trunc);
+    Output << Manifest;
+    Output.close();
+    return Manifest;
+}
+
+bool GameBlackOpsCW::ExportTerrainResearch(const CoDTerrain_t* Terrain,
+    const std::string& ExportPath, const std::vector<uint64_t>& ProbeMaterials,
+    const std::function<void(uint32_t)>& ReportProgress)
+{
+    using namespace TerrainResearch;
+    if (!CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset) return false;
+    Capture C(FileSystems::CombinePath(ExportPath, "research"), ReportProgress);
+    C.Progress("terrain_dependencies", 8, 0, 1);
+    C.Report["terrain_address"] = Hex(Terrain->AssetPointer);
+    C.Report["mode"] = "source_data_only";
+    C.Report["array_selection"] = "all pool headers; follow count/pointer candidates in terrain hash siblings, named terrain/spline/decal assets, pool 0x1B, and the first occupied-looking header of each pool";
+    auto H = C.Span(Terrain->AssetPointer, Terrain->AssetSize, "terrain_start.bin", "TerrainGfx header at start of additional evidence pass");
+    const auto TerrainHash = U64(H, 0) & 0x0FFFFFFFFFFFFFFFull;
+    const auto Bindings = C.Span(U64(H, 0x38), U64(H, 0x30) <= 65536 ? U64(H, 0x30) * 8 : Capture::SpanLimit + 1,
+        "terrain_image_pointers.bin", "TerrainGfx image pointer table");
+    for (size_t O = 0; O + 8 <= Bindings.size(); O += 8) C.Image(U64(Bindings, O));
+    const auto Layers = C.Span(U64(H, 0x118), U64(H, 0x110) <= 1024 ? U64(H, 0x110) * 96 : Capture::SpanLimit + 1,
+        "layer_image_pointers.bin", "12 image pointers per layer record from existing capture layout");
+    for (size_t O = 0; O + 8 <= Layers.size(); O += 8) if (U64(Layers, O)) C.Image(U64(Layers, O));
+    auto Root = C.Span(U64(H, 0x10), U64(H, 0x10) ? 0x170 : 0, "mapping_root_prefix.bin", "mapping root prefix covering known counted tables");
+    const auto Slots = C.Span(U64(Root, 0x110), U64(Root, 0x108) <= 4096 ? U64(Root, 0x108) * 0x130 : Capture::SpanLimit + 1,
+        "slot_materials.bin", "0x130-byte painted-slot records, including UV transforms and sort fields");
+    for (size_t O = 0; O + 0x130 <= Slots.size(); O += 0x130) C.Material(U64(Slots, O));
+    for (auto M : ProbeMaterials) C.Material(M, 1);
+    C.Progress("terrain_dependencies", 18, 1, 1);
+
+    const auto PoolBytes = C.Span(BOCWDBAssetPoolsOffset, 0xDD * sizeof(BOCWXAssetPoolData),
+        "pool_descriptors_start.bin", "all 0xDD DBAssetPools descriptors, including free-list heads");
+    BOCWXAssetPoolData MaterialPool{};
+    if (PoolBytes.size() >= 0x0B * sizeof(MaterialPool))
+        memcpy(&MaterialPool, PoolBytes.data() + 0x0A * sizeof(MaterialPool), sizeof(MaterialPool));
+    const auto IsMaterial = [&](uint64_t P) {
+        return MaterialPool.AssetSize == 0x158 && P >= MaterialPool.PoolPtr &&
+            P - MaterialPool.PoolPtr < uint64_t(MaterialPool.PoolSize) * MaterialPool.AssetSize &&
+            (P - MaterialPool.PoolPtr) % MaterialPool.AssetSize == 0;
+    };
+    uint64_t CandidateBytes = 0;
+    std::set<uint64_t> Arrays;
+    C.Report["decals"] = json::array();
+    for (size_t Index = 0; (Index + 1) * sizeof(BOCWXAssetPoolData) <= PoolBytes.size(); ++Index)
+    {
+        C.Progress("pool_evidence", 18 + static_cast<uint32_t>(6 * Index / 0xDD), Index, 0xDD);
+        BOCWXAssetPoolData P{}; memcpy(&P, PoolBytes.data() + Index * sizeof(P), sizeof(P));
+        json Info = {{"index", Index}, {"pointer", Hex(P.PoolPtr)}, {"asset_size", P.AssetSize},
+            {"capacity", P.PoolSize}, {"loaded", P.AssetsLoaded}, {"free_head", Hex(P.PoolFreeHeadPtr)}};
+        if (!P.AssetsLoaded) { Info["status"] = "empty"; C.Report["pools"].push_back(Info); continue; }
+        if (!Pointer(P.PoolPtr) || P.AssetSize < 8 || P.AssetSize > 65536 || P.AssetsLoaded > P.PoolSize)
+        {
+            Info["status"] = "invalid_descriptor"; C.Report["pools"].push_back(Info); continue;
+        }
+        const auto Stem = "pools/" + std::to_string(Index);
+        // Capacity matters: occupied headers can lie beyond AssetsLoaded because
+        // the pool has holes. Preserve the free list so occupancy can be audited.
+        auto Headers = C.Span(P.PoolPtr, uint64_t(P.AssetSize) * P.PoolSize,
+            Stem + ".headers.bin", "entire allocated header pool; includes free slots, not all entries are assets");
+        Info["file"] = Stem + ".headers.bin";
+        Info["status"] = Headers.empty() ? "not_fully_captured_see_reads" : "captured";
+        C.Report["pools"].push_back(Info);
+        bool First = true;
+        for (size_t O = 0; O + P.AssetSize <= Headers.size(); O += P.AssetSize)
+        {
+            const auto RawName = U64(Headers, O);
+            if (!RawName || (RawName >= P.PoolPtr && RawName - P.PoolPtr < Headers.size())) continue;
+            const auto Hash = RawName & 0x0FFFFFFFFFFFFFFFull;
+            const auto Name = AssetNameCache.NameDatabase.find(Hash);
+            const std::string Resolved = Name == AssetNameCache.NameDatabase.end() ? "" : Name->second;
+            const bool Named = Resolved.find("terrain") != std::string::npos ||
+                Resolved.find("spline") != std::string::npos || Resolved.find("decal") != std::string::npos;
+            const bool Follow = First || Index == 0x1B || (TerrainHash && Hash == TerrainHash) || Named;
+            First = false;
+            if (!Follow) continue;
+            if (Index == 0x0A && Named) C.Material(P.PoolPtr + O, 2);
+            if (Index == 0x10 && Named) C.Image(P.PoolPtr + O, 2);
+            // Only one level of unknown arrays. Keep parent address + byte offset
+            // so every inference can be revisited against the raw header.
+            for (size_t A = 0; A + 16 <= P.AssetSize; A += 8)
+            {
+                const auto CountField = U64(Headers, O + A);
+                const auto Count = CountField & 0xFFFFFFFFull;
+                const auto Ptr = U64(Headers, O + A + 8);
+                if (!Count || Count > 1000000 || !Pointer(Ptr)) continue;
+                json Candidate = {{"pool", Index}, {"parent_address", Hex(P.PoolPtr + O)},
+                    {"parent_hash", Hex(Hash)}, {"parent_name", Resolved}, {"count_offset", A},
+                    {"count_field", Hex(CountField)}, {"candidate_count_low32", Count}, {"pointer", Hex(Ptr)}};
+                if (!Arrays.insert(Ptr).second)
+                {
+                    Candidate["status"] = "duplicate_pointer";
+                    C.Report["array_candidates"].push_back(Candidate); continue;
+                }
+                if (CandidateBytes + 65536 > 512ull * 1024 * 1024)
+                {
+                    Candidate["status"] = "candidate_budget_rejected";
+                    C.Report["array_candidates"].push_back(Candidate); continue;
+                }
+                // Probe only the material-bearing record shape. Failure does not
+                // establish absence of decals, nor identify authored spline data.
+                const auto ProbeCount = std::min<uint64_t>(Count, 8);
+                auto Probe = C.Span(Ptr, ProbeCount * 48, "arrays/" + Hex(Ptr) + ".probe.bin",
+                    "candidate 48-byte record prefix; type unconfirmed");
+                bool Decal = !Probe.empty();
+                for (size_t R = 0; R < ProbeCount && Decal; ++R) Decal = IsMaterial(U64(Probe, R * 48 + 0x20));
+                CandidateBytes += ProbeCount * 48;
+                if (Decal)
+                {
+                    const auto File = "decals/" + Hex(Ptr) + ".records.bin";
+                    auto Records = C.Span(Ptr, Count * 48, File, "candidate decal records: first up to eight records reference aligned material pool entries");
+                    json D = Candidate;
+                    D["record_size"] = 48; D["count"] = Count; D["file"] = File;
+                    D["status"] = Records.empty() ? "not_fully_captured_see_reads" : "captured_candidate";
+                    D["authored_spline_control_points"] = "not_identified";
+                    C.Report["decals"].push_back(D);
+                    for (size_t R = 0; R + 48 <= Records.size(); R += 48)
+                        if (IsMaterial(U64(Records, R + 0x20))) C.Material(U64(Records, R + 0x20));
+                    Candidate["status"] = "decal_shape_candidate";
+                }
+                else
+                {
+                    // Count gives no stride. Do not invent count*64 as a full array.
+                    C.Span(Ptr, 65536, "arrays/" + Hex(Ptr) + ".prefix.bin",
+                        "64-KiB research prefix, allocation boundary and stride unknown; may contain adjacent data");
+                    CandidateBytes += 65536;
+                    Candidate["status"] = "prefix_attempted_extent_unknown";
+                }
+                C.Report["array_candidates"].push_back(Candidate);
+            }
+        }
+    }
+    C.FlushPayloads();
+    const auto End = C.Span(Terrain->AssetPointer, Terrain->AssetSize, "terrain_end.bin", "header reread; see stability check", true);
+    C.Report["terrain_header_unchanged_during_evidence_pass"] =
+        H.empty() || End.empty() ? json(nullptr) : json(H == End);
+    const auto PoolsEnd = C.Span(BOCWDBAssetPoolsOffset, PoolBytes.size(), "pool_descriptors_end.bin",
+        "pool descriptor reread; compares counts and pointers, not pointed-to payload contents", true);
+    C.Report["pool_descriptors_unchanged_during_evidence_pass"] =
+        PoolBytes.empty() || PoolsEnd.empty() ? json(nullptr) : json(PoolBytes == PoolsEnd);
+    C.Report["stability_scope"] = "header equality only; pointed-to resources may change while capturing";
+    C.Progress("research_complete", 35, 1, 1);
+    return C.Finish();
+}
+
 bool GameBlackOpsCW::LoadAssets()
 {
     // Prepare to load game assets, into the AssetPool
@@ -295,6 +881,7 @@ bool GameBlackOpsCW::LoadAssets()
     bool NeedsRawFiles  = (SettingsManager::GetSetting("showxrawfiles", "false")        == "true");
     bool NeedsMaterials = (SettingsManager::GetSetting("showxmtl",      "false")        == "true");
     bool NeedsSounds    = (SettingsManager::GetSetting("showxsounds",   "false")        == "true");
+    bool NeedsTerrains  = (SettingsManager::GetSetting("showxterrain",  "true")         == "true");
     bool NeedsExtInfo   = (SettingsManager::GetSetting("needsextinfo",  "true")         == "true");
 
     /*
@@ -615,6 +1202,55 @@ bool GameBlackOpsCW::LoadAssets()
             CoDAssets::GameAssets->LoadedAssets.push_back(LoadedSound);
            
         });
+    }
+
+    if (NeedsTerrains && TerrainGfxPoolPtr != 0 &&
+        TerrainGfxAssetSize >= sizeof(uint64_t) && TerrainGfxAssetSize <= 0x10000 &&
+        TerrainGfxPoolSize > 0)
+    {
+        const uint64_t PoolBytes = static_cast<uint64_t>(TerrainGfxAssetSize) * TerrainGfxPoolSize;
+        const uint64_t MaximumPoolOffset = TerrainGfxPoolPtr + PoolBytes;
+
+        if (PoolBytes <= MaximumTerrainPoolBytes && MaximumPoolOffset > TerrainGfxPoolPtr)
+        {
+            uintptr_t BytesRead = 0;
+            auto PoolBuffer = CoDAssets::GameInstance->Read(TerrainGfxPoolPtr, static_cast<uintptr_t>(PoolBytes), BytesRead);
+
+            if (PoolBuffer != nullptr && BytesRead == PoolBytes)
+            {
+                for (uint32_t i = 0; i < TerrainGfxPoolSize; i++)
+                {
+                    const uint64_t AssetOffset = TerrainGfxPoolPtr + static_cast<uint64_t>(i) * TerrainGfxAssetSize;
+                    uint64_t NameHash = 0;
+                    std::memcpy(&NameHash, PoolBuffer + static_cast<size_t>(i) * TerrainGfxAssetSize, sizeof(NameHash));
+
+                    // Free slots use the first qword as an in-pool linked-list pointer.
+                    if (NameHash == 0 || (NameHash > TerrainGfxPoolPtr && NameHash < MaximumPoolOffset))
+                        continue;
+
+                    NameHash &= 0xFFFFFFFFFFFFFFF;
+                    auto TerrainName = Strings::Format("terraingfx_%llx", NameHash);
+
+                    if (AssetNameCache.NameDatabase.find(NameHash) != AssetNameCache.NameDatabase.end())
+                    {
+                        auto& NewName = AssetNameCache.NameDatabase[NameHash];
+                        if (!CoDAssets::VerifiedHashes || CWCalculateHash(NewName) == NameHash)
+                            TerrainName = NewName;
+                    }
+
+                    CoDAssets::LogXAsset("TerrainGfx", TerrainName);
+
+                    auto LoadedTerrain = new CoDTerrain_t();
+                    LoadedTerrain->AssetName = TerrainName;
+                    LoadedTerrain->AssetPointer = AssetOffset;
+                    LoadedTerrain->AssetSize = TerrainGfxAssetSize;
+                    LoadedTerrain->AssetStatus = WraithAssetStatus::Loaded;
+                    CoDAssets::GameAssets->LoadedAssets.push_back(LoadedTerrain);
+                }
+            }
+
+            delete[] PoolBuffer;
+        }
     }
 
     // Success, error only on specific load
@@ -1156,30 +1792,45 @@ std::unique_ptr<XImageDDS> GameBlackOpsCW::LoadXImage(const XImage_t& Image)
     // We must read the image data
     auto ImageInfo = CoDAssets::GameInstance->Read<BOCWGfxImage>(Image.ImagePtr);
 
-    // Calculate the largest image mip
-    uint32_t LargestMip = 0;
-    uint32_t LargestSize = 0;
-    uint32_t LargestWidth = 0;
-    uint32_t LargestHeight = 0;
-    uint64_t LargestHash = 0;
+    // Every streamed mip the package cache can serve, largest first.  This is a
+    // fallback chain rather than a single choice: Exists() only says the object
+    // is indexed, and extraction can still fail, in which case a smaller mip or
+    // the mip resident in game memory is worth far more than the silent skip
+    // this used to produce.  The first entry is the same mip the old
+    // single-pass selection picked, so a working image is unaffected.
+    struct MipCandidate
+    {
+        uint64_t Hash;
+        uint32_t Size;
+        uint32_t Width;
+        uint32_t Height;
+    };
+    std::vector<MipCandidate> MipCandidates;
 
-    // Loop and calculate
+    // Loop and collect
     for (uint32_t i = 0; i < ImageInfo.GfxMipMaps; i++)
     {
         // Load Mip Map
         auto MipMap = CoDAssets::GameInstance->Read<BOCWGfxMip>(ImageInfo.GfxMipsPtr);
-        // Compare widths, checking if it exists for users without HD Texture Packs
-        if (MipMap.Size > LargestSize && MipMap.HashID != 0 && CoDAssets::GamePackageCache->Exists(MipMap.HashID))
+        // Checking it exists covers users without HD Texture Packs
+        if (MipMap.HashID != 0 && CoDAssets::GamePackageCache->Exists(MipMap.HashID))
         {
-            LargestMip    = i;
-            LargestSize   = MipMap.Size;
-            LargestHash   = MipMap.HashID;
-            LargestWidth  = ImageInfo.LoadedMipWidth >> (ImageInfo.GfxMipMaps - i - 1);
-            LargestHeight = ImageInfo.LoadedMipHeight >> (ImageInfo.GfxMipMaps - i - 1);
+            MipCandidates.push_back(MipCandidate{
+                MipMap.HashID,
+                MipMap.Size,
+                (uint32_t)(ImageInfo.LoadedMipWidth >> (ImageInfo.GfxMipMaps - i - 1)),
+                (uint32_t)(ImageInfo.LoadedMipHeight >> (ImageInfo.GfxMipMaps - i - 1)) });
         }
         // Advance Mip Map Pointer
         ImageInfo.GfxMipsPtr += sizeof(BOCWGfxMip);
     }
+
+    // Largest first, keeping the original order among equal sizes
+    std::stable_sort(MipCandidates.begin(), MipCandidates.end(),
+        [](const MipCandidate& Left, const MipCandidate& Right) { return Left.Size > Right.Size; });
+
+    uint32_t LargestWidth = 0;
+    uint32_t LargestHeight = 0;
 
     // Calculate proper image format (Convert signed to unsigned)
     switch (ImageInfo.ImageFormat)
@@ -1197,8 +1848,29 @@ std::unique_ptr<XImageDDS> GameBlackOpsCW::LoadXImage(const XImage_t& Image)
     // Buffer
     std::unique_ptr<uint8_t[]> ImageData = nullptr;
 
-    // Check if we're missing a hash / size
-    if (LargestHash == 0)
+    // We have a streamed image, prepare to extract, dropping to the next mip
+    // down whenever an indexed object cannot actually be read back
+    for (auto& Candidate : MipCandidates)
+    {
+        ImageData = CoDAssets::GamePackageCache->ExtractPackageObject(Candidate.Hash, ResultSize);
+
+        // Take the first one that yields data
+        if (ImageData != nullptr && ResultSize > 0)
+        {
+            LargestWidth = Candidate.Width;
+            LargestHeight = Candidate.Height;
+            break;
+        }
+
+        // Try the next mip down
+        ImageData = nullptr;
+        ResultSize = 0;
+    }
+
+    // Nothing streamed could be served, so fall back to the mip resident in
+    // game memory.  This used to run only when no mip was indexed at all, which
+    // meant an image whose indexed mip failed to extract was dropped outright.
+    if (ImageData == nullptr)
     {
         // Set sizes
         LargestWidth = ImageInfo.LoadedMipWidth;
@@ -1209,29 +1881,31 @@ std::unique_ptr<XImageDDS> GameBlackOpsCW::LoadXImage(const XImage_t& Image)
         // We have a loaded image, prepare to dump from memory
         auto ImageMemoryBuffer = CoDAssets::GameInstance->Read(ImageInfo.LoadedMipPtr, ImageInfo.LoadedMipSize, ImageMemoryResult);
 
-        // Make sure we got it
+        // Make sure we got it, and got something.  A read that succeeds with
+        // zero bytes -- the image's memory is no longer resident -- used to
+        // produce a non-null, empty buffer, and from there a DDS with a header
+        // and no surface that every converter rightly refuses.
         if (ImageMemoryBuffer != nullptr)
         {
-            // Allocate a safe block
-            ImageData = std::make_unique<uint8_t[]>((uint32_t)ImageMemoryResult);
-            // Copy data over
-            std::memcpy(ImageData.get(), ImageMemoryBuffer, ImageMemoryResult);
+            if (ImageMemoryResult > 0)
+            {
+                // Allocate a safe block
+                ImageData = std::make_unique<uint8_t[]>((uint32_t)ImageMemoryResult);
+                // Copy data over
+                std::memcpy(ImageData.get(), ImageMemoryBuffer, ImageMemoryResult);
 
-            // Set size
-            ResultSize = (uint32_t)ImageMemoryResult;
+                // Set size
+                ResultSize = (uint32_t)ImageMemoryResult;
+            }
 
             // Clean up
             delete[] ImageMemoryBuffer;
         }
     }
-    else
-    {
-        // We have a streamed image, prepare to extract
-        ImageData = CoDAssets::GamePackageCache->ExtractPackageObject(LargestHash, ResultSize);
-    }
 
-    // Prepare if we have it
-    if (ImageData != nullptr)
+    // Prepare if we have it.  No pixels is not an image: reporting the failure
+    // is what lets the caller record why, instead of writing a surfaceless DDS.
+    if (ImageData != nullptr && ResultSize > 0)
     {
         // Prepare to create a MemoryDDS file
         auto Result = CoDRawImageTranslator::TranslateBC(ImageData, ResultSize, LargestWidth, LargestHeight, ImageInfo.ImageFormat);

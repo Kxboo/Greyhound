@@ -69,7 +69,7 @@ BEGIN
     EDITTEXT        IDC_SEARCHTEXT,7,7,183,14,ES_AUTOHSCROLL | WS_DISABLED | NOT WS_BORDER
 END
 
-IDD_SETTINGSDIALOG DIALOGEX 0, 0, 445, 245
+IDD_SETTINGSDIALOG DIALOGEX 0, 0, 445, 395
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Settings"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -79,6 +79,7 @@ BEGIN
     LTEXT           "Anim Settings",IDC_ANIMPANEL,0,58,117,29,SS_NOTIFY
     LTEXT           "Image Settings",IDC_IMAGEPANEL,0,87,117,29,SS_NOTIFY
     LTEXT           "Sound Settings",IDC_SOUNDPANEL,0,116,117,29,SS_NOTIFY
+    LTEXT           "Terrain Settings",IDC_TERRAINPANEL,0,145,117,29,SS_NOTIFY
 END
 
 IDD_GENERALSETTINGS DIALOGEX 0, 0, 350, 200
@@ -178,6 +179,21 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,158,285,11
     CONTROL         "Skip blank audio in SAB files",IDC_SKIPBLANKAUDIO,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,142,197,11
+END
+
+IDD_TERRAINSETTINGS DIALOGEX 0, 0, 350, 230
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Terrain source export",IDC_TITLE,8,10,180,20
+    CONTROL         "Load BOCW 'TerrainGfx' from the game",IDC_SHOWXTERRAIN,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,32,190,11
+    CONTROL         "Skip previously exported TerrainGfx captures",IDC_SKIPPREVTERRAIN,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,48,215,11
+    GROUPBOX        "Capture contract",IDC_STATIC,17,70,325,72
+    LTEXT           "Every terrain export includes the full height/index/control data, shipped tiles, material and image dependencies, decal evidence, bounded research arrays, and a SHA-256 inventory.",IDC_STATIC,28,86,302,46
+    LTEXT           "",IDC_TERRAIN_STATUS,17,158,325,20
+    LTEXT           "",IDC_TERRAIN_NOTICE,17,184,325,32
 END
 
 IDD_PROGRESSDIALOG DIALOGEX 0, 0, 229, 88
@@ -427,6 +443,11 @@ BEGIN
     0
 END
 
+IDD_TERRAINSETTINGS AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
 IDD_IMAGESETTINGS AFX_DIALOG_LAYOUT
 BEGIN
     0
@@ -451,4 +472,3 @@ END
 
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
-

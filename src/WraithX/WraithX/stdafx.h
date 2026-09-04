@@ -43,6 +43,7 @@
 #include <functional>
 #include <locale>
 #include <thread>
+#include <chrono>
 #include <cctype>
 #include <stdarg.h>
 #include <array>

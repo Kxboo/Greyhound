@@ -473,6 +473,7 @@ void MainWindow::GetListViewInfo(LV_ITEM* ListItem, CWnd* Owner)
                 case WraithAssetType::RawFile: AssetTypeStr = L"Rawfile"; break;
                 case WraithAssetType::Effect: AssetTypeStr = L"Effect"; break;
                 case WraithAssetType::Material: AssetTypeStr = L"Material"; break;
+                case WraithAssetType::Terrain: AssetTypeStr = L"TerrainGfx"; break;
                 }
 
                 // Set the type
@@ -534,6 +535,9 @@ void MainWindow::GetListViewInfo(LV_ITEM* ListItem, CWnd* Owner)
                 case WraithAssetType::RawFile:
                     // Rawfile info
                     DetailsFmt.Format(L"Size: 0x%llx", Asset->AssetSize);
+                    break;
+                case WraithAssetType::Terrain:
+                    DetailsFmt.Format(L"Header: 0x%llx bytes", Asset->AssetSize);
                     break;
                 }
 
