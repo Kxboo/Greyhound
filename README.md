@@ -4,9 +4,7 @@
 
 This fork adds Black Ops Cold War `TerrainGfx` discovery and exports complete,
 portable source captures. Greyhound does not reconstruct terrain, bake OMPV,
-or generate BO3 maps. Reconstruction lives in the separate
-[`superterrainhoundprivate`](https://github.com/Kxboo/superterrainhoundprivate)
-repository and runs after Greyhound has exited.
+or generate BO3 maps. Reconstruction lives in a private repo for now.
 
 The interchange boundary is the sealed terrain export: native arrays and
 dependencies under `_source/capture/` plus `_source/research_capture.report.json`.
