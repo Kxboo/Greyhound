@@ -18,6 +18,14 @@
 // String View
 #include <string_view>
 #include <charconv>
+#include <fstream>
+#include <set>
+#include "json.hpp"
+#include "Image.h"
+#include "GameBlackOpsCW.h"
+#include "ModelBatchSelection.h"
+#include "ModelBatchResume.h"
+#include "ModelExportNaming.h"
 
 // Update cube icon callback
 #define UPDATE_CUBE_ICON (WM_USER + 137)
@@ -215,6 +223,9 @@ BEGIN_MESSAGE_MAP(MainWindow, WraithWindow)
     ON_COMMAND(IDC_LOADFILE, OnLoadFile)
     ON_COMMAND(IDC_CLEARALL, OnClearAll)
     ON_COMMAND(IDC_EXPORTALL, OnExportAll)
+    ON_COMMAND(IDC_EXPORT_JSON_MODELS, OnExportJsonModels)
+    ON_COMMAND(IDC_EXPORT_PLACEMENTS, OnExportPlacements)
+    ON_COMMAND(IDC_EXPORT_BRUSHES, OnExportBrushes)
     ON_COMMAND(IDC_EXPORTSELECTED, OnExportSelected)
     ON_COMMAND(IDC_SEARCH, OnSearch)
     ON_COMMAND(IDC_CLEARSEARCH, OnClearSearch)
@@ -268,7 +279,10 @@ void MainWindow::OnBeforeLoad()
     SetControlAnchor(IDC_EXPORTALL, 0, 100, 0, 0);
     SetControlAnchor(IDC_CLEARALL, 0, 100, 0, 0);
     SetControlAnchor(IDC_MORE, 100, 100, 0, 0);
-    SetControlAnchor(IDC_ASSETCOUNT, 100, 0, 0, 0);
+    SetControlAnchor(IDC_ASSETCOUNT, 0, 100, 0, 0);
+    SetControlAnchor(IDC_SEARCHTEXT, 0, 0, 100, 0);
+    SetControlAnchor(IDC_SEARCH, 100, 0, 0, 0);
+    SetControlAnchor(IDC_CLEARSEARCH, 100, 0, 0, 0);
 
     // Add list columns
     AssetListView.AddHeader("Asset name", 280);
@@ -695,7 +709,9 @@ void MainWindow::OnSettings()
     // Show the settings dialog
     SettingsWindow SettingsDialog(this);
     // Show it
-    SettingsDialog.DoModal();
+    const auto Action = SettingsDialog.DoModal();
+    if (Action == IDC_EXPORT_PLACEMENTS || Action == IDC_EXPORT_JSON_MODELS || Action == IDC_EXPORT_BRUSHES)
+        PostMessage(WM_COMMAND, Action);
 }
 
 void MainWindow::OnExportAll()
@@ -1380,4 +1396,229 @@ BOOL MainWindow::PreTranslateMessage(MSG* pMsg)
 
     // All other cases still need default processing
     return FALSE;
+}
+
+void MainWindow::OnExportJsonModels()
+{
+    if (CoDAssets::GameID != SupportedGames::BlackOpsCW) { MessageBoxA(GetSafeHwnd(),"Models from JSON currently supports Cold War CAST exports only.","Models from JSON",MB_OK); return; }
+    if (!CoDAssets::GameAssets) { MessageBoxA(GetSafeHwnd(),"Load Game with XModels enabled first.","Models from JSON",MB_OK); return; }
+    auto File=WraithFileDialogs::OpenFileDialog("Select static_models.json", "", "JSON (*.json)|*.json;",GetSafeHwnd());
+    if (File.empty()) return;
+    using json=nlohmann::json;
+    std::set<std::string> Names;
+    json PlacementRows;
+    ModelExportNaming::SourceLookup Lookup;
+    for (const auto* Asset : CoDAssets::GameAssets->LoadedAssets)
+        if (Asset->AssetType == WraithAssetType::Model) Lookup.Add(Asset->AssetName);
+    try
+    {
+        std::ifstream Input(File); json Doc; Input>>Doc;
+        const auto& Rows=Doc.is_array()?Doc:Doc.at("StaticModels");
+        if (!Rows.is_array()) throw std::runtime_error("StaticModels must be an array");
+        PlacementRows = Rows;
+        for(const auto& Row:Rows)
+        {
+            const auto Name=Row.at("Name").get<std::string>();
+            if(!Name.empty()) Names.insert(Lookup.Resolve(Name,Row.value("SourceName",std::string())));
+        }
+        if(Names.empty()) throw std::runtime_error("No model names found");
+        for (auto& Row : PlacementRows)
+        {
+            Row["SourceName"] = Lookup.Resolve(Row.at("Name").get<std::string>(), Row.value("SourceName",std::string()));
+            ModelExportNaming::PublishPlacementName(Row);
+        }
+    }
+    catch(const std::exception& E) { MessageBoxA(GetSafeHwnd(),(std::string("Select placement static_models.json, not spline-input JSON.\n")+E.what()).c_str(),"Models from JSON",MB_OK|MB_ICONERROR); return; }
+    struct ModelRequest
+    {
+        std::string Name;
+        std::vector<CoDAsset_t*> Candidates;
+        size_t Selected;
+    };
+    std::vector<ModelRequest> Queue;
+    size_t DuplicateNames = 0;
+    for(const auto& Name:Names)
+    {
+        ModelRequest Request{Name, {}, (std::numeric_limits<size_t>::max)()};
+        std::vector<ModelBatchSelection::Candidate> Selection;
+        for(auto* Asset:CoDAssets::GameAssets->LoadedAssets)
+            if(Asset->AssetType==WraithAssetType::Model && Asset->AssetName==Name)
+            {
+                const auto State = Asset->AssetStatus;
+                const bool Usable = State != WraithAssetStatus::Placeholder &&
+                    State != WraithAssetStatus::NotLoaded && State != WraithAssetStatus::Processing;
+                Selection.push_back({Asset->AssetPointer, Request.Candidates.size(), Usable,
+                    State == WraithAssetStatus::Exported, State == WraithAssetStatus::Loaded});
+                Request.Candidates.push_back(Asset);
+            }
+        Request.Selected = ModelBatchSelection::Select(Selection);
+        if (Request.Candidates.size() > 1) ++DuplicateNames;
+        Queue.push_back(std::move(Request));
+    }
+    auto BatchRoot = FileSystems::CombinePath(FileSystems::GetApplicationPath(),
+        "exported_files/models_from_json_" + std::to_string(GetTickCount64()));
+    bool Resume = false;
+    const auto ExistingRoot = FileSystems::GetDirectoryName(File);
+    if (FileSystems::FileExists(FileSystems::CombinePath(ExistingRoot,"model_identities.json")) &&
+        FileSystems::DirectoryExists(FileSystems::CombinePath(ExistingRoot,"models")))
+    {
+        const auto Choice = MessageBoxA(GetSafeHwnd(),
+            "This JSON belongs to an existing model export. Resume in that folder?\n\nYes: keep completed models and retry unfinished ones.\nNo: create a new export.\nCancel: do nothing.",
+            "Resume models from JSON", MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (Choice == IDCANCEL) return;
+        Resume = Choice == IDYES;
+        if (Resume) BatchRoot = ExistingRoot;
+    }
+    for (const auto* Folder : {"models", "materials", "images"})
+        FileSystems::CreateDirectory(FileSystems::CombinePath(BatchRoot, Folder));
+    if (!Resume)
+    {
+        std::ofstream PlacementOutput(FileSystems::CombinePath(BatchRoot, "static_models.json"), std::ios::binary);
+        PlacementOutput << PlacementRows.dump(2); PlacementOutput.close();
+        if (!PlacementOutput) { MessageBoxA(GetSafeHwnd(),"Could not create JSON batch output.","Models from JSON",MB_OK|MB_ICONERROR); return; }
+    }
+    json Options=json::object(), Identities=json::object(), CompletedModels=json::object();
+    for (const auto* Key : {"exportalllods","match_game_lod_index","exportmodelimg","exportimg","exportimgnames","exportvtxcolor","exporthitbox","patchcolor","patchnormals"})
+        Options[Key]=SettingsManager::GetSetting(Key);
+    const auto CheckpointPath=FileSystems::CombinePath(BatchRoot,"model_export_checkpoint.json");
+    bool LegacySingleLod=Resume && !FileSystems::FileExists(CheckpointPath) &&
+        Options["exportalllods"]!="true" && Options["match_game_lod_index"]!="true";
+    try
+    {
+        if (Resume)
+        {
+            std::ifstream IdFile(FileSystems::CombinePath(BatchRoot,"model_identities.json")); IdFile>>Identities;
+            if (FileSystems::FileExists(CheckpointPath))
+            {
+                json Checkpoint; std::ifstream Input(CheckpointPath); Input>>Checkpoint;
+                if (Checkpoint.at("options")==Options)
+                {
+                    CompletedModels=Checkpoint.at("completed_models");
+                    LegacySingleLod=Checkpoint.value("legacy_single_lod",false);
+                }
+            }
+        }
+    }
+    catch (const std::exception& E) { MessageBoxA(GetSafeHwnd(), E.what(), "Could not read resume metadata", MB_OK|MB_ICONERROR); return; }
+    ProgressDialog=std::make_unique<WraithProgressDialog>(IDD_PROGRESSDIALOG,this);
+    ProgressDialog->SetupDialog("Greyhound | Cold War CAST from JSON","Preparing unique models...",true,true);
+    ProgressDialog->OnCancelClick=CancelProgress; ProgressDialog->OnOkClick=FinishProgress;
+    CoDAssets::CanExportContinue=true;
+    std::thread Worker([this,Queue,File,DuplicateNames,BatchRoot,Resume,Options,Identities,CompletedModels,LegacySingleLod,CheckpointPath]() mutable
+    {
+        ProgressDialog->WaitTillReady(); ProgressDialog->UpdateWindowClose(false); ProgressDialog->UpdateButtons(false,true);
+        json Results=json::array(); size_t Done=0,Success=0,Failed=0,Missing=0,Unavailable=0,Kept=0;
+        bool CheckpointFailed=false;
+        ProgressDialog->UpdateStatus("Waiting for model package cache...");
+        if(CoDAssets::GamePackageCache) CoDAssets::GamePackageCache->WaitForPackageCacheLoad();
+        Image::SetupConversionThread();
+        for(const auto& Item:Queue)
+        {
+            if(!CoDAssets::CanExportContinue) break;
+            ProgressDialog->UpdateStatus(("Completed "+std::to_string(Done)+" / "+std::to_string(Queue.size())+" unique models | "+ModelExportNaming::FileStem(Item.Name)).c_str());
+            std::string Status,Error;
+            json Candidates=json::array();
+            for (size_t Index=0; Index<Item.Candidates.size(); ++Index)
+            {
+                const auto* Candidate=Item.Candidates[Index];
+                Candidates.push_back({{"asset_pointer",Strings::Format("0x%llx",Candidate->AssetPointer)},
+                    {"loaded_index",Candidate->AssetLoadedIndex}, {"status_before",int(Candidate->AssetStatus)},
+                    {"selected",Index==Item.Selected}});
+            }
+            bool Keep=false;
+            try { Keep=Resume && ModelBatchResume::Completed(BatchRoot,Item.Name,Identities,CompletedModels,LegacySingleLod); }
+            catch (const std::exception&) { Keep=false; }
+            if(Keep) {Status="kept_existing";++Kept;}
+            else if(Item.Candidates.empty()) {Status="missing";++Missing;}
+            else if(Item.Selected==(std::numeric_limits<size_t>::max)()) {Status="unavailable";++Unavailable;}
+            else
+            {
+                try { auto R=CoDAssets::ExportJsonBatchModel(static_cast<const CoDModel_t*>(Item.Candidates[Item.Selected]),BatchRoot); Status=R==ExportGameResult::Success?"exported":"failed"; }
+                catch(const std::exception& E) {Status="failed";Error=E.what();}
+                if(Status=="exported") ++Success; else ++Failed;
+            }
+            Results.push_back({{"Name",ModelExportNaming::FileStem(Item.Name)},{"SourceName",Item.Name},
+                {"output_directory",FileSystems::CombinePath(BatchRoot,"models")},
+                {"status",Status},{"error",Error},
+                {"candidate_count",Item.Candidates.size()},{"candidates",Candidates},
+                {"selection_policy","prefer previously exported, then loaded, then other usable; address order breaks ties"},
+                {"candidate_geometry_equivalence_verified",false}});
+            if(Status=="exported" || Status=="kept_existing")
+            {
+                try
+                {
+                    auto Files=json::array();
+                    if (Status=="kept_existing" && CompletedModels.contains(Item.Name)) Files=CompletedModels.at(Item.Name);
+                    else if (Status=="kept_existing" && LegacySingleLod)
+                    {
+                        const auto File=ModelExportNaming::FileStem(Item.Name)+".cast";
+                        Files.push_back({{"file",File},{"bytes",ModelBatchResume::FileSize(BatchRoot+"/models/"+File)}});
+                    }
+                    else Files=ModelBatchResume::Files(BatchRoot,Item.Name);
+                    if (!Files.empty()) CompletedModels[Item.Name]=std::move(Files);
+                }
+                catch(const std::exception&) { CompletedModels.erase(Item.Name); }
+            }
+            // Persist after every model; replacement is atomic so a crash cannot
+            // destroy the last usable checkpoint. The final report remains separate.
+            try
+            {
+                std::ofstream Output(CheckpointPath+".tmp",std::ios::binary);
+                Output<<json({{"schema","greyhound-model-resume-v1"},{"options",Options},{"legacy_single_lod",LegacySingleLod},{"completed_models",CompletedModels}}).dump(2);
+                Output.close();
+                if (!Output || !MoveFileExA((CheckpointPath+".tmp").c_str(),CheckpointPath.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) CheckpointFailed=true;
+            }
+            catch(const std::exception&) { CheckpointFailed=true; }
+            ++Done; ProgressDialog->UpdateProgress(uint32_t(100ull*Done/Queue.size()));
+        }
+        Image::DisableConversionThread();
+        CoDAssets::LatestExportPath=BatchRoot;
+        json Report={{"schema","greyhound-models-from-json-v3"},{"source",File},{"output_directory",BatchRoot},{"layout","flat_models_materials_images"},{"model_format","cast"},{"unique_models",Queue.size()},
+            {"completed",Done},{"exported",Success},{"kept_existing",Kept},{"resumed",Resume},{"checkpoint_write_failed",CheckpointFailed},{"failed",Failed},{"missing",Missing},{"unavailable",Unavailable},
+            {"duplicate_names",DuplicateNames},{"cancelled",Done<Queue.size()},{"models",Results}};
+        std::string ReportPath=FileSystems::CombinePath(BatchRoot,"model_export_report.json"); std::ofstream Output(ReportPath); Output<<Report.dump(2); Output.close();
+        std::string Summary=(Done<Queue.size()?"Cancelled: ":"Finished: ")+std::to_string(Done)+" / "+std::to_string(Queue.size())+"; kept "+std::to_string(Kept)+", exported "+std::to_string(Success)+", failed "+std::to_string(Failed)+", missing "+std::to_string(Missing)+", unavailable "+std::to_string(Unavailable)+", duplicate names "+std::to_string(DuplicateNames);
+        if(CheckpointFailed) Summary+="; checkpoint could not be saved";
+        if(!Output) Summary+="; report could not be saved";
+        Summary+=" | Output: "+BatchRoot;
+        ProgressDialog->UpdateStatus(Summary.c_str()); ProgressDialog->UpdateWindowClose(true);ProgressDialog->UpdateButtons(true,false);
+    });
+    Worker.detach(); ProgressDialog->DoModal();
+}
+
+void MainWindow::OnExportPlacements()
+{
+    ProgressDialog=std::make_unique<WraithProgressDialog>(IDD_PROGRESSDIALOG,this);
+    ProgressDialog->SetupDialog("Greyhound | Model placements","Reading placement districts...",true,false);
+    ProgressDialog->OnOkClick=FinishProgress;
+    std::thread Worker([this]
+    {
+        ProgressDialog->WaitTillReady(); ProgressDialog->UpdateWindowClose(false); ProgressDialog->UpdateButtons(false,false);
+        const auto Directory=FileSystems::CombinePath(FileSystems::GetApplicationPath(),"exported_files/model_placements_"+std::to_string(GetTickCount64()));
+        std::string Status;
+        try { Status=GameBlackOpsCW::ExportModelPlacements(Directory,[this](uint32_t P){ProgressDialog->UpdateProgress(P);}); }
+        catch(const std::exception& E) {Status=std::string("Placement export failed: ")+E.what();}
+        CoDAssets::LatestExportPath=Directory;
+        ProgressDialog->UpdateStatus(Status.c_str()); ProgressDialog->UpdateWindowClose(true);ProgressDialog->UpdateButtons(true,false);
+    });
+    Worker.detach(); ProgressDialog->DoModal();
+}
+
+void MainWindow::OnExportBrushes()
+{
+    ProgressDialog=std::make_unique<WraithProgressDialog>(IDD_PROGRESSDIALOG,this);
+    ProgressDialog->SetupDialog("Greyhound | CW Radiant Brushes","Capturing verified brush data...",true,false);
+    ProgressDialog->OnOkClick=FinishProgress;
+    std::thread Worker([this]
+    {
+        ProgressDialog->WaitTillReady();ProgressDialog->UpdateWindowClose(false);ProgressDialog->UpdateButtons(false,false);
+        SYSTEMTIME Time{};GetLocalTime(&Time);
+        const auto Directory=FileSystems::CombinePath(FileSystems::GetApplicationPath(),Strings::Format("exported_files/CW_Radiant_%04u-%02u-%02u_%02u-%02u-%02u_%03u",
+            Time.wYear,Time.wMonth,Time.wDay,Time.wHour,Time.wMinute,Time.wSecond,Time.wMilliseconds));
+        std::string Status;
+        try {Status=GameBlackOpsCW::ExportRadiantBrushes(Directory,[this](uint32_t P,const std::string& Stage){ProgressDialog->UpdateProgress(P);ProgressDialog->UpdateStatus(Stage.c_str());});}
+        catch(const std::exception& E){Status=std::string("Brush export failed: ")+E.what();}
+        ProgressDialog->UpdateStatus(Status.c_str());ProgressDialog->UpdateWindowClose(true);ProgressDialog->UpdateButtons(true,false);
+    });
+    Worker.detach();ProgressDialog->DoModal();
 }

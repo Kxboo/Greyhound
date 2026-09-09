@@ -231,6 +231,9 @@ public:
         void* ProgressCaller = nullptr, uint32_t ProgressStart = 0,
         uint32_t ProgressSpan = 100);
 
+    // Explicit per-call layout for Models from JSON; never changes saved settings.
+    static ExportGameResult ExportJsonBatchModel(const CoDModel_t* Model, const std::string& Root);
+
     // Gets a model asset for previewing
     static std::unique_ptr<WraithModel> GetModelForPreview(const CoDModel_t* Model);
 
@@ -267,7 +270,7 @@ private:
     // Exports a game animation asset
     static ExportGameResult ExportAnimationAsset(const CoDAnim_t* Animation, const std::string& ExportPath);
     // Exports a game model asset
-    static ExportGameResult ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension);
+    static ExportGameResult ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot = std::string());
     // Exports a game image asset
     static ExportGameResult ExportImageAsset(const CoDImage_t* Image, const std::string& ExportPath, const std::string& ImageExtension);
     // Exports a game sound asset
@@ -286,11 +289,11 @@ public:
     // through the normal asset-list selection path (for example decals).
     static void ExportMaterialImageNames(const XMaterial_t& Material, const std::string& ExportPath);
     // Exports images from a specific game material
-    static void ExportMaterialImages(const XMaterial_t& Material, const std::string& ImagesPath, const std::string& ImageExtension, ImageFormat ImageFormatType);
+    static void ExportMaterialImages(const XMaterial_t& Material, const std::string& ImagesPath, const std::string& ImageExtension, ImageFormat ImageFormatType, const std::string& ReportsPath = std::string());
 private:
 
     // Export a WraithModel to the various formats specified in settings
-    static void ExportWraithModel(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath);
+    static void ExportWraithModel(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath, bool CastOnly = false);
 
     // Exports the asset in the list provided, in async
     static void ExportSelectedAssets(void* Caller, const std::unique_ptr<std::vector<CoDAsset_t*>>& Assets);

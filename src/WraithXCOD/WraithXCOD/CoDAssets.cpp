@@ -1,8 +1,10 @@
 #include "stdafx.h"
+#include "FlatMaterialExport.h"
 #include "spdlog/spdlog.h"
 
 // The class we are implementing
 #include "CoDAssets.h"
+#include "ModelBatchResume.h"
 
 #include <cstring>
 #include <fstream>
@@ -20,6 +22,13 @@
 #include "BinaryWriter.h"
 #include "TextWriter.h"
 #include "json.hpp"
+#include "ModelExportNaming.h"
+
+// Clean compiled-map names at the filesystem boundary, never in the asset pool.
+static std::string ModelFileName(const std::string& Name)
+{
+    return ModelExportNaming::FileStem(Name);
+}
 
 // DirectX shader reflection is used by the TerrainGfx research exporter to
 // recover the renderer resource layout that is otherwise absent from the
@@ -1269,6 +1278,11 @@ ExportGameResult CoDAssets::ExportAsset(const CoDAsset_t* Asset,
         }
 // #ifndef _DEBUG
     }
+    catch (const std::exception& Error)
+    {
+        Result = ExportGameResult::UnknownError;
+        CoDAssets::Log->error("Export failed for {0}: {1}", Asset->AssetName, Error.what());
+    }
     catch (...)
     {
         Result = ExportGameResult::UnknownError;
@@ -1595,7 +1609,7 @@ std::string CoDAssets::BuildExportPath(const CoDAsset_t* Asset)
         break;
     case WraithAssetType::Model:
         // Directory with asset name
-        ApplicationPath = FileSystems::CombinePath(FileSystems::CombinePath(ApplicationPath, "xmodels"), Asset->AssetName);
+        ApplicationPath = FileSystems::CombinePath(FileSystems::CombinePath(ApplicationPath, "xmodels"), ModelFileName(Asset->AssetName));
         break;
     case WraithAssetType::Image:
         // Default directory
@@ -1834,8 +1848,73 @@ bool CoDAssets::ShouldExportModel(std::string ExportPath)
     return Result;
 }
 
-ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension)
+ExportGameResult CoDAssets::ExportJsonBatchModel(const CoDModel_t* Model, const std::string& Root)
 {
+    if (GameID != SupportedGames::BlackOpsCW) throw std::runtime_error("JSON batch layout supports Cold War only");
+    if (Root.empty()) throw std::runtime_error("Missing JSON batch output directory");
+    const auto Models = FileSystems::CombinePath(Root, "models");
+    const auto Images = FileSystems::CombinePath(Root, "images");
+    const auto Materials = FileSystems::CombinePath(Root, "materials");
+    FileSystems::CreateDirectory(Models);
+    FileSystems::CreateDirectory(Images);
+    FileSystems::CreateDirectory(Materials);
+    LatestExportPath = Root;
+    return ExportModelAsset(Model, Models, Images, "../images/",
+        "." + Strings::ToLower(SettingsManager::GetSetting("exportimg", "PNG")), Root);
+}
+
+ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot)
+{
+    // Reserve the shortened directory with its original identity. This also
+    // prevents a later map's variant from being mistaken for an existing export.
+    // Check ordinary names too: they may collide with a cleaned map name.
+    {
+        static std::mutex IdentityMutex;
+        std::lock_guard<std::mutex> Lock(IdentityMutex);
+        if (!BatchRoot.empty())
+        {
+            const auto Path = FileSystems::CombinePath(BatchRoot, "model_identities.json");
+            nlohmann::json Identities = nlohmann::json::object();
+            std::ifstream Input(Path); if (Input) Input >> Identities;
+            auto Key = Strings::ToLower(ModelFileName(Model->AssetName));
+            if (Identities.contains(Key) && Identities[Key].get<std::string>() != Model->AssetName)
+                throw std::runtime_error("Flat model name collision: " + ModelFileName(Model->AssetName));
+            if (!Identities.contains(Key))
+            {
+                const auto Stem = ModelFileName(Model->AssetName);
+                if (!FileSystems::GetFiles(ExportPath, Stem + ".*").empty() ||
+                    !FileSystems::GetFiles(ExportPath, Stem + "_LOD*").empty())
+                    throw std::runtime_error("Existing flat model files have no recorded identity: " + Stem);
+                Identities[Key] = Model->AssetName;
+                std::ofstream Output(Path, std::ios::binary); Output << Identities.dump(2); Output.close();
+                if (!Output) throw std::runtime_error("Could not save batch model identities");
+            }
+        }
+        else
+        {
+        const auto IdentityPath = FileSystems::CombinePath(ExportPath, "model_identity.json");
+        std::ifstream Existing(IdentityPath);
+        if (Existing)
+        {
+            nlohmann::json Identity; Existing >> Identity;
+            if (Identity.value("original_name", std::string()) != Model->AssetName)
+                throw std::runtime_error("Short model name collision at " + ExportPath + "; model_identity.json belongs to another runtime name.");
+        }
+        else if (ModelExportNaming::Stem(Model->AssetName) != Model->AssetName)
+        {
+            // Do not claim an existing unlabelled directory of model files.
+            const auto Files = FileSystems::GetFiles(ExportPath, "*");
+            if (!Files.empty())
+                throw std::runtime_error("Cannot verify ownership of existing shortened model directory: " + ExportPath);
+            nlohmann::json Identity = {{"original_name",Model->AssetName},
+                {"export_name",ModelFileName(Model->AssetName)},
+                {"kind","compiled_map_named_xmodel"},
+                {"coordinates","original model coordinates; CAST/OBJ scaled from game inches to centimetres"}};
+            std::ofstream Output(IdentityPath, std::ios::binary); Output << Identity.dump(2); Output.close();
+            if (!Output) throw std::runtime_error("Could not save model identity: " + IdentityPath);
+        }
+        }
+    }
     // Prepare to export the model
     std::unique_ptr<XModel_t> GenericModel = CoDAssets::LoadGenericModelAsset(Model);
     // Grab the image format type
@@ -1847,7 +1926,8 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
     // Check if we want image names
     auto ExportImageNames = SettingsManager::GetSetting("exportimgnames") == "true";
     // Check if we want material folders
-    auto ExportMaterialFolders = SettingsManager::GetSetting("mdlmtlfolders") == "true";
+    auto ExportMaterialFolders = BatchRoot.empty() && SettingsManager::GetSetting("mdlmtlfolders") == "true";
+    const auto MaterialsPath = BatchRoot.empty() ? std::string() : FileSystems::CombinePath(BatchRoot, "materials");
 
 
     // Only create if Model Images are enabled
@@ -1874,35 +1954,73 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
     // Check
     if (GenericModel != nullptr)
     {
-        // Prepare material images
-        for (auto& LOD : GenericModel->ModelLods)
+        const bool ExportAllLods = SettingsManager::GetSetting("exportalllods") == "true";
+        const auto BiggestLodIndex = ExportAllLods ? -1 : CoDXModelTranslator::CalculateBiggestLodIndex(GenericModel);
+        if (!ExportAllLods && BiggestLodIndex < 0)
+            return ExportGameResult::UnknownError;
+        const auto ShouldWriteModel = [&](const std::string& Path)
         {
+            return BatchRoot.empty() ? ShouldExportModel(Path) :
+                (SettingsManager::GetSetting("skipprevmodel") != "true" || !ModelBatchResume::CompleteCast(Path + ".cast"));
+        };
+
+        // Prepare material images
+        for (size_t LodIndex = 0; LodIndex < GenericModel->ModelLods.size(); ++LodIndex)
+        {
+            // Dependencies must follow the same LOD selection as the model files.
+            if (!ExportAllLods && LodIndex != static_cast<size_t>(BiggestLodIndex))
+                continue;
+            auto& LOD = GenericModel->ModelLods[LodIndex];
             // Iterate over all materials for the lod
             for (auto& Material : LOD.Materials)
             {
+                bool NewBatchMaterial = false;
+                if (!BatchRoot.empty())
+                {
+                    const auto OriginalMaterial = Material.MaterialName;
+                    Material.MaterialName = ModelExportNaming::Escape(Material.MaterialName);
+                    nlohmann::json Bindings = nlohmann::json::array(), Parameters = nlohmann::json::array();
+                    for (auto& Image : Material.Images)
+                    {
+                        const auto SourceName = Image.ImageName;
+                        Image.ImageName = ModelExportNaming::Escape(Image.ImageName);
+                        Bindings.push_back({{"Name",Image.ImageName},{"SourceName",SourceName},
+                            {"File","../images/" + Image.ImageName + ImageExtension}, {"SemanticHash",Image.SemanticHash}});
+                    }
+                    for (const auto& Setting : Material.Settings)
+                        Parameters.push_back({{"Name",Setting.Name},{"Type",Setting.Type},
+                            {"Value",{Setting.Data[0],Setting.Data[1],Setting.Data[2],Setting.Data[3]}}});
+                    const nlohmann::json Description = {{"Name",Material.MaterialName},{"SourceName",OriginalMaterial},
+                        {"Techset",Material.TechsetName},{"SurfaceType",Material.SurfaceTypeName},{"Images",Bindings},{"Settings",Parameters}};
+                    // One exported material per name; keep the first description.
+                    Material.MaterialName = FlatMaterialExport::Save(MaterialsPath, Description, &NewBatchMaterial);
+                }
                 auto CompleteImagesPath = ImagesPath;
                 auto CompleteImageRelativePath = ImageRelativePath;
 
                 // Check if we want material folders
-                if (ExportMaterialFolders && ExportImages)
+                if (ExportMaterialFolders)
                 {
                     // Create a new Folder
                     CompleteImagesPath = FileSystems::CombinePath(ImagesPath, Material.MaterialName);
                     CompleteImageRelativePath = FileSystems::CombinePath(ImageRelativePath, Material.MaterialName) + "\\\\";
                     // Create if not exists
-                    FileSystems::CreateDirectory(CompleteImagesPath);
+                    if (ExportImages || ExportImageNames)
+                        FileSystems::CreateDirectory(CompleteImagesPath);
                 }
 
                 // Export image names if needed
-                if (ExportImageNames)
+                if (ExportImageNames && (BatchRoot.empty() || NewBatchMaterial))
                 {
                     // Process Image Names
-                    ExportMaterialImageNames(Material, ExportPath);
+                    // Keep parameter/settings files beside this material's textures,
+                    // including metadata-only exports. Flat exports retain the model folder.
+                    ExportMaterialImageNames(Material, !BatchRoot.empty() ? MaterialsPath : (ExportMaterialFolders ? CompleteImagesPath : ExportPath));
                 }
                 if (ExportImages)
                 {
                     // Process the material
-                    ExportMaterialImages(Material, CompleteImagesPath, ImageExtension, ImageFormatType);
+                    ExportMaterialImages(Material, CompleteImagesPath, ImageExtension, ImageFormatType, MaterialsPath);
                 }
 
                 // Apply image paths
@@ -1915,7 +2033,7 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
         }
 
         // Determine lod export type
-        if (SettingsManager::GetSetting("exportalllods") == "true")
+        if (ExportAllLods)
         {
             // We should export all loaded lods from this xmodel
             auto LodCount = (uint32_t)GenericModel->ModelLods.size();
@@ -1924,19 +2042,17 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
             for (uint32_t i = 0; i < LodCount; i++)
             {
                 // Continue if we should not export this model (files already exist)
-                if (ShouldExportModel(FileSystems::CombinePath(ExportPath, Model->AssetName + Strings::Format("_LOD%d", i))))
+                if (ShouldWriteModel(FileSystems::CombinePath(ExportPath, ModelFileName(Model->AssetName) + Strings::Format("_LOD%d", i))))
                 {
                     // Translate generic model to a WraithModel, then export
                     auto Result = CoDXModelTranslator::TranslateXModel(GenericModel, i);
 
-                    // Apply lod name
-                    Result->AssetName += Strings::Format("_LOD%d", i);
-
                     // Check result and export
                     if (Result != nullptr)
                     {
+                        Result->AssetName = ModelExportNaming::Stem(Model->AssetName) + Strings::Format("_LOD%d", i);
                         // Send off to exporter
-                        ExportWraithModel(Result, ExportPath);
+                        ExportWraithModel(Result, ExportPath, !BatchRoot.empty());
                     }
                     else
                     {
@@ -1949,34 +2065,25 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
         else
         {
             // We should export the biggest we can find
-            const auto BiggestLodIndex = CoDXModelTranslator::CalculateBiggestLodIndex(GenericModel);
-
             // If the biggest > -1 translate
             if (BiggestLodIndex > -1)
             {
-                // Default lod index suffix using 0
-                std::string LodIndexSuffix = "_LOD0";
-
-                // If we are using the "match game lod index" setting
-                if (SettingsManager::GetSetting("match_game_lod_index", "false") == "true")
-                {
-                    LodIndexSuffix = Strings::Format("_LOD%d", BiggestLodIndex);
-                }
+                // A single default export shares its stem with the folder and placement Name.
+                const auto LodIndexSuffix = ModelExportNaming::LodSuffix(false,
+                    SettingsManager::GetSetting("match_game_lod_index", "false") == "true", BiggestLodIndex);
 
                 // Check if we should not export this model (files already exist)
-                if (ShouldExportModel(FileSystems::CombinePath(ExportPath, Model->AssetName + LodIndexSuffix)))
+                if (ShouldWriteModel(FileSystems::CombinePath(ExportPath, ModelFileName(Model->AssetName) + LodIndexSuffix)))
                 {
                     // Translate generic model to a WraithModel, then export
                     const auto Result = CoDXModelTranslator::TranslateXModel(GenericModel, BiggestLodIndex);
 
-                    // Apply lod name (_LODx)
-                    Result->AssetName += LodIndexSuffix;
-
                     // Check result and export
                     if (Result != nullptr)
                     {
+                        Result->AssetName = ModelExportNaming::Stem(Model->AssetName) + LodIndexSuffix;
                         // Send off to exporter
-                        ExportWraithModel(Result, ExportPath);
+                        ExportWraithModel(Result, ExportPath, !BatchRoot.empty());
                     }
                     else
                     {
@@ -2008,8 +2115,8 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
             if (Result != nullptr)
             {
                 // Export it
-                Result->AssetName += "_HITBOX";
-                ExportWraithModel(Result, ExportPath);
+                Result->AssetName = ModelExportNaming::Stem(Model->AssetName) + "_HITBOX";
+                ExportWraithModel(Result, ExportPath, !BatchRoot.empty());
             }
         }
     }
@@ -2243,6 +2350,9 @@ ExportGameResult CoDAssets::ExportSoundAsset(const CoDSound_t* Sound, const std:
 
 ExportGameResult CoDAssets::ExportRawfileAsset(const CoDRawFile_t* Rawfile, const std::string& ExportPath)
 {
+    if (CoDAssets::GameID == SupportedGames::BlackOpsCW && Rawfile->ResearchPoolIndex != UINT32_MAX)
+        return GameBlackOpsCW::ExportResearchPool(Rawfile, ExportPath)
+            ? ExportGameResult::Success : ExportGameResult::UnknownError;
     // Read from specific handler (By game)
     switch (CoDAssets::GameID)
     {
@@ -5858,17 +5968,32 @@ ExportGameResult CoDAssets::ExportMaterialAsset(const CoDMaterial_t* Material, c
     return ExportGameResult::Success;
 }
 
-void CoDAssets::ExportWraithModel(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath)
+void CoDAssets::ExportWraithModel(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath, bool CastOnly)
 {
-    // Write Cosmetic List
-    TextWriter Cosmetics;
-    Cosmetics.Create(FileSystems::CombinePath(ExportPath, Model->AssetName + "_cosmetics.mel"));
-
-    for (auto& Bone : Model->Bones)
+    // The source name was shortened before appending the generated LOD suffix.
+    Model->AssetName = ModelExportNaming::Escape(Model->AssetName);
+    if (CastOnly)
     {
-        if (Bone.IsCosmetic)
+        Model->ScaleModel(2.54f);
+        Cast::ExportCastModel(*Model.get(), FileSystems::CombinePath(ExportPath, Model->AssetName + ".cast"));
+        return;
+    }
+    // MEL is a Maya helper, not a dependency of CAST or the other formats.
+    if (SettingsManager::GetSetting("export_ma") == "true")
+    {
+        TextWriter Cosmetics;
+        bool Created = false;
+        for (auto& Bone : Model->Bones)
         {
-            Cosmetics.WriteLineFmt("select -add %s;", Bone.TagName.c_str());
+            if (Bone.IsCosmetic)
+            {
+                if (!Created)
+                {
+                    Cosmetics.Create(FileSystems::CombinePath(ExportPath, Model->AssetName + "_cosmetics.mel"));
+                    Created = true;
+                }
+                Cosmetics.WriteLineFmt("select -add %s;", Bone.TagName.c_str());
+            }
         }
     }
 
@@ -6027,6 +6152,9 @@ void CoDAssets::LogXAsset(const std::string& Type, const std::string& Name)
 
 void CoDAssets::ExportMaterialImageNames(const XMaterial_t& Material, const std::string& ExportPath)
 {
+    // Global material folders may be shared by concurrent model exports.
+    static std::mutex MaterialMetadataMutex;
+    std::lock_guard<std::mutex> MetadataLock(MaterialMetadataMutex);
     // Try write the image name
     try
     {
@@ -6091,7 +6219,7 @@ void CoDAssets::ExportMaterialImageNames(const XMaterial_t& Material, const std:
     }
 }
 
-void CoDAssets::ExportMaterialImages(const XMaterial_t& Material, const std::string& ImagesPath, const std::string& ImageExtension, ImageFormat ImageFormatType)
+void CoDAssets::ExportMaterialImages(const XMaterial_t& Material, const std::string& ImagesPath, const std::string& ImageExtension, ImageFormat ImageFormatType, const std::string& ReportsPath)
 {
     // Images this material binds that could not be written.  _images.txt carries
     // a row for every bound semantic, so an image missing from disk used to be
@@ -6163,7 +6291,7 @@ void CoDAssets::ExportMaterialImages(const XMaterial_t& Material, const std::str
         {
             TextWriter Report;
 
-            if (Report.Create(FileSystems::CombinePath(ImagesPath, Material.MaterialName + "_images_failed.txt")))
+            if (Report.Create(FileSystems::CombinePath(ReportsPath.empty() ? ImagesPath : ReportsPath, Material.MaterialName + "_images_failed.txt")))
             {
                 Report.WriteLine("image_name,reason");
 

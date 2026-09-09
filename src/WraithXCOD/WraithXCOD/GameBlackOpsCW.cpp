@@ -20,6 +20,13 @@
 #include "HalfFloats.h"
 #include "Sound.h"
 #include "TerrainResearchCapture.h"
+#include "CWMapCandidateCapture.h"
+#include "CWMapWorldCapture.h"
+#include "CWSplineCapture.h"
+#include "CWClipMapCapture.h"
+#include "CWRadiantExport.h"
+#include "CWBrushTypeCapture.h"
+#include "ModelExportNaming.h"
 
 // We need Opus
 #include "../../External/Opus/include/opus.h"
@@ -872,6 +879,280 @@ bool GameBlackOpsCW::ExportTerrainResearch(const CoDTerrain_t* Terrain,
     return C.Finish();
 }
 
+#include "CWPoolProbe.h"
+
+namespace
+{
+    struct CWResearchPool { uint32_t Index; const char* Name; const char* Setting; };
+    // T9 Main.hpp enum: names are candidates, not verified member layouts.
+    const CWResearchPool CWResearchPools[] = {
+        {0x02, "physpreset", "showcwcollision"}, {0x03, "physconstraints", "showcwcollision"},
+        {0x04, "destructibledef", "showcwentities"}, {0x43, "glasses", "showcwentities"},
+        {0xD1, "dynmodel", "showcwentities"}, {0x8E, "entitylist", "showcwentities"},
+        {0x4B, "keyvaluepairs", "showcwentities"}, {0x57, "scriptbundle", "showcwentities"},
+        {0x80, "triggerlist", "showcwtriggers"}, {0xD7, "triggereffectdesc", "showcwtriggers"},
+        {0xD8, "triggeractions", "showcwtriggers"},
+        {0x3E, "animtree", "showcwai"}, {0x5C, "aimtable", "showcwai"},
+        {0x62, "animstatemachine", "showcwai"}, {0x63, "behaviortree", "showcwai"},
+        {0x64, "behaviorstatemachine", "showcwai"}, {0xC2, "navinput", "showcwnav"},
+        {0x07, "xcollision", "showcwcollision"},
+        {0x17, "col_map", "showcwcollision"}, {0x18, "clip_map", "showcwcollision"},
+        {0x19, "com_map", "showcwworld"}, {0x1A, "game_map", "showcwworld"},
+        {0x1B, "gfx_map", "showcwworld"}, {0xAB, "districts", "showcwworld"},
+        {0x75, "navmesh", "showcwnav"}, {0x76, "navvolume", "showcwnav"},
+        {0x33, "fx", "showcwfx"}, {0x7F, "staticlevelfxlist", "showcwfx"}
+    };
+}
+
+bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::string& ExportPath, bool Radiant, const std::function<void(uint32_t, const std::string&)>& Progress)
+{
+    using namespace TerrainResearch;
+    if (!CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset) return false;
+    const CWResearchPool* Target = nullptr;
+    for (const auto& P : CWResearchPools) if (P.Index == Asset->ResearchPoolIndex) Target = &P;
+    if (!Target) return false;
+    Radiant = Target->Index == 0x18 && (Radiant || SettingsManager::GetSetting("cwradiantbrushes", "false") == "true");
+    if (Radiant && !CWRadiantExport::Available()) { if(Progress)Progress(0,"Missing brush_export runtime beside Greyhound.exe.");return false; }
+    if(Radiant && Progress)Progress(0,"Capturing collision payloads and direct brush placements...");
+    const auto Root = FileSystems::CombinePath(ExportPath, Radiant ? std::string("diagnostics") : Strings::Format("cw_pool_%03X_%llu",
+        Target->Index, GetTickCount64()));
+    // Reserve a new directory; never mix evidence from separate exports.
+    if (!CreateDirectoryA(Root.c_str(), nullptr)) return false;
+    Capture C(Root, {});
+    C.Report["schema"] = "greyhound-cw-pool-evidence-v1";
+    C.Report["pool_name_candidate"] = Target->Name;
+    C.Report["pool_index"] = Target->Index;
+    C.Report["enum_source"] = "https://github.com/ProjectDonetsk/T9/blob/048a1a0d7ca75ccb190a45a32c7882e4ac1e3ebb/hook_lib/Main.hpp";
+    C.Report["layout_status"] = "opaque headers; enum/build compatibility unverified";
+    C.Report["payloads_captured"] = false;
+    C.Report["unresolved"] = {"nested payload layouts", "slot occupancy", "BO3 reconstruction"};
+    const uint64_t Descriptor = BOCWDBAssetPoolsOffset + sizeof(BOCWXAssetPoolData) * Target->Index;
+    const auto Start = C.Span(Descriptor, sizeof(BOCWXAssetPoolData), "descriptor_start.bin", "pool descriptor including free-list head");
+    BOCWXAssetPoolData P{};
+    if (Start.size() != sizeof(P)) { C.Finish(); return false; }
+    memcpy(&P, Start.data(), sizeof(P));
+    const uint64_t Bytes = uint64_t(P.AssetSize) * P.PoolSize;
+    const bool Valid = Pointer(P.PoolPtr) && P.AssetSize >= 8 && P.AssetSize <= 65536 &&
+        P.PoolSize && P.AssetsLoaded <= P.PoolSize && Bytes <= Capture::SpanLimit &&
+        Bytes <= 0x0000800000000000ull - P.PoolPtr;
+    C.Report["pool"] = {{"address", Hex(P.PoolPtr)}, {"asset_size", P.AssetSize},
+        {"capacity", P.PoolSize}, {"loaded", P.AssetsLoaded}, {"requested_bytes", Bytes},
+        {"free_head", Hex(P.PoolFreeHeadPtr)}, {"descriptor_valid", Valid}};
+    std::vector<uint8_t> Headers;
+    if (Valid) Headers = C.Span(P.PoolPtr, Bytes, "headers.bin",
+        "full capacity including free slots; headers only, pointers are not portable payloads");
+    const bool Probe = SettingsManager::GetSetting("cwprobepayloads", "false") == "true";
+    const bool DeepProbe = Probe && SettingsManager::GetSetting("cwdeepProbe", "false") == "true";
+    const bool MapData = Radiant || SettingsManager::GetSetting("cwmapdata", "false") == "true";
+    const bool AutoTypes=Radiant && SettingsManager::GetSetting("cwradianttypes","true")=="true";
+    CWBrushTypeCapture::Types TypeCapture;
+    bool TypesComplete=!AutoTypes;
+    C.Report["capture_sections"] = {{"entities_triggers", !Radiant && SettingsManager::GetSetting("cwcaptureentities", "true")=="true"},
+        {"model_placements", !Radiant && SettingsManager::GetSetting("cwcaptureplacements", "true")=="true"},
+        {"model_splines", !Radiant && SettingsManager::GetSetting("cwcapturesplines", "false")=="true"},
+        {"collision_payloads", Radiant || SettingsManager::GetSetting("cwcapturecollision", "true")=="true"},
+        {"typed_capture_enabled", MapData || DeepProbe}};
+    C.Report["probe"] = {{"enabled", Probe}, {"recursive", false},
+        {"slot_limit", 256}, {"unique_address_limit", 256}, {"prefix_byte_limit", 4096},
+        {"occupancy", "unknown; sampled slots may be free"},
+        {"interpretation", "aligned address-like words only; no pointer or count semantics verified"},
+        {"candidates", json::array()}};
+    if ((DeepProbe || MapData) && !Headers.empty())
+    {
+        const auto Occupancy = CWPoolProbe::FreeSlots(Headers, P.AssetSize, P.PoolPtr,
+            P.PoolFreeHeadPtr, P.AssetsLoaded);
+        if (Occupancy.Valid && P.AssetsLoaded == 1)
+            for (uint32_t S = 0; S < P.PoolSize; ++S)
+                if (!Occupancy.Free.count(S))
+                {
+                    const auto First = Headers.begin() + size_t(S) * P.AssetSize;
+                    const std::vector<uint8_t> Slot(First, First + P.AssetSize);
+                    if(AutoTypes)TypeCapture.Begin(C,BOCWDBAssetPoolsOffset,Slot);
+                    if (!Radiant && SettingsManager::GetSetting("cwcaptureentities", "true")=="true")
+                        CWMapCandidateCapture::Capture(C, Target->Index, Slot);
+                    if (!Radiant && SettingsManager::GetSetting("cwcaptureplacements", "true")=="true")
+                        CWMapWorldCapture::Capture(C, Target->Index, Slot);
+                    if (!Radiant && SettingsManager::GetSetting("cwcapturesplines", "false")=="true")
+                        CWSplineCapture::Capture(C, Target->Index, Slot);
+                    if (Radiant || SettingsManager::GetSetting("cwcapturecollision", "true")=="true")
+                        CWClipMapCapture::Capture(C, Target->Index, Slot);
+                }
+        C.Report["headers_readback_unchanged"]=C.VerifySpan(P.PoolPtr,Headers,"headers.bin");
+        if(AutoTypes)TypesComplete=TypeCapture.Finish(C);
+        if(MapData)
+            C.Report["map_data_status"]=(C.Report.contains("typed_candidates")
+                || C.Report.contains("gfx_map_static_models")
+                || C.Report.contains("district_static_models")
+                || C.Report.contains("collision_arrays") || C.Report.contains("model_splines"))
+                ? "candidate_capture_attempted" : "unsupported_layout_or_occupancy";
+    }
+    if (DeepProbe && !MapData && !Headers.empty())
+    {
+        CWPoolProbe::Graph Graph;
+        const auto Occupancy = CWPoolProbe::FreeSlots(Headers, P.AssetSize, P.PoolPtr,
+            P.PoolFreeHeadPtr, P.AssetsLoaded);
+        uint32_t Scanned = 0;
+        for (uint32_t S = 0; S < P.PoolSize && Scanned < 256; ++S)
+        {
+            if (Occupancy.Valid && Occupancy.Free.count(S)) continue;
+            const auto First = Headers.begin() + size_t(S) * P.AssetSize;
+            Graph.Scan(std::vector<uint8_t>(First, First + P.AssetSize),
+                P.PoolPtr + uint64_t(S) * P.AssetSize, 1, 8);
+            ++Scanned;
+        }
+        C.Report["capture_sections"] = {{"entities_triggers", !Radiant && SettingsManager::GetSetting("cwcaptureentities", "true")=="true"},
+        {"model_placements", !Radiant && SettingsManager::GetSetting("cwcaptureplacements", "true")=="true"},
+        {"model_splines", !Radiant && SettingsManager::GetSetting("cwcapturesplines", "false")=="true"},
+        {"collision_payloads", Radiant || SettingsManager::GetSetting("cwcapturecollision", "true")=="true"},
+        {"typed_capture_enabled", MapData || DeepProbe}};
+    C.Report["probe"] = {{"enabled", true}, {"recursive", true},
+            {"mode", "bounded_pointer_graph"}, {"depth_limit", CWPoolProbe::Graph::DepthLimit},
+            {"prefix_byte_limit", CWPoolProbe::Graph::PrefixBytes},
+            {"unique_address_limit", CWPoolProbe::Graph::NodeLimit},
+            {"edge_limit", CWPoolProbe::Graph::EdgeLimit}, {"slots_scanned", Scanned},
+            {"slots_omitted", (Occupancy.Valid ? P.AssetsLoaded : P.PoolSize) - Scanned},
+            {"occupancy", Occupancy.Valid ? "free-list shape and count validated; non-atomic" : "unknown; includes potentially free slots"},
+            {"interpretation", "candidate pointer graph; array lengths, types and ownership unverified"},
+            {"nodes", json::array()}, {"edges", json::array()}};
+        for (size_t I = 0; I < Graph.Queue.size(); ++I)
+        {
+            // Copy: Scan may grow/reallocate Queue.
+            const auto Address = Graph.Queue[I].first;
+            const auto Depth = Graph.Queue[I].second;
+            json N = {{"address", Hex(Address)}, {"depth", Depth}, {"status", "query_failed"}};
+            MEMORY_BASIC_INFORMATION M{};
+            if (VirtualQueryEx(CoDAssets::GameInstance->GetCurrentProcess(),
+                reinterpret_cast<const void*>(Address), &M, sizeof(M)))
+            {
+                const auto Base = reinterpret_cast<uint64_t>(M.BaseAddress);
+                N["region"] = {{"base", Hex(Base)}, {"bytes", M.RegionSize},
+                    {"protection", M.Protect}, {"state", M.State}, {"type", M.Type}};
+                // Never traverse code/image mappings as candidate asset payloads.
+                const auto Access = M.Protect & 0xFF;
+                if (M.Type == MEM_IMAGE || Access == PAGE_EXECUTE || Access == PAGE_EXECUTE_READ ||
+                    Access == PAGE_EXECUTE_READWRITE || Access == PAGE_EXECUTE_WRITECOPY)
+                    N["status"] = "image_or_executable_mapping_skipped";
+                else if (Base <= Address && M.RegionSize <= UINT64_MAX - Base && Base + M.RegionSize > Address)
+                {
+                    const auto Size = std::min<uint64_t>(CWPoolProbe::Graph::PrefixBytes, Base + M.RegionSize - Address);
+                    const auto File = "graph_" + Hex(Address) + ".bin";
+                    const auto Data = C.Span(Address, Size, File,
+                        "bounded speculative prefix; includes potentially unrelated adjacent bytes", false, "speculative");
+                    N["status"] = C.Report["reads"].back()["status"];
+                    N["file"] = C.Report["reads"].back()["file"];
+                    N["requested_bytes"] = Size;
+                    N["read_bytes"] = C.Report["reads"].back()["read_bytes"];
+                    if (!Data.empty()) Graph.Scan(Data, Address, Depth + 1);
+                }
+                else N["status"] = "invalid_region";
+            }
+            C.Report["probe"]["nodes"].push_back(N);
+        }
+        for (const auto& E : Graph.Edges)
+            C.Report["probe"]["edges"].push_back({{"parent_address", Hex(E.Parent)},
+                {"field_offset", E.Offset}, {"address", Hex(E.Address)}, {"depth", E.Depth}});
+        C.Report["probe"]["address_limit_reached"] = Graph.NodeLimitReached;
+        C.Report["probe"]["edge_limit_reached"] = Graph.EdgeLimitReached;
+    }
+    else if (Probe && !MapData && !Headers.empty())
+    {
+        const auto Plan = CWPoolProbe::Plan(Headers, P.AssetSize);
+        C.Report["probe"]["slots_scanned"] = Plan.Slots;
+        C.Report["probe"]["slots_omitted"] = P.PoolSize - Plan.Slots;
+        C.Report["probe"]["address_limit_reached"] = Plan.LimitReached;
+        for (const auto& Candidate : Plan.Candidates)
+        {
+            json R = {{"slot", Candidate.Slot}, {"header_offset", Candidate.Offset},
+                {"parent_address", Hex(P.PoolPtr + uint64_t(Candidate.Slot) * P.AssetSize)},
+                {"address", Hex(Candidate.Address)}, {"status", "query_failed"}};
+            MEMORY_BASIC_INFORMATION M{};
+            if (VirtualQueryEx(CoDAssets::GameInstance->GetCurrentProcess(),
+                reinterpret_cast<const void*>(Candidate.Address), &M, sizeof(M)))
+            {
+                const auto Base = reinterpret_cast<uint64_t>(M.BaseAddress);
+                if (Base <= Candidate.Address && M.RegionSize <= UINT64_MAX - Base &&
+                    Base + M.RegionSize > Candidate.Address)
+                {
+                    const auto Size = std::min<uint64_t>(4096, Base + M.RegionSize - Candidate.Address);
+                    const auto File = "probe_" + Hex(Candidate.Address) + ".bin";
+                    C.Span(Candidate.Address, Size, File,
+                        "unverified one-hop prefix; may include unrelated adjacent bytes", false, "speculative");
+                    R["status"] = C.Report["reads"].back()["status"];
+                    R["file"] = File;
+                    R["requested_bytes"] = Size;
+                    R["read_bytes"] = C.Report["reads"].back()["read_bytes"];
+                }
+                else R["status"] = "invalid_region";
+            }
+            C.Report["probe"]["candidates"].push_back(R);
+        }
+    }
+    const auto End = C.Span(Descriptor, sizeof(P), "descriptor_end.bin", "descriptor stability check", true);
+    C.Report["descriptor_unchanged"] = End.size() == Start.size() && End == Start;
+    C.Report["header_pool_complete"] = Valid && Headers.size() == Bytes;
+    C.Report["coverage"] = MapData
+        ? "headers and counted entity/trigger candidate arrays with readback; no speculative graph or complete asset claim"
+        : DeepProbe
+        ? "headers and bounded two-hop candidate graph; no complete payload or decoded asset claim"
+        : Probe
+        ? "headers and bounded speculative prefixes; no complete payload or decoded asset claim"
+        : "headers only; no collision meshes, brushes, entities or navigation decoded";
+    bool ReadsSaved = TypesComplete;
+    if (C.Report.contains("typed_candidates") &&
+        (!C.Report["typed_candidates"].value("saved", false) || !C.Report["typed_candidates"].value("complete", false))) ReadsSaved = false;
+    if(C.Report.contains("headers_readback_unchanged") && !C.Report["headers_readback_unchanged"].get<bool>()) ReadsSaved=false;
+    const bool CollisionOnly = Radiant || MapData && Target->Index == 0x18 &&
+        SettingsManager::GetSetting("cwcapturecollision", "true") == "true" &&
+        SettingsManager::GetSetting("cwcaptureentities", "true") == "false" &&
+        SettingsManager::GetSetting("cwcaptureplacements", "true") == "false" &&
+        SettingsManager::GetSetting("cwcapturesplines", "false") == "false";
+    const bool DistrictPlacements = MapData && Target->Index == 0xAB &&
+        C.Report.contains("district_static_models");
+    if (CollisionOnly)
+    {
+        for (const auto* Section : {"clip_models", "collision_arrays", "collision_world_instances"})
+            if (!C.Report.contains(Section) || !C.Report[Section].value("saved", false)) ReadsSaved = false;
+        if (!C.Report.value("clip_models", json::object()).value("all_payloads_verified", false) ||
+            !C.Report.value("collision_arrays", json::object()).value("readback_unchanged", false) ||
+            C.Report.value("collision_world_instances", json::object()).value("status", "") != "captured") ReadsSaved = false;
+        C.Report["coverage"] = "Verified collision payloads and direct collision-instance ownership; optional descriptor probes are not required; no decoded brush or BO3 compile claim";
+    }
+    else if (DistrictPlacements)
+    {
+        const auto& Districts = C.Report["district_static_models"];
+        ReadsSaved = ReadsSaved && Districts.value("saved", false) && Districts.value("complete", false);
+        C.Report["coverage"] = "Validated live/local-package district XModel placements; source proxies retained; no runtime visibility claim";
+    }
+    else if(MapData && !C.Report.contains("typed_candidates")) ReadsSaved=false;
+    for (const auto& Read : C.Report["reads"])
+        if (Read.value("status", "") == "write_failed" ||
+            (!(DistrictPlacements && Read.value("file", "").rfind("typed/district_", 0) == 0) &&
+                Read.value("budget_lane", "") != "speculative" && Read.value("status", "") != "captured" &&
+                Read.value("status", "") != "reused_file")) ReadsSaved = false;
+    C.Report["required_reads_saved"] = ReadsSaved;
+    const bool Saved = C.Finish();
+    const bool Complete = Saved && ReadsSaved && Valid && Headers.size() == Bytes && End == Start;
+    if (DistrictPlacements) CoDAssets::LatestExportPath = Root;
+    if(!Complete || !Radiant) return Complete;
+    std::string MapPath;uint64_t MapHash=0;
+    try { std::ifstream In(FileSystems::CombinePath(Root,"collision_world_instances.json"));json Owners;In>>Owners;
+        MapHash=std::stoull(Owners.at("map_hash").get<std::string>(),nullptr,16);
+        MapPath=CWMapEntityExport::ResolveHash(MapHash);
+    } catch(const std::exception&) {return false;}
+    std::string TriggerCapture;
+    if(SettingsManager::GetSetting("cwradiantvolumes","true")=="true")
+    {
+        if(Progress)Progress(0,"Capturing this map's trigger and volume source data...");
+        TriggerCapture=FileSystems::CombinePath(Root,"trigger_capture");
+        if(!CWBrushTypeCapture::Volumes(TriggerCapture,BOCWDBAssetPoolsOffset,MapHash))return false;
+    }
+    const auto Output=ExportPath;
+    CoDAssets::LatestExportPath=Root;
+    const bool Converted=CWRadiantExport::Run(Root,Output,MapPath,Progress,AutoTypes,TriggerCapture);
+    if(Converted)CoDAssets::LatestExportPath=Output;
+    return Converted;
+}
+
 bool GameBlackOpsCW::LoadAssets()
 {
     // Prepare to load game assets, into the AssetPool
@@ -892,6 +1173,23 @@ bool GameBlackOpsCW::LoadAssets()
     */
     auto Filters = WraithNameIndex();
     Filters.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\bocw_filters.wni"));
+
+    // One row per populated research pool. Free slots are not advertised as assets.
+    if (BOCWDBAssetPoolsOffset)
+    for (const auto& Target : CWResearchPools)
+    {
+        if (SettingsManager::GetSetting(Target.Setting, "false") != "true") continue;
+        auto P = CoDAssets::GameInstance->Read<BOCWXAssetPoolData>(
+            BOCWDBAssetPoolsOffset + sizeof(BOCWXAssetPoolData) * Target.Index);
+        if (!TerrainResearch::Pointer(P.PoolPtr) || !P.AssetsLoaded || P.AssetsLoaded > P.PoolSize ||
+            P.AssetSize < 8 || P.AssetSize > 65536) continue;
+        auto Row = new CoDRawFile_t();
+        Row->ResearchPoolIndex = Target.Index;
+        Row->AssetName = Strings::Format("cw_pool_%03X_%s_headers", Target.Index, Target.Name);
+        Row->AssetPointer = P.PoolPtr;
+        Row->AssetStatus = WraithAssetStatus::Loaded;
+        CoDAssets::GameAssets->LoadedAssets.push_back(Row);
+    }
 
     // Check if we need assets
     if (NeedsAnims)
@@ -2190,4 +2488,68 @@ void GameBlackOpsCW::PerformInitialSetup()
     // Copy if not exists
     if (!FileSystems::FileExists(OurPath))
         FileSystems::CopyFile(FileSystems::CombinePath(FileSystems::GetDirectoryName(CoDAssets::GameInstance->GetProcessPath()), "oo2core_8_win64.dll"), OurPath);
+}
+
+std::string GameBlackOpsCW::ExportModelPlacements(const std::string& Directory, const std::function<void(uint32_t)>& Progress)
+{
+    if(CoDAssets::GameID!=SupportedGames::BlackOpsCW || !CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset) return "Load a supported Cold War map first.";
+    TerrainResearch::Capture C(FileSystems::CombinePath(Directory, "diagnostics"),Progress);
+    auto Desc=C.Span(BOCWDBAssetPoolsOffset+sizeof(BOCWXAssetPoolData)*0xAB,sizeof(BOCWXAssetPoolData),"district_pool.bin","District pool");
+    if(Desc.size()!=sizeof(BOCWXAssetPoolData)) return "District pool unavailable.";
+    BOCWXAssetPoolData P{}; memcpy(&P,Desc.data(),sizeof(P));
+    if(P.AssetSize!=96 || P.PoolSize>16 || P.AssetsLoaded!=1) return "Unsupported district pool layout or occupancy.";
+    auto Headers=C.Span(P.PoolPtr,uint64_t(P.AssetSize)*P.PoolSize,"district_headers.bin","District headers");
+    if(Headers.size()!=uint64_t(P.AssetSize)*P.PoolSize) return "District headers unreadable.";
+    auto Occupancy=CWPoolProbe::FreeSlots(Headers,P.AssetSize,P.PoolPtr,P.PoolFreeHeadPtr,P.AssetsLoaded);
+    if(!Occupancy.Valid) return "District occupancy unavailable.";
+    for(uint32_t I=0;I<P.PoolSize;++I) if(!Occupancy.Free.count(I))
+    {
+        std::vector<uint8_t> Slot(Headers.begin()+I*P.AssetSize,Headers.begin()+(I+1)*P.AssetSize);
+        CWMapWorldCapture::CaptureDistricts(C,0xAB,Slot);
+    }
+    const bool SourceStable = C.VerifySpan(BOCWDBAssetPoolsOffset+sizeof(BOCWXAssetPoolData)*0xAB, Desc, "district_pool.bin") &&
+        C.VerifySpan(P.PoolPtr, Headers, "district_headers.bin");
+    auto D=C.Report.value("district_static_models",TerrainResearch::json::object());
+    D["complete"] = D.value("complete",false) && SourceStable;
+    C.Report["district_static_models"] = D;
+    C.Report["placement_source_unchanged"] = SourceStable;
+    C.Finish();
+    if(!D.value("saved",false)) return "Placement JSON could not be saved.";
+    // Keep the user-facing document a plain array; capture evidence stays in diagnostics.
+    std::ifstream Input(FileSystems::CombinePath(FileSystems::CombinePath(Directory, "diagnostics"), "static_models.json"));
+    TerrainResearch::json Document;
+    Input >> Document;
+    Document["complete"] = D.value("complete",false);
+    Document["placement_source_unchanged"] = SourceStable;
+    if (!Document.contains("StaticModels") || !Document["StaticModels"].is_array())
+        return "Placement JSON has no model array.";
+    for (auto& Row : Document["StaticModels"])
+        ModelExportNaming::PublishPlacementName(Row);
+    std::ofstream Output(FileSystems::CombinePath(Directory, "static_models.json"), std::ios::binary);
+    Output << Document["StaticModels"].dump(2);
+    Output.close();
+    if (!Output) return "Placement JSON could not be saved.";
+    Document.erase("StaticModels");
+    Document.erase("UniqueModels");
+    std::ofstream Report(FileSystems::CombinePath(Directory, "placement_report.json"), std::ios::binary);
+    Report << Document.dump(2);
+    Report.close();
+    if (!Report) return "Placements saved, but placement_report.json could not be saved.";
+    Progress(100);
+    return std::string(D.value("complete",false)?"Complete export: ":"Partial export: ")+std::to_string(D.value("instances",0))+
+        " placements saved. " + std::to_string(D.value("recovered_package_districts",0)) +
+        " districts recovered from local packages; " + std::to_string(D.value("unresolved_districts",0)) +
+        " unresolved. Open static_models.json. Validation details are in placement_report.json.";
+}
+
+
+std::string GameBlackOpsCW::ExportRadiantBrushes(const std::string& Directory, const std::function<void(uint32_t, const std::string&)>& Progress)
+{
+    if(CoDAssets::GameID!=SupportedGames::BlackOpsCW || !CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset)
+        return "Load Game with a Cold War map open first.";
+    FileSystems::CreateDirectory(Directory);
+    CoDRawFile_t Asset;Asset.ResearchPoolIndex=0x18;
+    return ExportResearchPool(&Asset,Directory,true,Progress)
+        ? "Brush prefab exported. Open latest export folder for the .map and metadata."
+        : "Brush export failed. Check the capture diagnostics and bundled brush_export runtime.";
 }

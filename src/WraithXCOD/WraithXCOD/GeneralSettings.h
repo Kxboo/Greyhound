@@ -18,11 +18,18 @@ class GeneralSettings : public WraithWindow
 {
 public:
     // Make a new panel
-    GeneralSettings(CWnd* pParent = NULL) : WraithWindow(IDD_GENERALSETTINGS, pParent) { }
+    GeneralSettings(CWnd* pParent = NULL, int page = 0) : WraithWindow(IDD_GENERALSETTINGS, pParent), Page(page) { }
 
 private:
     // -- Event delegates
 
+    int Page = 0;
+    void ConfigurePage();
+    void OnCWRadiantEnable();
+    void OnCWRadiantOptions();
+    void OnExportBrushes();
+    void OnExportPlacements();
+    void OnExportJsonModels();
     void OnXModels();
     void OnXAnims();
     void OnXImages();
@@ -30,6 +37,16 @@ private:
     void OnXRawFiles();
     void OnXSounds();
     void OnXMTL();
+    void OnCWCLIP();
+    void OnCWWORLD();
+    void OnCWNAV();
+    void OnCWFX();
+    void OnCWENTITY();
+    void OnCWTRIGGER();
+    void OnCWAI();
+    void OnCWExportMode();
+    void OnCWCaptureOptions();
+    void UpdateCWExportHint();
     void OnAssetSortMethod();
 
 

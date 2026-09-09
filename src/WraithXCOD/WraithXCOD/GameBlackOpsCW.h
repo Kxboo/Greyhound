@@ -1,3 +1,4 @@
+#include <functional>
 #pragma once
 
 #include <cstdint>
@@ -17,6 +18,8 @@
 class GameBlackOpsCW
 {
 public:
+    static std::string ExportModelPlacements(const std::string& Directory, const std::function<void(uint32_t)>& Progress);
+
     // -- Game Name Caches
     static WraithNameIndex AssetNameCache;
     static WraithNameIndex StringCache;
@@ -65,6 +68,9 @@ public:
     static bool ExportTerrainResearch(const CoDTerrain_t* Terrain,
         const std::string& ExportPath, const std::vector<uint64_t>& ProbeMaterials,
         const std::function<void(uint32_t)>& ReportProgress);
+
+    static bool ExportResearchPool(const CoDRawFile_t* Asset, const std::string& ExportPath, bool Radiant = false, const std::function<void(uint32_t, const std::string&)>& Progress = {});
+    static std::string ExportRadiantBrushes(const std::string& Directory, const std::function<void(uint32_t, const std::string&)>& Progress);
 
     // Reads an XAnim from Black Ops CW
     static std::unique_ptr<XAnim_t> ReadXAnim(const CoDAnim_t* Animation);

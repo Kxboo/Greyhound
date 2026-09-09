@@ -143,6 +143,9 @@ public:
     CoDRawFile_t();
     virtual ~CoDRawFile_t();
 
+    // Pool evidence is a collection, not a decoded raw-file asset.
+    uint32_t ResearchPoolIndex = UINT32_MAX;
+
     // -- Rawfile properties
 
     // The file path

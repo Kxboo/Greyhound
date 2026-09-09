@@ -2,6 +2,7 @@
 
 // The class we are implementing
 #include "CoDXModelTranslator.h"
+#include "CWModelLodSelection.h"
 
 // We need the following WraithX classes
 #include "ProcessReader.h"
@@ -493,6 +494,9 @@ std::unique_ptr<WraithModel> CoDXModelTranslator::TranslateXModel(const std::uni
 
 int32_t CoDXModelTranslator::CalculateBiggestLodIndex(const std::unique_ptr<XModel_t>& Model)
 {
+    if (CoDAssets::GameID == SupportedGames::BlackOpsCW)
+        return CWModelLodSelection::Select(Model->ModelLods);
+
     // Fetch lod count
     auto LodCount = (int32_t)Model->ModelLods.size();
 

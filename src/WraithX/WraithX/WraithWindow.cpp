@@ -394,7 +394,7 @@ void WraithWindow::OnGetMinMaxInfo(MINMAXINFO FAR* lpMMI)
     {
         lpMMI->ptMinTrackSize.y = MinimumHeight;
     }
-    if (MinimumWidth > -1)
+    if (MaximumWidth > -1)
     {
         lpMMI->ptMaxTrackSize.x = MaximumWidth;
     }

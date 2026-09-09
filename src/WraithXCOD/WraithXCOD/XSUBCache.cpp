@@ -12,6 +12,7 @@
 #include "BinaryReader.h"
 #include "MemoryReader.h"
 #include "Siren.h"
+#include "XSUBObjectLayout.h"
 
 // We need the file system classes.
 #include "CoDFileHandle.h"
@@ -190,201 +191,71 @@ std::unique_ptr<uint8_t[]> XSUBCache::ExtractPackageObjectRaw(uint64_t CacheID, 
 
 std::unique_ptr<uint8_t[]> XSUBCache::ExtractPackageObject(uint64_t CacheID, uint32_t& ResultSize)
 {
-    // Prepare to extract if found
-    if (CacheObjects.find(CacheID) != CacheObjects.end())
-    {
-        // Aquire lock
-        std::lock_guard<std::shared_mutex> Gaurd(ReadMutex);
-
-        // Take cache data, and extract from the XPAK (Uncompressed size = offset of data segment!)
-        auto& CacheInfo = CacheObjects[CacheID];
-        // Get the XPAK name
-        auto& XPAKFileName = PackageFilePaths[CacheInfo.PackageFileIndex];
-        // Open CASC File
-        auto Reader = CoDFileHandle(FileSystem->OpenFile(XPAKFileName, "r"), FileSystem.get());
-#if _DEBUG
-        printf("XSUBCache::ExtractPackageObject(): Streaming Object: 0x%llx from CASC File: %s\n", CacheID, XPAKFileName.c_str());
-#endif // _DEBUG
-
-
-        // Hop to the beginning offset
-        Reader.Seek(CacheInfo.Offset, SEEK_SET);
-
-        // A buffer for data read
-        uint64_t DataRead = 0;
-        // A buffer for total size
-        uint64_t TotalDataSize = 0;
-        // Decompressed Size
-        uint64_t DecompressedSize = CacheInfo.UncompressedSize;
-
-        // A buffer for the data, this will eventually be shipped off, it's 50MB of memory
-        auto DataTemporaryBuffer = new int8_t[0x2400000];
-        auto DataTemporaryBufferSize = 0x2400000;
-
-        // Loop until we have all our data
-        while (DataRead < CacheInfo.CompressedSize)
-        {
-            // Read the block header
-            auto Count = Reader.Read<uint32_t>();
-            auto Offset = Reader.Read<uint32_t>();
-            // I think there are uncompressed blocks with no info
-            // for now skip them, very rare, need to see how to check for them
-            if (Count > 256)
-                break;
-            // Read Variable Length Commands Buffer
-            uint32_t Commands[256];
-            Reader.Read((uint8_t*)&Commands, 0, Count <= 30 ? 120 : Count * 4);
-#if _DEBUG
-            std::cout << "XSUBCache::LoadPackage(): Block Begin " << Reader.Tell() << ".\n";
-            std::cout << "XSUBCache::LoadPackage(): Block Count " << Count * 4 << ".\n";
-#endif
-
-            // Loop for block count
-            for (uint32_t i = 0; i < Count; i++)
-            {
-                // Unpack the command information
-                uint64_t BlockSize = (Commands[i] & 0xFFFFFF);
-                uint32_t CompressedFlag = (Commands[i] >> 24);
-
-                // Get current position
-                uint64_t CurrentPosition = Reader.Tell();
-
-                // Check the block type (3 = compressed (lz4), 8 = compressed (oodle), 0 = raw data, anything else = skip over!)
-                if (CompressedFlag == 0x3)
-                {
-                    // Read the block
-                    auto DataBlock = Reader.Read(BlockSize);
-
-                    // Check if we read data
-                    if (DataBlock != nullptr)
-                    {
-                        // Decompress the LZ4 block
-                        auto Result = Compression::DecompressLZ4Block((const int8_t*)DataBlock.get(), DataTemporaryBuffer + TotalDataSize, (uint32_t)BlockSize, 0x2400000);
-
-                        // Append size
-                        TotalDataSize += Result;
-                    }
-                }
-                else if (CompressedFlag == 0x8 || CompressedFlag == 0x9)
-                {
-                    // Read the block
-                    auto DataBlock = Reader.Read(BlockSize);
-
-                    // Check if we read data
-                    if (DataBlock != nullptr)
-                    {
-                        // Read oodle decompressed size
-                        uint32_t DecompressedSize = *(uint32_t*)(DataBlock.get());
-                        // Realloc if needed
-                        if (TotalDataSize + DecompressedSize >= DataTemporaryBufferSize)
-                        {
-                            DataTemporaryBufferSize += 0x2400000 + DecompressedSize;
-                            DataTemporaryBuffer = (int8_t*)std::realloc(DataTemporaryBuffer, DataTemporaryBufferSize);
-                        }
-                        // Decompress the Oodle block
-                        auto Result = Siren::Decompress((const uint8_t*)DataBlock.get() + 4, (uint32_t)BlockSize - 4, (uint8_t*)DataTemporaryBuffer + TotalDataSize, DecompressedSize);
-                        // Append size
-                        TotalDataSize += Result;
-                    }
-                }
-                else if (CompressedFlag == 0x6)
-                {
-                    // Read the block
-                    auto DataBlock = Reader.Read(BlockSize);
-                    // Check if we're at the end of the block/less than the max block size, if so, use that
-                    uint64_t RawBlockSize = DecompressedSize < 262112 ? DecompressedSize : 262112;
-                    // Subtract from our total size
-                    DecompressedSize -= RawBlockSize;
-
-                    // Check if we read data
-                    if (DataBlock != nullptr)
-                    {
-                        // Decompress the Oodle block
-                        auto Result = Siren::Decompress((const uint8_t*)DataBlock.get(), (uint32_t)BlockSize, (uint8_t*)DataTemporaryBuffer + TotalDataSize, RawBlockSize);
-                        // Append size
-                        TotalDataSize += RawBlockSize;
-                    }
-                }
-                else if (CompressedFlag == 0x0)
-                {
-                    // Read the block
-                    auto DataBlock = Reader.Read(BlockSize);
-                    // Subtract from our total size
-                    DecompressedSize -= BlockSize;
-
-                    // Check if we read data
-                    if (DataBlock != nullptr)
-                    {
-                        // Realloc if needed
-                        if (TotalDataSize + BlockSize >= DataTemporaryBufferSize)
-                        {
-                            DataTemporaryBufferSize += 0x2400000 + BlockSize;
-                            DataTemporaryBuffer = (int8_t*)std::realloc(DataTemporaryBuffer, DataTemporaryBufferSize);
-                        }
-                        // We just need to append it
-                        std::memcpy(DataTemporaryBuffer + TotalDataSize, DataBlock.get(), BlockSize);
-                        // Append size
-                        TotalDataSize += BlockSize;
-                    }
-                }
-                else
-                {
-                    // As far as we care, any other flag value is padding (0xCF is one of them)
-                    Reader.Seek(BlockSize, SEEK_CUR);
-                }
-
-                // We must append the block size and pad it properly (If it's the last block)
-                uint64_t NextSegmentOffset = 0;
-                uint64_t TotalBlockSize = 0;
-
-                // Calculate
-                if ((i + 1) < Count)
-                {
-                    // Not the last, standard
-                    TotalBlockSize = BlockSize;
-                    NextSegmentOffset = (CurrentPosition + BlockSize);
-                }
-                else
-                {
-                    // We must pad this
-                    NextSegmentOffset = (((CurrentPosition + BlockSize) + 0x7F) & 0xFFFFFFFFFFFFF80);
-                    TotalBlockSize += (NextSegmentOffset - CurrentPosition);
-                }
-
-                // Append to data read (Cus it includes padding)
-                DataRead += TotalBlockSize;
-
-                // Jump to next segment
-                Reader.Seek(NextSegmentOffset, SEEK_SET);
-            }
-
-#if _DEBUG
-            std::cout << "XSUBCache::LoadPackage(): Block End " << Reader.Tell() << ".\n";
-            std::cout << "XSUBCache::LoadPackage(): Block Count " << Count * 4 << ".\n";
-#endif
-
-            // We must append the size of a header
-            DataRead += Count <= 30 ? 128 : 8 + (4 * Count);
-        }
-
-        // If we got here, the result size is totaldatasize, we need to allocate a safe buffer, copy, then clean up properly
-        auto ResultBuffer = std::make_unique<uint8_t[]>((uint32_t)TotalDataSize);
-        // Copy over the buffer
-        std::memcpy(ResultBuffer.get(), DataTemporaryBuffer, TotalDataSize);
-
-        // Clean up
-        delete[] DataTemporaryBuffer;
-
-        // Set result size
-        ResultSize = (uint32_t)TotalDataSize;
-
-        // Return the safe buffer
-        return ResultBuffer;
-    }
-
-    // Set
     ResultSize = 0;
+    std::lock_guard<std::shared_mutex> Guard(ReadMutex);
+    const auto Found = CacheObjects.find(CacheID);
+    if (Found == CacheObjects.end()) return nullptr;
+    const auto& Info = Found->second;
+    if (Info.PackageFileIndex >= PackageFilePaths.size()) return nullptr;
+    auto Reader = CoDFileHandle(FileSystem->OpenFile(PackageFilePaths[Info.PackageFileIndex], "r"), FileSystem.get());
+    if (!Reader.IsValid()) return nullptr;
+    const auto FileSize = Reader.Size();
+    if (!Info.CompressedSize || Info.Offset > FileSize || Info.CompressedSize > FileSize - Info.Offset)
+        return nullptr;
+    Reader.Seek(Info.Offset, SEEK_SET);
+    if (Reader.Tell() != Info.Offset) return nullptr;
+    auto Encoded = Reader.Read(Info.CompressedSize);
+    std::vector<XSUBObjectLayout::Block> Blocks;
+    if (!Encoded || !XSUBObjectLayout::Parse(Encoded.get(), Info.CompressedSize, Info.Offset, Blocks))
+        return nullptr;
 
-    // Failed to find data
-    return nullptr;
+    // This decoder returns a uint32-sized object. Bound individual allocations
+    // too: a bogus prefix must not request gigabytes before rejection.
+    constexpr size_t OutputLimit = 1024ull * 1024 * 1024;
+    constexpr size_t LZ4BlockLimit = 0x2400000;
+    std::vector<uint8_t> Decoded;
+    uint64_t Remaining = Info.UncompressedSize;
+    for (const auto& Block : Blocks)
+    {
+        const uint8_t* Source = Encoded.get() + Block.Offset;
+        size_t InputSize = Block.Size, Expected = 0;
+        switch (Block.Codec)
+        {
+        case 0: Expected = InputSize; break;
+        case 3: Expected = LZ4BlockLimit; break;
+        case 8: case 9:
+            Expected = XSUBObjectLayout::U32(Source);
+            Source += 4; InputSize -= 4;
+            if (!Expected || !InputSize) return nullptr;
+            break;
+        case 6:
+            if (!Remaining || !InputSize) return nullptr;
+            Expected = static_cast<size_t>((std::min)(Remaining, uint64_t(262112)));
+            Remaining -= Expected;
+            break;
+        default: continue; // Non-data command/padding, already span-checked.
+        }
+        if (Expected > OutputLimit - Decoded.size()) return nullptr;
+        const auto Before = Decoded.size();
+        Decoded.resize(Before + Expected);
+        size_t Actual = Expected;
+        if (Block.Codec == 0)
+        {
+            if (InputSize) std::memcpy(Decoded.data() + Before, Source, InputSize);
+            Remaining = Remaining >= InputSize ? Remaining - InputSize : 0;
+        }
+        else if (Block.Codec == 3)
+            Actual = Compression::DecompressLZ4Block(reinterpret_cast<const int8_t*>(Source),
+                reinterpret_cast<int8_t*>(Decoded.data() + Before), static_cast<int32_t>(InputSize), static_cast<int32_t>(Expected));
+        else
+            Actual = Siren::Decompress(Source, InputSize, Decoded.data() + Before, Expected);
+        if (Block.Codec != 0 && (!Actual || Actual > Expected || (Block.Codec != 3 && Actual != Expected)))
+            return nullptr;
+        Decoded.resize(Before + Actual);
+    }
+    if (Decoded.empty()) return nullptr;
+    auto Result = std::make_unique<uint8_t[]>(Decoded.size());
+    std::memcpy(Result.get(), Decoded.data(), Decoded.size());
+    ResultSize = static_cast<uint32_t>(Decoded.size());
+    return Result;
 }

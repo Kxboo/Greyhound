@@ -104,6 +104,9 @@ private:
     void OnClearAll();
     void OnSettings();
     void OnExportAll();
+    void OnExportJsonModels();
+    void OnExportPlacements();
+    void OnExportBrushes();
     void OnSupport();
     void OnLoadFile();
     void OnExportSelected();

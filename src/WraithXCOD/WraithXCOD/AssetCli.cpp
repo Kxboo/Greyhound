@@ -32,6 +32,7 @@ namespace
     struct AssetOptions
     {
         std::string Action;
+        std::string ModelBatchRoot;
         OutputMode Output = OutputMode::Human;
         bool JsonRequested = false;
         bool JsonLinesRequested = false;
@@ -40,6 +41,14 @@ namespace
         std::vector<std::string> Globs;
         bool All = false;
         bool DryRun = false;
+        bool CWProbe = false;
+        bool CWDeepProbe = false;
+        bool CWMapData = false;
+        bool CWRadiantBrushes = false;
+        bool CWCaptureEntities = true;
+        bool CWCapturePlacements = true;
+        bool CWCaptureCollision = true;
+        bool CWCaptureSplines = false;
         uint32_t Limit = 0;
 
         std::set<std::string> ModelFormats;
@@ -303,11 +312,24 @@ namespace
             }
             else if (Argument == "--all") Options.All = true;
             else if (Argument == "--dry-run") Options.DryRun = true;
+            else if (Argument == "--cw-probe") Options.CWProbe = true;
+            else if (Argument == "--cw-deep-probe") Options.CWProbe = Options.CWDeepProbe = true;
+            else if (Argument == "--cw-radiant-brushes") { Options.CWRadiantBrushes=true; Options.CWMapData=true; }
+            else if (Argument == "--cw-map-data") Options.CWMapData = true;
+            else if (Argument == "--cw-skip-entities") Options.CWCaptureEntities = false;
+            else if (Argument == "--cw-skip-placements") Options.CWCapturePlacements = false;
+            else if (Argument == "--cw-splines") Options.CWCaptureSplines = true;
+            else if (Argument == "--cw-skip-collision") Options.CWCaptureCollision = false;
             else if (Argument == "--limit")
             {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
                 if (!ParseUnsigned(Value, Options.Limit) || Options.Limit == 0)
                 { Error = "--limit must be a positive integer"; return false; }
+            }
+            else if (Argument == "--model-batch-root")
+            {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.ModelBatchRoot = Value; Options.ExportOptionsUsed = true;
             }
             else if (Argument == "--model-format")
             {
@@ -428,6 +450,14 @@ namespace
         { Error = "xanim-v17 and xanim-v19 cannot be exported in the same run"; return false; }
         if (Options.ModelFormatExplicit && !Options.Types.count("model"))
         { Error = "--model-format requires --type model"; return false; }
+        if (!Options.ModelBatchRoot.empty() && (Options.Action != "export" || Options.Types.size()!=1 || !Options.Types.count("model")))
+        { Error = "--model-batch-root requires assets export --type model"; return false; }
+        if (!Options.ModelBatchRoot.empty())
+        {
+            if (Options.ModelFormatExplicit && (Options.ModelFormats.size()!=1 || !Options.ModelFormats.count("cast")))
+            { Error = "--model-batch-root supports Cold War CAST only"; return false; }
+            Options.ModelFormats = {"cast"};
+        }
         if (Options.AnimationFormatExplicit && !Options.Types.count("animation"))
         { Error = "--animation-format requires --type animation"; return false; }
         if (Options.SoundFormatExplicit && !Options.Types.count("sound"))
@@ -513,10 +543,16 @@ namespace
             "  Greyhound-cli.exe assets export --type TYPE (--name EXACT|--glob PATTERN|--all) [options]\r\n\r\n"
             "Formats (repeat model/animation options to emit more than one):\r\n"
             "  --model-format semodel|gltf|glb|obj|smd|ma|xna|xmodel-export|xmodel-bin|cast\r\n"
+            "  --model-batch-root PATH (Cold War CAST only; flat models/materials/images)\r\n"
             "  --animation-format seanim|xanim-v17|xanim-v19|cast\r\n"
             "  --image-format png|dds|tga|tiff   --sound-format wav|flac\r\n\r\n"
             "Controls:\r\n"
             "  --dry-run --limit N --overwrite|--skip-existing --all-lods|--largest-lod\r\n"
+            "  --cw-probe (one-hop prefixes) --cw-deep-probe (bounded two-hop evidence graph)\r\n"
+            "  --cw-splines (capture spline inputs; no deformed meshes)\r\n"
+            "  --cw-skip-entities | --cw-skip-placements | --cw-skip-collision (omit typed sections)\r\n"
+            "  --cw-radiant-brushes (verified CW brush prefab .map + metadata; bundled runtime)\r\n"
+            "  --cw-map-data (supported map records and collision payloads with readback)\r\n"
             "  --hitbox --vertex-colors --model-images|--no-model-images --image-names\r\n"
             "  --material-folders|--flat-materials --global-images|--local-images\r\n"
             "  --patch-normals|--no-patch-normals --patch-color|--no-patch-color\r\n"
@@ -529,6 +565,11 @@ namespace
         return {
             {"types", Options.Types}, {"names", Options.Names}, {"globs", Options.Globs},
             {"all", Options.All}, {"dry_run", Options.DryRun},
+            {"cw_probe", Options.CWProbe}, {"cw_deep_probe", Options.CWDeepProbe},
+            {"cw_map_data", Options.CWMapData}, {"cw_radiant_brushes", Options.CWRadiantBrushes},
+            {"cw_capture_entities", Options.CWCaptureEntities},
+            {"cw_capture_placements", Options.CWCapturePlacements},
+            {"cw_capture_collision", Options.CWCaptureCollision},
             {"limit", Options.Limit == 0 ? json(nullptr) : json(Options.Limit)},
             {"model_formats", Options.ModelFormats},
             {"animation_formats", Options.AnimationFormats},
@@ -536,6 +577,7 @@ namespace
             {"all_lods", Options.AllLods}, {"hitbox", Options.Hitbox},
             {"vertex_colors", Options.VertexColors}, {"model_images", Options.ModelImages},
             {"image_names", Options.ImageNames}, {"material_folders", Options.MaterialFolders},
+            {"model_batch_root",Options.ModelBatchRoot},
             {"global_images", Options.GlobalImages}, {"patch_normals", Options.PatchNormals},
             {"patch_color", Options.PatchColor}, {"keep_sound_path", Options.KeepSoundPath},
             {"skip_blank_audio", Options.SkipBlankAudio},
@@ -566,7 +608,9 @@ namespace
         // pools. A headless inventory must not inherit the historical defaults
         // that hide images, materials, sounds, effects, and raw files.
         const char* VisibilityKeys[] = { "showxmodel", "showxanim", "showximage",
-            "showxmtl", "showxsounds", "showxrawfiles", "showefx", "showxterrain" };
+            "showxmtl", "showxsounds", "showxrawfiles", "showefx", "showxterrain",
+            "showcwcollision", "showcwworld", "showcwnav", "showcwfx",
+            "showcwentities", "showcwtriggers", "showcwai" };
         for (const auto Key : VisibilityKeys)
             SetBool(Key, true);
     }
@@ -839,6 +883,14 @@ int AssetCli::Run(int argc, char** argv)
         return EmitError(Options, Error, 1);
 
     EnableAllAssetDiscovery();
+    SetBool("cwprobepayloads", Options.CWProbe);
+    SetBool("cwdeepProbe", Options.CWDeepProbe);
+    SetBool("cwmapdata", Options.CWMapData);
+    SetBool("cwradiantbrushes", Options.CWRadiantBrushes);
+    SetBool("cwcaptureentities", Options.CWCaptureEntities);
+    SetBool("cwcaptureplacements", Options.CWCapturePlacements);
+    SetBool("cwcapturecollision", Options.CWCaptureCollision);
+    SetBool("cwcapturesplines", Options.CWCaptureSplines);
 
     Diagnostic("attaching to a supported game");
     const auto Found = CoDAssets::BeginGameMode();
@@ -881,7 +933,7 @@ int AssetCli::Run(int argc, char** argv)
             continue;
         }
 
-        const std::string OutputPath = CoDAssets::GetExportPath(Asset);
+        const std::string OutputPath = Options.ModelBatchRoot.empty() ? CoDAssets::GetExportPath(Asset) : Options.ModelBatchRoot;
         Record["output_directory"] = OutputPath;
         if (!IsExportable(Asset->AssetType))
         {
@@ -903,7 +955,13 @@ int AssetCli::Run(int argc, char** argv)
         Diagnostic("exporting " + TypeName(Asset->AssetType) + ":" + Asset->AssetName);
         const auto Before = Snapshot(OutputPath);
         const auto Started = std::chrono::steady_clock::now();
-        const auto ExportResult = CoDAssets::ExportAsset(Asset);
+        auto ExportResult = ExportGameResult::UnknownError;
+        try
+        {
+            ExportResult = Options.ModelBatchRoot.empty() ? CoDAssets::ExportAsset(Asset) :
+                CoDAssets::ExportJsonBatchModel(static_cast<const CoDModel_t*>(Asset), Options.ModelBatchRoot);
+        }
+        catch (const std::exception& E) { Record["error"] = E.what(); Diagnostic(E.what()); }
         const auto Milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - Started).count();
         const auto ActualPath = CoDAssets::LatestExportPath.empty() ? OutputPath : CoDAssets::LatestExportPath;
@@ -927,7 +985,7 @@ int AssetCli::Run(int argc, char** argv)
         else
         {
             Record["status"] = "failed";
-            Record["error"] = ExportResult == ExportGameResult::Placeholder ?
+            if (!Record.contains("error")) Record["error"] = ExportResult == ExportGameResult::Placeholder ?
                 "asset is a placeholder" : "asset exporter returned an error";
             Failed++;
             if (Asset->AssetType == WraithAssetType::Terrain &&

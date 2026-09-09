@@ -56,3 +56,19 @@ Greyhound is distributed with an automatic updater that will check for updates e
 Greyhound was originally made by DTZxPorter and ID Daemon as Wraith Archon, forked and maintained since 2018 by [Scobalula](https://github.com/Scobalula), and now maintained by [dest1yo](https://github.com/dest1yo).
 
 Please also see [Contributors](https://github.com/Scobalula/Greyhound/graphs/contributors) for a list of people who have also contributed code to the repo.
+
+## Additional Cold War research pools
+
+In-Game Settings exposes 27 Cold War research pools across collision/clips, map
+worlds, navigation, effects, entities/dynamic models, triggers and AI/animation
+tables. An optional bounded one-hop probe saves unverified referenced prefixes. See [pool research and capture limits](docs/CW_ASSET_POOL_RESEARCH.md).
+These exports preserve evidence for future decoding; they are not reconstructed BO3 assets.
+
+
+### Resume a Cold War CAST batch
+
+In **Settings > CW Map Export > Export Models from JSON**, select `static_models.json` inside the existing `models_from_json_*` export folder. Choose **Yes** to resume there, **No** for a new export, or **Cancel** to leave it untouched. Keep the original export settings when continuing an interrupted batch.
+
+Resume checks recorded model identities and CAST file lengths, then skips completed models before loading their geometry or textures. Failed or unfinished models are retried. Older single-LOD batches can resume from their existing CAST files without a checkpoint. All-LOD completion uses checkpoints rather than assuming that one LOD means the whole model finished. Truncated CAST files are rewritten.
+
+`model_export_checkpoint.json` is replaced atomically after each model. The final `model_export_report.json` distinguishes `kept_existing` models from newly exported ones. Existing placement JSON is preserved. Keeping a completed model also keeps its earlier texture results; resume does not retry missing textures for models it skips.

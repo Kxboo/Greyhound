@@ -55,6 +55,9 @@ namespace TerrainResearch
         json Report;
         json PendingPayloads = json::array();
         json PendingPackages = json::array();
+        // Typed local-package readers share the existing bounded scene lane.
+        bool ReserveScenePackageBytes(uint64_t Bytes)
+        { return Bytes <= SpanLimit && Budget.Charge("packages_scene", Bytes); }
         explicit Capture(const std::string& Directory,
             const std::function<void(uint32_t)>& Callback) : Root(Directory), ProgressCallback(Callback)
         {
@@ -123,8 +126,30 @@ namespace TerrainResearch
             CloseHandle(F);
             return Ok;
         }
+        // Bounded live read for a short consistency window. The caller saves the
+        // returned bytes and read record after completing all dependent reads.
+        std::vector<uint8_t> DeferredSmallRead(uint64_t Address, uint64_t Size, const std::string& Name, json& R)
+        {
+            R={{"address",Hex(Address)},{"requested_bytes",Size},{"read_bytes",0},{"file",Name},
+                {"budget_lane","structure"},{"started_utc",Utc()},
+                {"interpretation","live consistency read; evidence persistence deferred"}};
+            std::vector<uint8_t> Bytes;std::string Reason;
+            if(!Pointer(Address) || !Size || Size>4096 || Size>0x0000800000000000ull-Address)
+                R["status"]="invalid_address_or_size";
+            else if(!Budget.Fits("structure",Size) || ++Queries>250000) R["status"]="budget_rejected";
+            else if(!ReadableRange(CoDAssets::GameInstance->GetCurrentProcess(),Address,Size,Reason))
+                R["status"]="unreadable_range";
+            else
+            {
+                uintptr_t Got=0;auto Data=CoDAssets::GameInstance->Read(Address,static_cast<uintptr_t>(Size),Got);
+                Budget.Charge("structure",Size);R["read_bytes"]=Got;
+                if(Data && Got==Size) Bytes.assign(Data,Data+Size);
+                delete[] Data;R["status"]=Bytes.size()==Size?"pending_write":"read_failed_or_partial";
+            }
+            R["range_check"]=Reason;R["finished_utc"]=Utc();return Bytes;
+        }
         std::vector<uint8_t> Span(uint64_t Address, uint64_t Size, const std::string& Name,
-            const std::string& Meaning, bool Fresh = false, std::string Lane = "structure")
+            const std::string& Meaning, bool Fresh = false, std::string Lane = "structure", bool Independent = false)
         {
             json R = {{"address", Hex(Address)}, {"requested_bytes", Size}, {"file", Name},
                 {"interpretation", Meaning}, {"read_bytes", 0}, {"started_utc", Utc()}};
@@ -134,7 +159,8 @@ namespace TerrainResearch
             R["budget_lane"] = Lane;
             const auto Key = std::make_pair(Address, Size);
             const auto Existing = Saved.find(Key);
-            if (Existing != Saved.end() && !Fresh)
+            // Independent bypasses saved evidence while retaining the caller's bounded lane.
+            if (Existing != Saved.end() && !Fresh && !Independent)
             {
                 // Traverse exactly the bytes already preserved, not a second
                 // potentially changed version from the running process.
@@ -190,6 +216,41 @@ namespace TerrainResearch
             // Never parse partial data as a complete array.
             if (Result.size() != Size) Result.clear();
             return Result;
+        }
+        // A second live read, never a Saved-cache reuse. Save differing bytes only.
+        // Shares the bounded resident_scene lane; no extra unbounded memory dump.
+        bool VerifySpan(uint64_t Address, const std::vector<uint8_t>& Expected, const std::string& Name)
+        {
+            const auto Size=Expected.size();
+            json R={{"address",Hex(Address)},{"bytes",Size},{"source",Name},
+                {"started_utc",Utc()},{"status","not_checked"},{"budget_lane","resident_scene"}};
+            bool Same=false;
+            std::string Reason;
+            if(!Size) {Same=true; R["status"]="empty";}
+            else if(Size>SpanLimit || !Budget.Fits("resident_scene",Size)) R["status"]="budget_rejected";
+            else if(++Queries>250000) R["status"]="query_limit_rejected";
+            else if(!ReadableRange(CoDAssets::GameInstance->GetCurrentProcess(),Address,Size,Reason))
+            {R["status"]="unreadable_range";R["range_check"]=Reason;}
+            else
+            {
+                uintptr_t Read=0;
+                auto Data=CoDAssets::GameInstance->Read(Address,static_cast<uintptr_t>(Size),Read);
+                Budget.Charge("resident_scene",Size); R["read_bytes"]=Read;
+                if(!Data || Read!=Size) R["status"]="read_failed_or_partial";
+                else
+                {
+                    Same=memcmp(Data,Expected.data(),Size)==0;
+                    R["status"]=Same?"unchanged":"changed";
+                    if(!Same)
+                    {
+                        const auto File="verification_changes/"+std::to_string(Report["verifications"].size())+".bin";
+                        R["changed_bytes_file"]=File;
+                        R["changed_bytes_saved"]=Write(File,reinterpret_cast<const uint8_t*>(Data),Size);
+                    }
+                }
+                delete[] Data;
+            }
+            R["finished_utc"]=Utc(); Report["verifications"].push_back(R); return Same;
         }
         void Image(uint64_t P, int Priority = 0)
         {

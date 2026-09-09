@@ -1,0 +1,10 @@
+{
+"clip" ( "material.gdf" ) { "noDraw" "1" }
+"clip_player" ( "material.gdf" ) { "noDraw" "1" }
+"clip_ai" ( "material.gdf" ) { "noDraw" "1" }
+"clip_physics" ( "material.gdf" ) { "noDraw" "1" }
+"clip_missile" ( "material.gdf" ) { "noDraw" "1" }
+"nosight_noclip" ( "material.gdf" ) { "noDraw" "1" }
+"clip_nosight" ( "material.gdf" ) { "noDraw" "1" }
+"clip_full" ( "material.gdf" ) { "noDraw" "1" }
+}

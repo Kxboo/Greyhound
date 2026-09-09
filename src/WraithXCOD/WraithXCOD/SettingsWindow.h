@@ -25,14 +25,23 @@ private:
     // -- Event delegates
 
     void OnGeneralPage();
+    void OnExportPlacements();
+    void OnExportJsonModels();
+    void OnExportBrushes();
     void OnModelsPage();
     void OnAnimsPage();
     void OnImagesPage();
     void OnSoundsPage();
     void OnTerrainsPage();
+    void OnCWMapPage();
+    void OnCWResearchPage();
+    void OnCWRadiantPage();
+    void ShowCWPage(int Page);
 
     // Helper for disabling all controls
     void SetUnselected();
+    void LayoutPanel();
+    int SidebarWidth = 176;
 
 protected:
 
@@ -44,6 +53,9 @@ protected:
     WraithSettingButton ImageButton;
     WraithSettingButton SoundButton;
     WraithSettingButton TerrainButton;
+    WraithSettingButton CWMapButton;
+    WraithSettingButton CWResearchButton;
+    WraithSettingButton CWRadiantButton;
 
     // The current settings panel
     std::unique_ptr<WraithWindow> SettingsPanel;
@@ -56,6 +68,7 @@ protected:
     virtual void OnLoad();
     // Handle painting
     afx_msg void OnPaint();
+    afx_msg void OnSize(UINT nType, int cx, int cy);
 
     // Make the map
     DECLARE_MESSAGE_MAP()
