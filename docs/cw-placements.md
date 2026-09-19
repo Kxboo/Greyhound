@@ -2,10 +2,16 @@
 
 [Documentation index](README.md) | [Contribution walkthrough](contributing.md)
 
-This reference consolidates measured findings and their limitations.
-Capture counts and local output paths below identify development samples,
-not bundled fixtures or guarantees for every game build. Historical
-validation is distinct from tests run on your current checkout.
+Load a Cold War map and use **Map & Model Export**, or run from the checkout:
+
+```powershell
+$gh = '.\bin\cli\Greyhound-cli.exe'
+& $gh placements --name-db bundled --non-static --verify --organize
+```
+
+Use the output path reported by your executable. This guide describes the
+placement contract and measured layouts; validate offsets against the active
+game build before extending a reader.
 
 
 ## Current organized layout
@@ -27,7 +33,7 @@ array using the existing naming and LOD settings.
 
 The optional **Include non-static placements and entity classes (CW)** setting
 adds separate entity, FX, light, reflection-probe, sun-volume and source-evidence
-JSONs. See [the placement catalog and BO3 mappings](cw-placements.md).
+JSONs. See [effects and entities](cw-effects-entities.md).
 `static_models.json` retains the rigid district scope described below.
 
 Normal exports now contain **rigid static placements only**. Rows marked
@@ -99,59 +105,40 @@ Source proxy placements remain in the output. Their runtime visibility and
 replacement rules are not decoded. Recovering district XModels does not establish
 that every kind of rendered world geometry has been recovered.
 
-### Verification (2026-09-08)
+### Validate changes
 
-- Release|x64 solution build with command-line PlatformToolset=v143; project
-  files unchanged.
-- Native live Zoo export: 131,589 placements / 1,988 unique models, 42 placement
-  districts, 40 recovered from local packages, zero unresolved; CLI exit 0.
-- All 131,589 Zoo model identities, positions, quaternions, scales, bounds and
-  spline indices match an independently decoded offline dataset.
-- All 41 Zoo packaged placement districts pass the native pure validator.
-- Saved Silver: all 12 package districts (35,016 placements) pass the same
-  validator. All 26,643 overlapping saved live placements match the packaged
-  positions, rotations, scales and bounds byte-for-byte after reference-index
-  joining; all 26,643 model name hashes also match. Its 8,373 previously omitted placements are structurally validated;
-  those omitted rows have no saved live comparison.
-- `tests/cw_district_payload_test.cpp` tests invalid sizes/counts, relocated
-  pointers, duplicate/out-of-range indices, nonfinite data, invalid scale/bounds,
-  and overlapping/gapped ranges. It also accepts `--package file.bin` or
-  `--live references.bin transforms.bin` for saved fixture validation.
-
-The shared path is verified on these two maps, not claimed verified on every
-Cold War map or future game build.
-
-### Rigid-only selection verification (2026-09-12)
-
-The native helper was checked against the saved Tungsten live placement array:
-106,785 captured rows become 93,639 rigid rows and 13,146 deferred spline rows.
-All retained/deferred fields and relative row order compare equal to source.
-The checks also cover a model shared by rigid and spline instances, spline
-index zero, absent legacy fields, null/UINT32_MAX/-1 sentinels, empty/all-spline
-inputs and repeat filtering. The Release build passed. A new live UI capture
-was not required or performed for this saved-data selection change.
-
+The native tests include district payload sizes, pointer relocation, reference
+permutations, finite transforms, bounds, range coverage and rigid/spline filtering.
+Start with [cw_district_payload_test.cpp](../tests/cw_district_payload_test.cpp)
+and the [native runner](../tests/run-native-tests.ps1). Saved map comparisons
+must join by district/reference identity rather than physical array order.
 
 ## Cold War placement catalog and BO3 references
 
 For the focused FX/animation placement and name export, see
 [cw-effects-entities.md](cw-effects-entities.md).
 
-In **Settings > CW Map Export**, select **Include non-static placements and
+In **Settings > Map & Model Export**, select **Include non-static placements and
 entity classes (CW)**, then **Export Model Placements JSON**. The choice is
 saved as `cwnonstaticplacements`. The command-line equivalent is:
 
 ```powershell
-.\Greyhound.exe placements --name-db echo000 --non-static
-## Explicitly omit the additional captures:
-.\Greyhound.exe placements --name-db bundled --static-only
+$gh = '.\bin\cli\Greyhound-cli.exe'
+& $gh placements --name-db bundled --non-static
+# Explicitly omit the additional captures:
+& $gh placements --name-db bundled --static-only
 ```
 
-Every invocation reserves a new run directory. Start with `placement_catalog.json`.
+Every invocation reserves a new run directory. Start with `placement_catalog.json`
+for a flat run, or `catalog.json` and `metadata/placement_catalog.json` after organization.
 The optional captures do not depend on enabling the older Dev Tools checkboxes.
 They read the game and local packages; they do not change game memory.
 
 ### Files
+
+These are native flat filenames. In an organized run, use the aliases in
+`catalog.json` to locate each file; for example, `light_placements.json` becomes
+`lights/decoded_placements.json` and probe bounds become `probes/bounds.json`.
 
 | File | Meaning and use |
 | --- | --- |
@@ -231,12 +218,10 @@ coordinates are `[-Back, -Right, Up]`. `light_placements.json` validates finite
 position, orthonormal axes and positive determinant before emitting position
 and pitch/yaw/roll. Invalid placements have null transforms.
 
-Ten authored lights in `map_capture_09` independently match compiled GUID,
-exact origin and the signed basis computed from authored angles. The rebuilt
-exporter then decoded all 948 `zm_silver` lights in `run_11`. Its source records
-and IDs exactly match `run_10`; `zm_silver_capture_10/lights/decoded_placements.json`
-contains that verified result. `metadata/light_placement_validation.json` records
-the matches and rotation round-trip check (maximum component error below 7e-7).
+Placement checks compare authored light GUIDs/origins and signed orientation
+bases with the compiled records, then round-trip the derived rotations. See
+[verify_cw_light_placements.py](../tools/cold_war/capture/verify_cw_light_placements.py)
+for the saved-data audit and its required inputs.
 
 Linear RGB +0xC8, repeated RGB +0x284, radius +0x200 and raw type byte +0x40
 remain candidate/appearance fields outside the placement work.
@@ -331,17 +316,18 @@ RVA 0x8B6B174 (probe +0x58/+0x5A, descriptor +0x18, stride 0x25C) and
 0xBE9696C (box extents, plane count, plane sign and subtract branch). The latter
 negates plane D using the measured -1.0 constant at RVA 0xD669FD8 and halves
 summed box sizes using 0.5 at RVA 0xD6694D0. These RVAs are evidence for this
-running build, not signatures or promises about other versions. Disassembly
-and read-only tracing reside under `C:\SuperTerrain\research\cw-placement-mapping`.
+measured build, not signatures or promises about other versions. The
+[probe-bounds evidence](cw-probe-bounds-evidence.json) records the findings;
+the original capture and disassembly are not bundled fixtures.
 
 Global probe placement is associated with sun volumes. The BO3 workflow allows
 a sun volume to target an `info_null` to move its probe; it must not automatically
 be collapsed to the influence box center.
 
-### Local BO3 references used
+### BO3 authoring references
 
-The actual documentation folder on this machine is:
-`C:\Program Files (x86)\Steam\steamapps\common\Call of Duty Black Ops III\docs_modtools`.
+Use `docs_modtools/` inside your own Black Ops III installation. Relevant
+shipped documents include:
 
 - `Lighting_Parameters.pdf`, pages 1–3 and 8–11: light types, intensity stops,
   shaping, cookie parameters, states and shadows.
@@ -361,40 +347,23 @@ The actual documentation folder on this machine is:
 These references establish BO3 authoring semantics. They do not prove CW
 memory offsets. The latter are separately measured and retain raw evidence.
 
-### Current-map verification, 2026-09-13
+### Review coverage and limits
 
-Measured on the running `zm_silver` map (masked map hash `0xBF83815978FDE24`):
+Counted arrays must pass unchanged readback, but that is not an atomic scene
+snapshot. Unsupported pool shapes, invalid occupancy and map mismatches must
+remain explicit failures. A `complete` report covers the requested capture
+and writes, not all runtime entities or a finished BO3 conversion.
 
-- 38,243 rigid static placements; 91 spline rows kept separately.
-- 2,380 map entities plus 327 trigger entities, grouped by classname.
-- 811 entity-model placements; no rejected model transforms in this capture.
-- 2,482 structurally checked level-FX records, 948 primary-light records.
-- 849 validated reflection-probe descriptor rows, plus 6 unresolved/inactive
-  rows; 2 sun-volume headers. Repeated descriptor rows are not distinct probes.
-- 284 distinct GUID/position pairs. One GUID has two different positions across
-  the source descriptors; neither is discarded or asserted to be the current pose.
-- 918 validated influence-volume rows across three descriptors: 306 per main
-  descriptor, including 60 multiface volumes and 17 probes owning multiple
-  volumes per descriptor. These repeated rows are not 918 unique world volumes.
-- The authored heli-cabin probe independently matches separate inner sizes and
-  blend margins, not just their summed outer extents. Every volume's computed
-  outer center matches its stored center within 0.05 world units.
-- Four dynamic-model asset definitions; instance transforms remain undecoded.
-- `fxanim`/`fxanm` name hints: 161 static rows / 28 models, and 35 entity rows /
-  15 models. These are name hints, not measured active animations.
+Use [verify_cw_placement_catalog.py](../tools/cold_war/capture/verify_cw_placement_catalog.py)
+and the focused FX/light auditors to compare decoded fields with source bytes.
+Check each tool's help and input schema before running it against an organized
+run. The native `--verify` route performs its audit before organization.
 
-All captured counted arrays were reread unchanged during their validation
-windows. This is not an atomic scene snapshot. The decoder rejects unsupported
-pool sizes, counts, occupancy and map mismatches; other maps/builds require
-their own validation. `complete` reports the requested capture and file writes,
-not complete live-entity coverage or finished BO3 conversion.
+[Probe-bound tests](../tests/cw_probe_bounds_test.cpp) cover rotated boxes,
+world plane conversion, gimbal-lock angles, invalid sizes/axes/counts and
+ownership gaps/overlaps. Add synthetic coverage for new layouts and report
+live-map tests separately.
 
-Native converter tests cover precision, quaternion axes, FNV masking, entity
-joins, missing names, raw-property preservation, invalid scales/transforms,
-duplicate keys, brush references, class filenames and reflection authoring keys.
-The offline audit checks published transforms against captured records and
-all source references without needing the game to remain open.
-`tests/cw_probe_bounds_test.cpp` additionally covers rotated boxes, world plane
-conversion, gimbal-lock angles, invalid sizes/axes/counts and ownership gaps,
-overlaps and out-of-range indices. `run_06/validation.json` records the full
-export audit against raw evidence and unchanged static placements from run_04.
+Useful next work includes spline controls, dynamic-model instance relationships,
+light appearance conversion, probe face/blend mapping and validation on other
+maps/builds. Preserve original bytes and unresolved values while investigating.

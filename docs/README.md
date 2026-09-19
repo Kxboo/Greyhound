@@ -1,59 +1,90 @@
-# Greyhound fork: start here
+# Greyhound documentation
 
-This fork extracts game assets and preserves source evidence for map research.
-Cold War and BO4 have additional placement, brush and diagnostic workflows.
-Terrain reconstruction remains external. A successful byte audit does not prove
-visual equivalence, Radiant compilation or equivalent gameplay in another game.
+Build and use this fork, understand its exports, or find a place to contribute.
 
-## Reading order
-
-| Task | Read |
+| Task | Guide |
 | --- | --- |
-| Build, run the CLI, understand outputs | This page |
-| Find scripts by game and task | [Script directory guide](../tools/README.md) |
+| Build and run Greyhound | This page |
 | Review code, contribute, or use an AI assistant | [Contributing](contributing.md) |
-| Export meshes, materials, LODs and resume batches | [Models](models.md) |
-| Understand CW static/nonstatic placements | [CW placements](cw-placements.md) |
-| Investigate FX, animation and entity properties | [CW effects and entities](cw-effects-entities.md) |
-| Investigate navigation and progression | [CW navigation](cw-navigation.md) |
-| Investigate brushes and collision | [CW collision](cw-collision.md) |
-| Understand capture boundaries and earlier audits | [Capture research](capture-research.md) |
-| Work on BO4 placements, names and brushes | [BO4](bo4.md) |
-| Investigate BO4 terrain source intake | [BO4 terrain research](bo4-terrain-research.md) |
+| Find scripts by game and task | [Script directory guide](../tools/README.md) |
+| Cold War static/non-static placements, lights and probes | [CW placements](cw-placements.md) |
+| Cold War FX, animation references and entity properties | [CW effects and entities](cw-effects-entities.md) |
+| Cold War navigation and progression research | [CW navigation](cw-navigation.md) |
+| Cold War brushes and collision | [CW collision](cw-collision.md) |
+| Capture contracts, diagnostic pools and audits | [Capture research](capture-research.md) |
+| Black Ops 4 placements, names and brushes | [BO4](bo4.md) |
+| Black Ops 4 terrain and collision layouts | [BO4 research](bo4-terrain-research.md) |
 
-The reference pages retain dated measurements and their limits. Local capture
-paths in those records are examples from development, not prerequisites or
-downloadable fixtures. Use your own saved capture. There are ten documentation
-pages, each limited to 500 lines; extend the relevant page instead of adding a
-new dated diary. Repository policy/license files are separate.
+## Paths used in these guides
+
+Run repository commands from your Greyhound checkout. Source paths such as
+`tools/cold_war/` are relative to that checkout, wherever you cloned it.
+
+Export paths such as `exported_files/black_ops_cw/` are relative to the active
+Greyhound installation. Follow the path reported by the executable you used.
+GUI, CLI and build-only installations can have separate settings and exports.
+
+Examples use variables such as `$capture`, `$output` and `$bo3` for paths you
+choose. Replace quoted placeholder values before running them. No personal
+capture folder, Steam library location or developer virtual environment is
+required. Captured game data is not included in this repository.
 
 ## Build on Windows
 
-1. Clone this fork and initialize its recorded submodules:
-   `git submodule update --init --recursive`.
-2. Install Visual Studio 2022 C++ desktop tools, the v143 toolset, Windows SDK,
-   and **C++ MFC for latest v143 build tools (x86 & x64)**.
-3. Install Python 3.10+ with NumPy and SciPy. For tests, install pytest as well.
-4. In PowerShell at the repository root:
+Requirements:
+
+- Windows x64.
+- Visual Studio 2022 with Desktop development with C++, the v143 toolset,
+  a Windows SDK and **C++ MFC for latest v143 build tools (x86 & x64)**.
+- Python 3.10+ with NumPy and SciPy for packaging. pytest is used for tests.
+- The repository's recorded submodules and external-library dependencies.
+
+Clone the fork, then open PowerShell in the checkout:
 
 ```powershell
+git clone --recurse-submodules https://github.com/Kxboo/Greyhound.git
+cd Greyhound
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install numpy scipy pytest
 $env:SUPERTERRAIN_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
 .\build-greyhound.ps1
 ```
 
-The build script stages `bin/Greyhound.exe`, `bin/cli/Greyhound-cli.exe`, Python
-capture helpers and the packaged brush runtime. `-BuildOnly` stages only beside
-`src/WraithXCOD/x64/Release/Greyhound.exe`. Keep runtime dependencies and the
-appropriate `package_index` databases beside the executable; the EXE alone is
-not a complete release. Missing external-library build errors require checking
-the solution's referenced dependencies as well as the submodules.
+For an existing clone, run `git submodule update --init --recursive` first.
+The environment variable keeps its existing name for compatibility; it points
+to your own interpreter and does not require a SuperTerrain checkout.
+
+Later examples use `python` for your configured interpreter. If the virtual
+environment is not activated, substitute `.\.venv\Scripts\python.exe`.
+
+The [build script](../build-greyhound.ps1) builds Release x64 and stages:
+
+| Purpose | Executable, relative to the checkout |
+| --- | --- |
+| GUI | `bin/Greyhound.exe` |
+| CLI | `bin/cli/Greyhound-cli.exe` |
+| Build-only output | `src/WraithXCOD/x64/Release/Greyhound.exe` |
+
+`-BuildOnly` stages the runtime only beside the build-only executable.
+Keep the packaged `tools/`, required runtime libraries and appropriate
+`package_index/` databases beside the executable. The EXE alone is not a
+complete release. See [runtime packaging](../tools/shared/runtime/README.md#developer-packaging)
+when changing the shipped helpers.
+
+## Run Greyhound
+
+For the GUI, launch `bin/Greyhound.exe`, load a supported game/data source, then
+select the assets you want. Load a map before using placement or brush actions.
+Settings for these workflows are under **Map & Model Export**, **Radiant Brushes**,
+**Terrain** and **Dev Tools**.
+
+For the CLI, use the executable shown above. Help and capabilities work without
+a running game; asset listing and export need a supported game/data source.
+Use a game copy you own. General game support and settings are described in
+the [upstream wiki](https://scobalula.github.io/Greyhound/); this folder documents
+the additional workflows in this fork.
 
 ## CLI: discover before exporting
-
-Run from the repository root after building. Capabilities and help work without
-a game; listing and exporting require a supported game/data source to be loaded.
 
 ```powershell
 $gh = '.\bin\cli\Greyhound-cli.exe'
@@ -65,12 +96,13 @@ $gh = '.\bin\cli\Greyhound-cli.exe'
 ```
 
 Repeat `--name` for exact selections or `--glob` for patterns. Exporting every
-asset requires explicit `--all`; combine it with `--dry-run` and `--limit` first.
-Model and animation format switches can be repeated to emit multiple formats.
-Use `--all-lods` only when needed; `--largest-lod` is the default. Existing files
-are skipped unless `--overwrite` is supplied. `--jsonl` is also available.
-Use executable help for the full flag list. Capabilities provide structured asset
-formats/defaults and dedicated placement-command metadata for automation.
+asset requires explicit `--all`; inspect `--dry-run` with `--limit` first.
+Format switches can be repeated. `--largest-lod` is the default; use
+`--all-lods` when needed. Existing files are skipped unless `--overwrite`
+is supplied. `--jsonl` is available for line-oriented output.
+
+Capabilities describe asset formats, defaults and dedicated placement-command
+metadata. Use the executable's help for the full list of flags.
 
 | Asset CLI exit code | Meaning |
 | --- | --- |
@@ -81,71 +113,77 @@ formats/defaults and dedicated placement-command metadata for automation.
 | 4 | Export failed |
 | 5 | Terrain finalization failed |
 
-The dedicated placement command has its own switches:
+The dedicated placement command has its own parser and switches:
 
 ```powershell
-# CW: load a map first. Audit, then categorize one completed run.
+# Cold War: capture, verify and organize one run.
 & $gh placements --name-db bundled --non-static --verify --organize
-# BO4: static placements; CW organization/auditing is not BO4 feature parity.
+# Black Ops 4: static placements.
 & $gh placements --name-db bundled
 ```
 
-`placements` exports transforms, not model meshes. In the GUI, use **Map & Model
-Export** to export placements, then **Models from JSON** for meshes. Select
-`models/static.json` or `models/non_static.json` in an organized CW run.
-`--name-db echo000` requires a separately imported local name database; see BO4.
-Do not mix `assets` options with `placements` options: their parsers differ.
+Do not mix `assets` switches with `placements` switches. The CW optional
+capture, verification and organization switches do not imply BO4 feature parity.
+For the alternate name database, see [BO4 / CW names](bo4.md#name-databases).
+
+Placements contain transforms, not meshes. In **Map & Model Export**, use
+**Models from JSON** with the exported placement file to export referenced models.
+For an organized CW run, select `models/static.json` or `models/non_static.json`.
+To resume a batch, select its `static_models.json` and retain its export settings.
 
 ## Placement folders and duplication
 
-An organized CW export keeps a single run under
+An organized CW export keeps one run under
 `exported_files/black_ops_cw/placements/run_NN/`:
 
 ```text
 run_NN/
-  catalog.json                  # output paths and source/output SHA-256
-  README.md
-  models/                       # static.json, non_static.json, spline.json
+  catalog.json                  # file locations and source/output hashes
+  README.md                     # guide to this run
+  models/                       # static, non-static and spline rows
   animation/                    # placements and named references
-  fx/                           # placements, assets, source candidates
+  fx/                           # effect placements, assets and candidates
   entities/                     # source entity classes
   lights/  probes/  sun/         # decoded data and source candidates
   triggers/                     # hull references
-  diagnostics/                  # unchanged raw evidence
+  diagnostics/                  # raw capture evidence
   metadata/                     # reports, validation and mappings
   logs/                         # helper logs, when present
 ```
 
-Use **Sort the finished export into per-category folders** with non-static CW
-capture enabled, or the CLI command above. Organization stages a temporary copy,
-verifies checksums and unchanged inputs, then swaps it into the same run path.
-This needs temporary disk space but leaves no second `_organized` run on success.
-A cleanup failure may retain an `*.organizing-*/original` recovery directory;
-inspect `placements/logs/terrain_pipeline.log` before removing it. A process crash during the two-rename
-publication window may also require restoring that directory manually.
+Enable **Sort the finished export into per-category folders** with non-static
+CW capture, or use the CLI above. Organization stages a temporary copy,
+checks hashes and unchanged inputs, then swaps it into the same run path.
+It needs temporary disk space; success leaves no second `_organized` run.
 
-Old exports are not migrated automatically. To preview organization without
-altering an existing flat run:
+A cleanup failure or interruption between renames may leave an
+`*.organizing-*/original` recovery directory. Inspect the reported paths and
+`placements/logs/terrain_pipeline.log` before attempting recovery or cleanup.
+
+Old exports are not migrated automatically. To preview a completed flat run:
 
 ```powershell
-python tools/cold_war/capture/organize_cw_placements.py 'C:\captures\run_01' 'C:\captures\preview'
-# Explicitly reorganize a saved, completed run after closing writers:
-python tools/cold_war/capture/organize_cw_placements.py 'C:\captures\run_01' --in-place
+$capture = '<path to your completed flat placement run>'
+$output = '<path to a new preview folder>'
+python tools/cold_war/capture/organize_cw_placements.py $capture $output
+# To reorganize the original run after closing its writers:
+python tools/cold_war/capture/organize_cw_placements.py $capture --in-place
 ```
 
-Raw diagnostics and decoded outputs intentionally coexist: they have different
-roles. Repeated model *instances* are not duplicate model assets; never collapse
-placements just because names or positions match. Captured authoring properties
-are preserved, even when a string resembles an old filename.
+Raw evidence and decoded data serve different purposes. Repeated model
+instances are separate placements; matching names or positions do not justify
+merging them. See [CW placements](cw-placements.md) for field meanings.
 
 ## Troubleshooting
 
-- Attach failed: check the loaded game, active map and supported build first.
-- Missing Python/helper: rebuild the staged runtime; check `SUPERTERRAIN_PYTHON`
-  and `terrain-python.txt` beside that executable.
-- Organization failed: inspect the helper log and surviving run/recovery folder.
-  A missing interpreter leaves the flat layout available.
-- Missing names: record the selected database; unresolved hashes are valid
-  evidence, not proof that an asset is absent.
-- Partial capture: read the completeness/readback fields and unresolved counts.
-  Do not silently treat a partial run as a complete map.
+- **Build fails:** confirm the C++/MFC components, submodules and referenced
+  external libraries. Read the first error in the build log.
+- **Attach fails:** check the game, loaded map and supported executable build.
+- **Missing helper:** check the runtime beside the executable you launched.
+  Rebuild packaging and check `terrain-python.txt` and `SUPERTERRAIN_PYTHON`.
+- **Organization fails:** inspect the helper log and surviving run/recovery
+  folder. A missing interpreter leaves the flat export available.
+- **Names remain hashed:** record the selected database. An unresolved name
+  does not mean the asset is missing.
+- **Capture is partial:** inspect completeness, readback and unresolved counts.
+  File generation alone does not prove complete decoding or gameplay parity.

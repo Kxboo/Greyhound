@@ -4,6 +4,10 @@ Start with [build and CLI usage](README.md), then the page for the relevant game
 Prefer one reproducible issue and one bounded change per review. Existing local
 changes may belong to another contributor: inspect `git status` before editing.
 
+All source paths are relative to your checkout. Capture inputs and derived output
+folders are supplied by you; the project does not require a maintainer's workspace.
+See the [path conventions](README.md#paths-used-in-these-guides).
+
 ## Walk through the source
 
 Scripts are grouped by source game under `tools/cold_war/`, `tools/black_ops_4/`
@@ -22,7 +26,7 @@ tests follow `tests/<game>/<task>/`.
 | BO4 readers | `GameBlackOps4.cpp`, `BO4ModelPlacementCapture.h` | BO4-specific layouts, source checks and placement validation |
 | Model batches | `CoDAssets.cpp`, `ModelBatchResume.h` | Identity, LOD completion, portable image paths and retry behavior |
 | Placement layout | `CWPlacementOrganize.h`, `tools/cold_war/capture/organize_cw_placements.py` | Transaction, public path rewrites and raw evidence preservation |
-| Brush conversion | `tools/cold_war/brushes/ and tools/black_ops_4/brushes/` | Saved-byte decoding, material decisions and verification reports |
+| Brush conversion | `tools/cold_war/brushes/`, `tools/black_ops_4/brushes/` | Saved-byte decoding, material decisions and verification reports |
 | Terrain source contract | `tools/shared/core/layout.py`, `tools/shared/capture/finalize_research_capture.py` | Capture inventory and sealed source boundary |
 
 Use searches to follow an action end to end:
@@ -50,6 +54,11 @@ Do not commit personal captures, exported game assets, process dumps, installed
 binaries, local virtual environments or machine-specific runtime paths. Use
 small artificial records for tests. Keep copyright/license and attribution files.
 Do not claim a live test from a synthetic test or a byte audit from a screenshot.
+
+Write reusable documentation with repository-relative paths and explicit input
+variables. Keep the docs set to 5–10 Markdown pages, each at most 500 lines.
+Update an existing topic instead of adding a session diary. Label map-specific
+research tools and list inputs that are not included in the repository.
 
 ## Extending CW, BO4, or another game
 
@@ -101,7 +110,8 @@ assumptions. Supply saved evidence instead of repeatedly taking full captures.
 
 ## Validation and sharing
 
-Run from the repository root using your configured Python interpreter:
+Run the checks relevant to your change from the repository root using your
+configured Python interpreter. The full validation sequence is:
 
 ```powershell
 python -m pytest tests -q
@@ -112,6 +122,11 @@ python -m pytest tests -q
 git diff --check
 git status --short
 ```
+
+For documentation-only edits, check local links/anchors, command paths and
+`git diff --check`; a native rebuild is unnecessary. For decoder changes, run
+the affected synthetic tests and any available saved-data audit before widening
+validation. Include the full build when changing native code or packaging.
 
 Native logs go to `test-output/native-tests`. The build stages capture helpers
 and a hash-checked brush runtime; test the staged installation as well as source

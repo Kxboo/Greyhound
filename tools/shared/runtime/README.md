@@ -1,6 +1,6 @@
 # Built-in Cold War Radiant export
 
-Load the current map in Greyhound, open **Settings → CW Radiant Brushes**, and
+Load the current map in Greyhound, open **Settings > Radiant Brushes**, and
 choose **Export brushes now**. **Automatically assign BO3 brush and tool types** and **Include triggers,
 volumes and entity JSON**
 export are enabled by default. The BO3 reference catalogue and isolated conversion
@@ -77,7 +77,7 @@ the brush payloads, then verifies the readbacks. A filter table can supply surfa
 names only when pointers and per-brush contents unions agree. Null-pointer shapes
 retain their raw indices without borrowing another map's surface labels.
 
-The bundled catalogue contains 217 stock material definitions from BO3's clip and
+The bundled catalogue contains stock material definitions from BO3's clip and
 tool GDTs, including their full properties and source hashes. Candidate comparisons
 cover the complete catalogue. Named CW mount behavior selects BO3 `mount`, including
 when only its contents flag is available. Portal, sky, caulk and non-solid skip
@@ -168,9 +168,9 @@ The current material catalogue includes 233 installed definitions, resolving
 inherited clip/tool materials across both GDTs with source provenance. Related
 stock surface families can be selected when an exact type is unavailable;
 assignment metadata records the approximation. See
-`docs/cw-collision.md` for the Silver evidence and remaining gaps.
+[collision documentation](../../../docs/cw-collision.md) for the workflow and remaining gaps.
 The separate saved-capture ENTITYLIST decoder and precise conversion JSON are
-documented in `docs/cw-effects-entities.md`.
+documented in [effects and entities](../../../docs/cw-effects-entities.md).
 
 Build `WraithXCOD.sln` as `Release|x64` with `PlatformToolset=v143`; no project-file
 changes are required. Ship the complete `tools` directory with the binary.

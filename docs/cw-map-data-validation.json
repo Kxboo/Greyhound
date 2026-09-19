@@ -2,7 +2,7 @@
   "reports": [
     {
       "schema": "cw-map-data-audit-v1",
-      "directory": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_080_555477921",
+      "directory": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_080_555477921",
       "pool": 128,
       "map_hash": "0x6BF83815978FDE24",
       "entities": 327,
@@ -1723,7 +1723,7 @@
     },
     {
       "schema": "cw-map-data-audit-v1",
-      "directory": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_08E_555478593",
+      "directory": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_08E_555478593",
       "pool": 142,
       "map_hash": "0x6BF83815978FDE24",
       "entities": 2380,
@@ -13687,7 +13687,7 @@
     },
     {
       "schema": "cw-map-data-audit-v1",
-      "directory": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_080_556267703",
+      "directory": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_080_556267703",
       "pool": 128,
       "map_hash": "0x6BF83815978FDE24",
       "entities": 327,
@@ -15418,7 +15418,7 @@
     },
     {
       "schema": "cw-map-data-audit-v1",
-      "directory": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_08E_556268156",
+      "directory": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_08E_556268156",
       "pool": 142,
       "map_hash": "0x6BF83815978FDE24",
       "entities": 2380,
@@ -27383,16 +27383,16 @@
   ],
   "comparisons": [
     {
-      "first": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_080_555477921",
-      "second": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_080_556267703",
+      "first": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_080_555477921",
+      "second": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_080_556267703",
       "pool": 128,
       "same_map_hash": true,
       "same_semantic_values": true,
       "same_raw_arrays": true
     },
     {
-      "first": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_08E_555478593",
-      "second": "C:\\SuperTerrain\\repos\\Greyhound\\bin\\cli\\exported_files\\black_ops_cw\\xrawfiles\\cw_pool_08E_556268156",
+      "first": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_08E_555478593",
+      "second": "<historical-export-root>/black_ops_cw/xrawfiles/cw_pool_08E_556268156",
       "pool": 142,
       "same_map_hash": true,
       "same_semantic_values": true,
