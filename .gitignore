@@ -336,3 +336,8 @@ ASALocalRun/
 
 # Local History for Visual Studio
 .localhistory/
+
+# Local captures, review artifacts and Python environments
+/test-output/
+/exported_files/
+/.venv/

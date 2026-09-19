@@ -331,6 +331,9 @@ struct XMaterial_t
 
     // The material name
     std::string MaterialName;
+    // The full asset name, including the game's directory prefix, when the name
+    // database resolved one. MaterialName is the purged file-safe form of it.
+    std::string MaterialSourceName;
     // The techset name
     std::string TechsetName;
     // The surface type name

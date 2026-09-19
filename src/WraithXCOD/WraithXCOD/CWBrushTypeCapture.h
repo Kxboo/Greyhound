@@ -75,6 +75,23 @@ namespace CWBrushTypeCapture
                 Data["traversal_flags"].push_back({{"name",Name},{"field_8",U32(P+8)},
                     {"field_12",Hex(U32(P+12))},{"field_16",Hex(U32(P+16))},{"field_20",Hex(U32(P+20))}});
             }
+            // Scan the bounded declaration window preceding the known traversal
+            // table. Accept only independent, aligned enum values and names.
+            Data["surface_types"]=json::array();
+            auto Surface=Read(C,Base+0xD66B6F0-64*24,64*24,"types/surface_declarations.bin");
+            if(Surface.size()!=64*24)return;
+            for(size_t O=0;O+24<=Surface.size();O+=8)
+            {
+                const auto P=Surface.data()+O;const auto V=U32(P+12);
+                if(!Pointer(U64(P)) || U32(P+8)>1 || !V || (V&~0x03F00000))continue;
+                auto B=Read(C,U64(P),96,"types/surface_name_"+std::to_string(O)+".bin");
+                auto End=std::find(B.begin(),B.end(),0);
+                if(B.size()!=96 || End==B.end() || End==B.begin() ||
+                    !std::all_of(B.begin(),End,[](uint8_t V){return (V>='A'&&V<='Z') || (V>='a'&&V<='z') || V=='_';}))continue;
+                Data["surface_types"].push_back({{"name",std::string(B.begin(),End)},
+                    {"field_12",Hex(V)},{"field_16",Hex(U32(P+16))},
+                    {"record_module_rva",Hex(0xD66B6F0-64*24+O)}});
+            }
             Ready=Slick && Player;
         }
         bool Finish(Capture& C)

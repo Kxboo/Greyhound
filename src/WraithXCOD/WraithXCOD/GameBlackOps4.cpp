@@ -5,6 +5,8 @@
 
 // We need the CoDAssets class
 #include "CoDAssets.h"
+#include "CoDPackageCache.h"
+#include <algorithm>
 #include "CoDRawImageTranslator.h"
 #include "CoDXPoolParser.h"
 
@@ -13,11 +15,23 @@
 #include "FileSystems.h"
 #include "MemoryReader.h"
 #include "SettingsManager.h"
+#include "BO4NameDatabase.h"
+#include <stdexcept>
 #include "HalfFloats.h"
+#include "BinaryWriter.h"
+#include "Image.h"
+#include "json.hpp"
+
+#include <cmath>
+#include <cstring>
+#include <map>
+#include <set>
+#include <vector>
 
 // -- Initialize Asset Name Cache
 
 WraithNameIndex GameBlackOps4::AssetNameCache = WraithNameIndex();
+std::string GameBlackOps4::ActiveNameDatabase = "bundled";
 
 // -- Initialize Decryption Table
 
@@ -606,6 +620,410 @@ struct BO4XAssetPoolData
 // Verify that our pool data is exactly 0x20
 static_assert(sizeof(BO4XAssetPoolData) == 0x20, "Invalid Pool Data Size (Expected 0x20)");
 
+uint64_t BO4CalculateHash(const std::string& Name);
+
+#include "BO4WorldPoolProbe.h"
+#include "BO4CollisionHandlerProbe.h"
+#include "CWRadiantExport.h"
+#include "ExportRun.h"
+#include "BO4ModelCollisionProbe.h"
+#include "BO4ModelPlacementCapture.h"
+
+namespace
+{
+    // ASSET_TYPE_TERRAINGFX = 152 in atian-cod-tools
+    // src/core/shared/games/bo4/pool.hpp.  Cold War renumbered the same asset
+    // to 169 and then 177 by inserting types earlier in the table; the entries
+    // immediately around terraingfx are unchanged between the two games, and
+    // terraingfx exists in no other title -- everything later uses stterrain.
+    constexpr uint32_t BO4TerrainGfxPoolIndex = 0x98;
+
+    // Cold War's measured TerrainGfx header size.  Recorded for comparison
+    // only: agreement is evidence the layout carried over from T8 to T9, not
+    // proof of one, and disagreement does not mean the pool index is wrong.
+    constexpr uint32_t BOCWTerrainGfxHeaderSize = 0x128;
+
+    constexpr uint64_t MaximumTerrainPoolBytes = 512ull * 1024ull * 1024ull;
+
+    // ASSET_TYPE_COUNT = 168 in the same BO4 pool table.  Used to walk every
+    // pool descriptor so a pointer can be tested against all of them.
+    constexpr uint32_t BO4AssetPoolCount = 168;
+    // A candidate count/pointer pair is only followed within these bounds, so a
+    // stray integer cannot turn into a huge read.
+    constexpr uint64_t BO4MaximumTableEntries = 8192;
+    constexpr size_t BO4ReportedTableMembers = 256;
+    // Enough to cover the whole serialized table arena observed so far (~3 KB)
+    // with room to spare; halved on failure so a short arena still dumps.
+    constexpr uint64_t BO4RegionDumpBytes = 16384;
+    // Level data is far larger than a table arena: the finest level of the maps
+    // measured so far carries 128 x 128 tiles.  This is a sample, not the whole
+    // level; it exists to measure the per-tile stride, not to export it yet.
+    constexpr uint64_t BO4LevelDumpBytes = 262144;
+    // Within the arena behind header 0x18: the level chain's count and the
+    // pointer to its (width, height, pointer) entries.  Measured from the arena.
+    constexpr size_t BO4LodChainCountOffset = 72;
+    constexpr size_t BO4LodChainPointerOffset = 80;
+    constexpr size_t BO4LodLevelBytes = 16;
+    constexpr uint64_t BO4MaximumLodLevels = 32;
+    // Tile record stride, measured two ways that agree: pointer slots within a
+    // level collapse only at 264, and the record's first pointer walks a
+    // parallel array in 144-byte steps, with 264 + 144 matching the per-tile gap
+    // between consecutive level allocations.
+    constexpr size_t BO4TileRecordBytes = 264;
+    // A sample of the finest level.  Following every tile would dump the whole
+    // map; these exist to identify what each slot addresses.
+    constexpr uint64_t BO4ProbedTiles = 8;
+    // Distinct tile payloads to extract for offline decoding.  Tiles whose
+    // payload is referenced once are the map's own terrain; the heavily shared
+    // ones are repeated filler, so rarity is the useful selection order.
+    constexpr size_t BO4DumpedPayloads = 24;
+    // Floats spanning the tile record's bounds block, recorded next to each
+    // payload so a decode can be checked against the space the tile occupies.
+    // The height map image sits in the table behind 0x28.  Its side is
+    // finest_level_width * 32 + 4 on both maps measured, so a tile's 33x33
+    // samples start at (column * 32, row * 32) with a small border whose width
+    // the +4 implies but does not pin down.  The window dumped is deliberately
+    // wider than 33 so the border offset can be found offline rather than
+    // assumed here.
+    // A map is an array of terrain sectors, not one terrain.  Header 0x10
+    // counts them and 0x18 addresses them; each record carries its own
+    // quadtree, its own tile size and its own placement.  The stride was
+    // measured, not guessed: record 1's placement block lands at 0x148 + 0xF0,
+    // which is where scanning for the grid-side marker finds the second one.
+    constexpr size_t BO4SectorCountOffset = 0x10;
+    constexpr size_t BO4SectorRecordBytes = 0x148;
+    constexpr size_t BO4SectorLevelCountOffset = 0x48;
+    constexpr size_t BO4SectorLevelListOffset = 0x50;
+    constexpr size_t BO4SectorBoundsOffset = 0xB8;
+    constexpr size_t BO4SectorDescriptorOffset = 0xF0;
+    constexpr size_t BO4SectorDescriptorFloats = 6;
+    // The sector's world placement: translation xyz then a uniform scale.
+    // Its exact negation sits at 0x58.  Verified by adding it to the local
+    // origin (-half_extent) and matching bounds[0]/bounds[1] exactly on
+    // three sectors across two maps.
+    constexpr size_t BO4SectorPlacementOffset = 0x88;
+    constexpr size_t BO4SectorPlacementInverseOffset = 0x58;
+    // A 2048 square BC7 mip chain is 5.6 MB; 64 MB leaves room and still
+    // refuses anything that is plainly not a texture.
+    // The _c binding's semantic hash.  The same value carries the colour map
+    // on every layer of both maps walked so far.
+    constexpr uint32_t BO4ColorMapSemantic = 0xA0AB1041;
+    // Every semantic seen bound by a terrain layer material, and the suffix
+    // the game's own texture names use for it.  Anything not listed still gets
+    // exported, under its raw hash, so a new one shows up instead of vanishing.
+    struct BO4TerrainSemantic { uint32_t Hash; const char* Role; bool Normal; };
+    constexpr BO4TerrainSemantic BO4TerrainSemantics[] = {
+        { 0xA0AB1041, "color",     false },
+        { 0x59D30D0F, "normal",    true  },
+        { 0x6D0A6C98, "gloss",     false },
+        { 0x7176BF2,  "occlusion", false },
+        { 0x34D849D5, "roughness", false },
+        { 0xFBFD3A43, "roughness", false },
+    };
+    // Count/pointer pairs inside a sector record that the walk has not opened.
+    // Their counts track the sector (14/14/14 where it has 5 levels, 28 where
+    // it has 7), so they are per-sector arrays of something, and one of them is
+    // the likeliest home for the sector's placement inside the shared height
+    // map -- the one quantity a multi-sector map still cannot supply.
+    constexpr size_t BO4SectorSideCountOffsets[] = {0xD0, 0x110, 0x128, 0x138};
+    constexpr size_t BO4SectorSideCount = 4;
+    // A layer binding is 0x108 bytes, so 22 of them overran the old 2048-byte
+    // dump at record 7.  The widest sector seen binds 29 layers.
+    constexpr uint64_t BO4SectorSideDumpBytes = 8192;
+    // The 0x110 array: one record per layer this sector draws.  Offsets below
+    // are measured from the live records, cross-checked on four maps.
+    //   +0x00  material*, always landing in pool 6 on a 312-byte boundary
+    //   +0x08  a pointer into a 16-byte-strided per-layer side table
+    //   +0x10  two rows of a UV transform, 1/64 with V negated
+    // Resolving the material to its name is what turns a layer index into
+    // something a rebuild can bind a texture to, so that is done here rather
+    // than left as raw bytes.
+    constexpr size_t BO4LayerBindingOffset = 0x110;
+    constexpr size_t BO4LayerBindingBytes = 0x108;
+    constexpr size_t BO4LayerMaterialOffset = 0x00;
+    constexpr size_t BO4LayerSideTableOffset = 0x08;
+    constexpr size_t BO4LayerUVOffset = 0x10;
+    constexpr size_t BO4LayerUVFloats = 8;
+    constexpr size_t BO4LayerCeiling = 64;
+    constexpr size_t BO4MaterialImageCeiling = 16;
+    // Each layer binding carries a pointer at +0x08 into a table with a 16-byte
+    // stride, one entry per layer.  Nothing has opened it, and a per-texel or
+    // per-layer blend weight is the one input a rebuild still lacks, so the
+    // whole table is dumped once per sector for offline reading.
+    constexpr uint64_t BO4LayerSideTableBytes = 4096;
+    // BO4XMaterial is 312 bytes and only three fields are named: the name at
+    // +0x00, the image table at +0x38 and the image count at +0x130.  That
+    // leaves 240 unexplored bytes.  Cold War reaches a material's shader
+    // through a techset pointer in the same region and reads its constant
+    // buffers for the parameters the shader uses, so the whole material is
+    // dumped here and its pointer-shaped fields followed one step.
+    constexpr uint64_t BO4MaterialDumpBytes = 312;
+    constexpr size_t BO4MaterialFollowCeiling = 12;
+    constexpr uint64_t BO4MaterialFollowBytes = 256;
+    constexpr size_t BO4MaterialsFollowed = 2;
+    // Cold War keeps a material's techset pointer and its constant buffer in
+    // this region (GameBlackOpsCW.cpp:1992), which is why these two offsets
+    // were the ones tried first.  That is the reason for looking and not a
+    // reason for believing: what makes them BO4's is that the pointer at +0x30
+    // lands on a slot boundary of BO4's own pool 8 for every terrain layer
+    // material walked, and that the (size, pointer) pair at +0x120 describes a
+    // buffer whose declared length matches the bytes that come back.
+    // The shader is the only place a blend rule that is computed rather than
+    // stored can be read, so the techset chain is walked looking for DXBC
+    // containers and each one is pulled whole.
+    constexpr size_t BO4MaterialTechsetOffset = 0x30;
+    constexpr size_t BO4MaterialCBufferSizeOffset = 0x120;
+    constexpr size_t BO4MaterialCBufferPointerOffset = 0x128;
+    constexpr uint64_t BO4MaterialCBufferCeiling = 1u << 16;
+    // v37: the two materials dumped whole are not enough to answer whether the
+    // blend rule's lo/hi thresholds are per-layer constants.  That question
+    // needs every layer's constant buffer side by side, so the buffer is read
+    // for all of them and decoded into the report; only the heavy per-material
+    // dumping stays capped at BO4MaterialsFollowed.
+    constexpr size_t BO4LayerConstantsCeiling = 64;
+    constexpr size_t BO4LayerConstantFloats = 96;
+
+    // v38: terrain's draw shader is not reachable from the terrain asset.  That
+    // is now measured rather than assumed: of 251 shader blobs reached through
+    // the layer materials' techsets, the structured-buffer strides they pull
+    // vertices from are 4, 12, 16, 20, 32, 64, 80, 96, 124, 224, 336 and 384,
+    // and never 8.  A terrain tile vertex is 8 bytes -- four u16 -- so none of
+    // them can be drawing terrain.  That gives an exact fingerprint to hunt for
+    // across the process instead of a vague one: a vertex shader that declares
+    // dcl_resource_structured with a stride of 8.
+    constexpr uint32_t BO4ShaderContainerMagic = 0x43425844;   // 'DXBC'
+    constexpr uint32_t BO4OpcodeDeclareStructured = 162;
+    constexpr uint32_t BO4TerrainVertexStride = 8;
+    constexpr uint64_t BO4ScanChunkBytes = 1u << 20;
+    constexpr uint64_t BO4ScanRegionCeiling = 48ull << 30;
+    constexpr uint64_t BO4ScanBlobCeiling = 1u << 20;
+    constexpr size_t BO4ScanDumpCeiling = 64;
+
+    // v39: the sector's side arrays carry image pointers that nothing has ever
+    // resolved.  The array at +0x138 holds both terrain height maps, the layer
+    // textures, the engine defaults -- and three images that recur on a 48-byte
+    // stride and appear in no layer's image list.  An unnamed image bound at
+    // sector level rather than by a layer material is the last place a per-texel
+    // layer assignment could live, so every pointer in every side array is
+    // resolved here and anything not already accounted for is dumped whole.
+    constexpr size_t BO4SideImageCeiling = 512;
+
+    // v40: three families of image sit at the head of every sector's side
+    // array, each with a _0 and a _1 for the two sectors, and only one of them
+    // was ever named:
+    //
+    //   terrain_height_maps_N   4100x4100 and 1028x1028, format 56
+    //   (unnamed)                513x1025 and  129x257,  format 42
+    //   (unnamed)               4100x4100 and 1028x1028, format 80
+    //
+    // Both unnamed families are dimensionally tied to the tile grid, which no
+    // layer texture is: a sector of N tiles gives N*32+4 square for the first
+    // shape and (N*4+1) x (N*8+1) for the second -- 128 and 32 tiles fit both
+    // exactly.  That is what selects them here, rather than their position in
+    // the array, so a map with a different sector layout still picks them up.
+    //
+    // The name database does not know them, but the hashes are only FNV-1a 64
+    // masked to 60 bits and the naming pattern was already visible, so the
+    // 513x1025 pair cracked offline to terrain_cutout_maps_0 and _1.  Those two
+    // names are carried here so the dumps land under a real name; the 4100
+    // format-80 pair has not cracked and is dumped under its hash.
+    constexpr uint32_t BO4SectorMapWidthFloor = 64;
+    constexpr uint64_t BO4SectorMapMipCeiling = 256ull << 20;
+    constexpr uint64_t BO4SectorMapChunkBytes = 1u << 22;
+    struct BO4CrackedName { uint64_t Hash; const char* Name; };
+    constexpr BO4CrackedName BO4CrackedNames[] = {
+        {0x3F5AF81676B6F1C, "terrain_cutout_maps_0"},
+        {0x3F5B081676B70CF, "terrain_cutout_maps_1"},
+    };
+    constexpr uint64_t BO4TechsetBytes = 256;   // DumpRegion's floor
+    constexpr uint64_t BO4TechniqueScanBytes = 256;
+    constexpr uint32_t BO4ShaderMagic = 0x43425844;   // "DXBC"
+    constexpr uint64_t BO4ShaderCeiling = 1u << 22;
+    // The first eight shaders a walk reaches are a model's depth and GBuffer
+    // passes, which a terrain layer's material shares.  The terrain pass is
+    // further along the same techset, so take everything the walk can reach and
+    // sort it out by input signature afterwards.
+    constexpr size_t BO4ShadersPerMaterial = 96;
+    constexpr size_t BO4ShaderWalkDepth = 5;
+    constexpr size_t BO4ShaderWalkNodes = 4096;
+    // Every technique a terrain layer's material carries turned out to be a
+    // model pass, declaring BLENDWEIGHT and BLENDINDICES that terrain geometry
+    // does not have.  Terrain's own shader is therefore not reachable from the
+    // terrain asset: the renderer holds it directly.  Pool 8 is only 2200 slots
+    // wide, so rather than guess which asset owns it, every techset in the game
+    // is walked and the input semantics its shaders declare are recorded.  A
+    // shader that draws terrain cannot declare a skinned vertex, so the
+    // terrain-shaped techsets fall out of the catalogue by themselves.
+    //
+    // Naming the semantics narrowed the catalogue but never produced a blob to
+    // read, so v36 adds the second half of that filter and dumps what survives.
+    // A terrain tile's vertex is eight bytes -- grid XY and an offset XY, no Z
+    // -- so whatever draws terrain has to sample the height map in its vertex
+    // stage to place the vertex at all.  That makes "a vertex shader declaring
+    // a texture" the discriminator: of the 22 vertex shaders a terrain layer's
+    // material carries, zero declare one (they read structured buffers), while
+    // 16 of its 18 pixel shaders do.  So the test separates stages rather than
+    // merely being rare, and the ceiling keeps a wrong guess cheap.
+    //
+    // "SHEX" is the chunk holding bytecode; "SHDR" is its pre-SM5 spelling.
+    constexpr uint32_t BO4ShaderCodeTag = 0x58454853;
+    constexpr uint32_t BO4ShaderCodeTagOld = 0x52444853;
+    // The version token's high 16 bits are the program type; 1 is a vertex
+    // shader.  D3D10_SB_OPCODE_DCL_RESOURCE is 88.
+    constexpr uint32_t BO4ShaderTypeVertex = 1;
+    constexpr uint32_t BO4OpcodeDeclareResource = 88;
+    constexpr size_t BO4TerrainShapedTechsetCeiling = 96;
+    constexpr uint32_t BO4TechsetPoolIndex = 8;
+    constexpr uint64_t BO4TechsetAssetBytes = 168;
+    constexpr uint64_t BO4TechsetPassFirst = 6;     // qword index of Passed[0]
+    constexpr uint64_t BO4TechniqueFields = 16;
+    constexpr size_t BO4StagesPerTechnique = 4;
+    constexpr size_t BO4BlobsPerTechset = 6;
+    constexpr uint64_t BO4SignatureBytes = 1024;
+    constexpr size_t BO4SignatureTokenCeiling = 24;
+    constexpr size_t BO4SignatureTokenFloor = 4;
+    constexpr uint64_t BO4TechsetNameMask = 0xFFFFFFFFFFFFFFF;
+    // Two bare u32 sitting between the placement block and the next pair.
+    constexpr size_t BO4SectorPairOffset = 0x120;
+    // Sibling assets are not always reachable from the header.  zm_white has two
+    // sectors and two height maps, but only terrain_height_maps_0 is in the
+    // 0x28 table -- _1 is reachable by NAME and by nothing else, which is why
+    // searching the pointer-reachable image found nothing for sector 1.
+    // Black Ops Cold War's capture already works this way: it sweeps every pool
+    // header and follows whatever resolves to a terrain-ish name
+    // (GameBlackOpsCW.cpp:809), instead of trusting the header to be a complete
+    // index.  This is the same sweep, narrowed to the image pool.
+    constexpr char BO4HeightMapNamePrefix[] = "terrain_height_maps";
+    // The height maps were found by sweeping the image pool for one name.
+    // Cold War's capture sweeps for anything terrain-ish, and its pipeline
+    // needs a per-texel layer assignment -- an index or control surface -- that
+    // nothing reachable from the Black Ops 4 header has produced.  If one
+    // exists it is most likely another image findable only by name, so this
+    // widens the same sweep to report every terrain-named image.
+    constexpr char BO4TerrainNameFragment[] = "terrain";
+    constexpr size_t BO4TerrainImageReportCeiling = 512;
+    // The height map is 2052 square, a 2048 terrain grid with a two-texel
+    // border, and it is the only terrain-named image that is not an atlas.  If
+    // a per-texel layer assignment exists as a texture it has to cover the same
+    // grid, so every large square image is reported whatever it is called --
+    // the name sweep would miss one that is not called "terrain".
+    constexpr uint32_t BO4SquareImageFloor = 512;
+    // Reporting every large square image just fills the list with character and
+    // weapon art.  A control surface -- a height field, a per-texel index, a
+    // mask -- is single channel and uncompressed, which the height map itself
+    // is (R16_UNORM).  Those formats are rare enough to list exhaustively.
+    constexpr uint32_t BO4ControlFormats[] = {
+        56,   // R16_UNORM, what terrain_height_maps_0 uses
+        57,   // R16_UINT
+        61,   // R8_UNORM
+        62,   // R8_UINT
+    };
+    constexpr size_t BO4SweptImageCeiling = 64;
+    constexpr uint64_t BO4SweptMipCeiling = 1ull << 27;
+    constexpr uint64_t BO4MaximumSectors = 256;
+    // Payloads pulled per sector.  Kept small because a map can hold dozens of
+    // sectors and the point is coverage across them, not depth in one.
+    constexpr size_t BO4PayloadsPerSector = 3;
+    // A vertex is four u16: the grid position, then a second position that is
+    // near it but off the lattice.  Whether that second pair is this vertex's
+    // seat in the parent LOD cannot be told from one tile -- it needs the
+    // parent tile to compare against.  So one tile per sector is followed up
+    // its ancestor chain, halving column and row at each coarser level.
+    constexpr size_t BO4AncestorChainCeiling = 8;
+    constexpr size_t BO4SectorPayloadCeiling = 64;
+    // The height map serves every sector, so a sector's offset into it cannot
+    // be read off that sector alone.  Dumping the whole image once lets the
+    // offset be solved offline instead of guessed here.
+    constexpr uint64_t BO4HeightMapChunkBytes = 1u << 22;
+    constexpr size_t BO4HeightMapTableOffset = 0x28;
+    constexpr uint64_t BO4HeightWindowSide = 37;
+    constexpr uint32_t BO4TileGridSide = 33;
+    constexpr uint64_t BO4TileGridStep = 32;
+    constexpr size_t BO4TileBoundsOffset = 184;
+    constexpr size_t BO4TileBoundsFloats = 20;
+    constexpr uint64_t BO4TileSlotDumpBytes = 4096;
+    // A tile record is 264 bytes and nearly all of it is zero: a pointer, the
+    // vertex and index counts, the tile index, and the bounds.  The pointer at
+    // +0x00 steps exactly 0x90 between consecutive tiles, so it addresses a
+    // second per-tile array of 144-byte records that nothing has opened -- the
+    // last place a per-tile layer assignment could be hiding.
+    // The 0x68 and 0x78 tables each hold 2048 entries, about half of them
+    // null, and none land on an asset boundary -- so they are not asset
+    // tables.  They are the only structures left unopened, and a per-texel or
+    // per-tile blend rule has been found nowhere else, so their entries are
+    // followed here.
+    constexpr size_t BO4WideTableOffsets[] = {0x68, 0x78};
+    constexpr size_t BO4WideTableCount = 2;
+    constexpr uint64_t BO4WideTableDumpBytes = 16384;
+    constexpr size_t BO4WideTableFollowed = 6;
+    constexpr uint64_t BO4WideTargetBytes = 256;
+    // The u16 at +0xA8 of a tile record.  On zm_white's sector 0 it uses
+    // exactly nine bits for that sector's nine layers, it is spatially
+    // coherent, and across four maps a parent tile's value is the OR of its
+    // four children's in 1780 cases out of 1780 -- so whatever it enumerates,
+    // it aggregates up the quadtree.  Reading it for every sector, whose layer
+    // counts differ, is what decides whether the thing it enumerates is the
+    // sector's own layers.
+    constexpr size_t BO4TileMaskOffset = 0xA8;
+    constexpr uint64_t BO4TileMaskCeiling = 65536;
+
+    // A tile record carries pointers at +0x08 and +0x10 on only some tiles:
+    // 191 of the 992 readable records in zm_white's level 2, and none of the
+    // other 801.  The +0x08 values are 64KB-page aligned at +0x80 -- 0x...0080,
+    // stepping by 0x10000 -- which is a runtime allocation's shape rather than
+    // an authored array's, so the sparsity most likely means "streamed in".
+    //
+    // The reason to open them.  A streamed tile payload is 21128 bytes and
+    // decomposes exactly into a 128-byte header, 1089 vertices of eight bytes,
+    // and 6144 indices; all four u16 of every vertex are position (lanes 0/1
+    // reproduce the grid exactly, lane 2's high byte correlates 0.996 with the
+    // column and lane 3's with the row).  No payload in any capture is larger
+    // than that accounting.  Yet the layer's pixel shader decides coverage by
+    // thresholding a reveal map against a per-vertex value, and the vertex
+    // shader that feeds it ends `mov o1.x, v1.w` -- a straight pass-through of
+    // a vertex COLOR that the eight-byte payload vertex does not contain.
+    // Every surface techset in the game declares that COLOR, skinned and
+    // static alike, so the colour is supplied somewhere after the payload.
+    //
+    // This dump does not assume it is supplied here.  It opens the only
+    // per-tile buffers that exist at runtime and were never read; if the
+    // colour is not in them, that is a result too.
+    constexpr size_t BO4TileResidentFirstOffset = 0x08;
+    constexpr size_t BO4TileResidentSecondOffset = 0x10;
+    constexpr size_t BO4TileVertexCountOffset = 0x58;
+    constexpr size_t BO4TileIndexOffset = 0xAC;
+    // One 64KB page: what a +0x80-into-a-page pointer can address without
+    // running into the next allocation.  1089 vertices fit at 60 bytes each.
+    constexpr uint64_t BO4TileResidentBytes = 65536;
+    // Eight tiles is ~1MB of dump and enough to tell a shared buffer from a
+    // per-tile one; the whole resident set would be 24MB.
+    constexpr uint64_t BO4ResidentTileCeiling = 8;
+
+    constexpr size_t BO4TileDetailPointerOffset = 0x00;
+    constexpr size_t BO4TileDetailBytes = 0x90;
+    constexpr uint64_t BO4TileDetailRunBytes = 8192;
+    // The streamkey asset is 72 bytes; this covers it with room for neighbours.
+    constexpr uint64_t BO4ProbedAssetQwords = 12;
+    // ASSET_TYPE_STREAMKEY = 0x9F in the Black Ops 4 pool table.
+    constexpr uint32_t BO4StreamKeyPoolIndex = 0x9F;
+    // Offsets within the 72-byte streamkey, measured from the live asset.
+    constexpr size_t BO4StreamKeyNameHashOffset = 0x00;
+    constexpr size_t BO4StreamKeyContentHashOffset = 0x10;
+    constexpr size_t BO4StreamKeyPayloadSizeOffset = 0x20;
+    // The low half of this field matched the extracted payload byte for byte,
+    // where the 0x20 field did not.
+    constexpr size_t BO4StreamKeyUncompressedSizeOffset = 0x40;
+    // ASSET_TYPE_IMAGE = 9 in the same BO4 pool table.
+    constexpr uint32_t BO4ImagePoolIndex = 9;
+
+    // Recorded when offsets resolve so the probe can re-read the descriptor.
+    // LoadOffsets is the only place that knows where the pool directory is.
+    uint64_t BO4DBAssetPoolsOffset = 0;
+    uint64_t TerrainGfxPoolPtr = 0;
+    uint32_t TerrainGfxPoolSize = 0;
+    uint32_t TerrainGfxAssetSize = 0;
+}
+
 bool GameBlackOps4::LoadOffsets()
 {
     // ----------------------------------------------------
@@ -617,6 +1035,11 @@ bool GameBlackOps4::LoadOffsets()
     //    Black Ops 4 stringtable, check entries, results may vary
     //    Reading is: (StringIndex * 16) + StringTablePtr + 16
     // ----------------------------------------------------
+
+    BO4DBAssetPoolsOffset = 0;
+    TerrainGfxPoolPtr = 0;
+    TerrainGfxPoolSize = 0;
+    TerrainGfxAssetSize = 0;
 
     // Attempt to load the game offsets
     if (CoDAssets::GameInstance != nullptr)
@@ -632,6 +1055,7 @@ bool GameBlackOps4::LoadOffsets()
             auto ModelPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 4));
             auto ImagePoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 0x9));
             auto MaterialPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 6));
+            auto TerrainPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BaseAddress + GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * BO4TerrainGfxPoolIndex));
 
             // Apply game offset info
             CoDAssets::GameOffsetInfos.emplace_back(AnimPoolData.PoolPtr);
@@ -657,6 +1081,12 @@ bool GameBlackOps4::LoadOffsets()
                     CoDAssets::GamePoolSizes.emplace_back(ModelPoolData.PoolSize);
                     CoDAssets::GamePoolSizes.emplace_back(ImagePoolData.PoolSize);
                     CoDAssets::GamePoolSizes.emplace_back(MaterialPoolData.PoolSize);
+                    // Unvalidated on purpose: the probe reports whatever this
+                    // descriptor says rather than filtering on an expectation.
+                    TerrainGfxPoolPtr = TerrainPoolData.PoolPtr;
+                    TerrainGfxPoolSize = TerrainPoolData.PoolSize;
+                    TerrainGfxAssetSize = TerrainPoolData.AssetSize;
+                    BO4DBAssetPoolsOffset = BaseAddress + GameOffsets.DBAssetPools;
                     // Return success
                     return true;
                 }
@@ -696,6 +1126,7 @@ bool GameBlackOps4::LoadOffsets()
             auto ModelPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 4));
             auto ImagePoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 0x9));
             auto MaterialPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * 6));
+            auto TerrainPoolData = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(GameOffsets.DBAssetPools + (sizeof(BO4XAssetPoolData) * BO4TerrainGfxPoolIndex));
 
             // Apply game offset info
             CoDAssets::GameOffsetInfos.emplace_back(AnimPoolData.PoolPtr);
@@ -723,6 +1154,11 @@ bool GameBlackOps4::LoadOffsets()
                     CoDAssets::GamePoolSizes.emplace_back(ModelPoolData.PoolSize);
                     CoDAssets::GamePoolSizes.emplace_back(ImagePoolData.PoolSize);
                     CoDAssets::GamePoolSizes.emplace_back(MaterialPoolData.PoolSize);
+
+                    TerrainGfxPoolPtr = TerrainPoolData.PoolPtr;
+                    TerrainGfxPoolSize = TerrainPoolData.PoolSize;
+                    TerrainGfxAssetSize = TerrainPoolData.AssetSize;
+                    BO4DBAssetPoolsOffset = GameOffsets.DBAssetPools;
 
                     // Return success
                     return true;
@@ -758,6 +1194,7 @@ bool GameBlackOps4::LoadAssets()
     bool NeedsImages = (SettingsManager::GetSetting("showximage", "false") == "true");
     bool NeedsRawFiles = (SettingsManager::GetSetting("showxrawfiles", "false") == "true");
     bool NeedsMaterials = (SettingsManager::GetSetting("showxmtl", "false") == "true");
+    bool NeedsTerrains = (SettingsManager::GetSetting("showxterrain", "true") == "true");
     bool NeedsExtInfo = (SettingsManager::GetSetting("needsextinfo", "true") == "true");
 
     /*
@@ -1025,10 +1462,2701 @@ bool GameBlackOps4::LoadAssets()
         });
     }
 
+    // terraingfx.  The pool is walked by descriptor rather than through
+    // CoDXPoolParser because no BO4 TerrainGfx structure has been reversed --
+    // the only things assumed here are the name hash at offset 0 and the
+    // header size the descriptor itself reports.
+    if (NeedsTerrains && TerrainGfxPoolPtr != 0 &&
+        TerrainGfxAssetSize >= sizeof(uint64_t) && TerrainGfxAssetSize <= 0x10000 &&
+        TerrainGfxPoolSize > 0)
+    {
+        const uint64_t PoolBytes = static_cast<uint64_t>(TerrainGfxAssetSize) * TerrainGfxPoolSize;
+        const uint64_t MaximumPoolOffset = TerrainGfxPoolPtr + PoolBytes;
+
+        if (PoolBytes <= MaximumTerrainPoolBytes && MaximumPoolOffset > TerrainGfxPoolPtr)
+        {
+            uintptr_t BytesRead = 0;
+            auto PoolBuffer = CoDAssets::GameInstance->Read(TerrainGfxPoolPtr, static_cast<uintptr_t>(PoolBytes), BytesRead);
+
+            if (PoolBuffer != nullptr && BytesRead == PoolBytes)
+            {
+                for (uint32_t i = 0; i < TerrainGfxPoolSize; i++)
+                {
+                    const uint64_t AssetOffset = TerrainGfxPoolPtr + static_cast<uint64_t>(i) * TerrainGfxAssetSize;
+                    uint64_t NameHash = 0;
+                    std::memcpy(&NameHash, PoolBuffer + static_cast<size_t>(i) * TerrainGfxAssetSize, sizeof(NameHash));
+
+                    // Free slots use the first qword as an in-pool linked-list pointer.
+                    if (NameHash == 0 || (NameHash > TerrainGfxPoolPtr && NameHash < MaximumPoolOffset))
+                        continue;
+
+                    // BO4 hashes are 60 bit, the same as every other asset here.
+                    NameHash &= 0xFFFFFFFFFFFFFFF;
+                    auto TerrainName = Strings::Format("terraingfx_%llx", NameHash);
+
+                    if (AssetNameCache.NameDatabase.find(NameHash) != AssetNameCache.NameDatabase.end())
+                    {
+                        auto& NewName = AssetNameCache.NameDatabase[NameHash];
+                        if (!CoDAssets::VerifiedHashes || BO4CalculateHash(NewName) == NameHash)
+                            TerrainName = NewName;
+                    }
+
+                    CoDAssets::LogXAsset("TerrainGfx", TerrainName);
+
+                    auto LoadedTerrain = new CoDTerrain_t();
+                    LoadedTerrain->AssetName = TerrainName;
+                    LoadedTerrain->AssetPointer = AssetOffset;
+                    LoadedTerrain->AssetSize = TerrainGfxAssetSize;
+                    LoadedTerrain->AssetStatus = WraithAssetStatus::Loaded;
+                    CoDAssets::GameAssets->LoadedAssets.push_back(LoadedTerrain);
+                }
+            }
+
+            delete[] PoolBuffer;
+        }
+    }
+
     // Success, error only on specific load
     return true;
 }
 
+// The Black Ops 4 terraingfx probe.  This is a measurement, not a decode.  It
+// records what the pool descriptor reports, dumps the raw header, and then asks
+// the one question that can be answered without knowing the structure: for
+// every pointer the header holds, and every entry of every count/pointer pair
+// the header itself implies, does that address land on an asset header boundary
+// inside one of the game's own pools?  Pool membership is a hard test -- an
+// address is on a boundary or it is not -- so it identifies table contents
+// without guessing at field meanings.  Cold War offsets are never replayed
+// here; the candidate pairs are derived from the BO4 header's own shape.
+bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
+    const std::string& ExportPath, const std::function<void(uint32_t)>& ReportProgress)
+{
+    if (CoDAssets::GameInstance == nullptr || Terrain == nullptr ||
+        Terrain->AssetPointer == 0 || Terrain->AssetSize == 0 ||
+        Terrain->AssetSize > 0x10000)
+    {
+        return false;
+    }
+
+    ReportProgress(0);
+
+    uintptr_t BytesRead = 0;
+    auto Header = CoDAssets::GameInstance->Read(Terrain->AssetPointer,
+        static_cast<uintptr_t>(Terrain->AssetSize), BytesRead);
+
+    if (Header == nullptr || BytesRead != static_cast<uintptr_t>(Terrain->AssetSize))
+    {
+        delete[] Header;
+        return false;
+    }
+
+    const auto HeaderPath = FileSystems::CombinePath(ExportPath, "header.terraingfx.bin");
+    auto HeaderWriter = BinaryWriter();
+    if (!HeaderWriter.Create(HeaderPath))
+    {
+        delete[] Header;
+        return false;
+    }
+    HeaderWriter.Write(Header, static_cast<uint32_t>(BytesRead));
+    HeaderWriter.Close();
+
+    const auto Hex = [](uint64_t Value) { return Strings::Format("0x%llX", Value); };
+
+    // A bounded read used only to answer "is this value an address the game can
+    // actually reach".  It says nothing about what the bytes there mean.
+    const auto SampleAt = [](uint64_t Address, std::string& Sample) -> bool
+    {
+        Sample.clear();
+        if (Address < 0x10000 || Address >= 0x0000800000000000ull)
+            return false;
+        uintptr_t Read = 0;
+        auto Buffer = CoDAssets::GameInstance->Read(Address, 16, Read);
+        if (Buffer == nullptr)
+            return false;
+        if (Read == 16)
+        {
+            for (size_t i = 0; i < 16; i++)
+                Sample += Strings::Format("%02X", static_cast<uint8_t>(Buffer[i]));
+        }
+        delete[] Buffer;
+        return !Sample.empty();
+    };
+
+    // Every pool descriptor, so a pointer can be tested against all of them
+    // rather than against the handful this file happens to know about.
+    std::vector<BO4XAssetPoolData> Pools(BO4AssetPoolCount);
+    if (BO4DBAssetPoolsOffset != 0)
+    {
+        for (uint32_t i = 0; i < BO4AssetPoolCount; i++)
+        {
+            Pools[i] = CoDAssets::GameInstance->Read<BO4XAssetPoolData>(
+                BO4DBAssetPoolsOffset + (sizeof(BO4XAssetPoolData) * i));
+        }
+    }
+
+    // Which capture this Export button runs.  Terrain Settings is the
+    // discoverable control; GREYHOUND_BO4_WORLD_PROBE still overrides it so
+    // existing headless scripts keep working without being edited.  A value
+    // outside 1-7 from either source means the full terrain probe below.
+    wchar_t WorldProbeMode[2] = {};
+    if (GetEnvironmentVariableW(L"GREYHOUND_BO4_WORLD_PROBE", WorldProbeMode, 2) != 1)
+    {
+        WorldProbeMode[0] = 0;
+        const auto Selected = SettingsManager::GetSetting("bo4capturemode", "0");
+        if (Selected.size() == 1 && Selected[0] >= '1' && Selected[0] <= '7')
+            WorldProbeMode[0] = static_cast<wchar_t>(Selected[0]);
+    }
+
+    // Explicit opt-in: small map-pool evidence capture, avoiding another full
+    // terrain/texture/shader export while iterating on collision layouts.
+    if (WorldProbeMode[0] == L'1')
+    {
+        const bool Okay = CaptureBO4WorldPools(Pools, ExportPath, Terrain->AssetName,
+            [](uint64_t Hash) -> std::string {
+                const auto It = AssetNameCache.NameDatabase.find(Hash);
+                if (It != AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second) == Hash)
+                    return It->second;
+                return {};
+            });
+        delete[] Header;
+        ReportProgress(100);
+        return Okay;
+    }
+
+    if (WorldProbeMode[0] == L'7')
+    {
+        delete[] Header;
+        const bool Okay=CaptureBO4WorldPools(Pools,ExportPath,Terrain->AssetName,
+            [](uint64_t)->std::string{return {};},true);
+        ReportProgress(100);return Okay;
+    }
+
+    if (WorldProbeMode[0] == L'6')
+    {
+        delete[] Header;
+        const bool Okay=CaptureBO4CollisionHandlers(ExportPath);
+        ReportProgress(100);return Okay;
+    }
+
+    if (WorldProbeMode[0] == L'5')
+    {
+        delete[] Header;
+        const auto Result=ExportRadiantBrushes([&](uint32_t P,const std::string&){ReportProgress(P);});
+        return Result.find("BO4 brush, clip and model-physics prefabs exported.")==0;
+    }
+
+    if (WorldProbeMode[0] == L'4')
+    {
+        const bool Okay = CaptureBO4ModelPlacements(Pools, ExportPath,
+            [](uint64_t Hash) -> std::string {
+                const auto It = AssetNameCache.NameDatabase.find(Hash);
+                if (It != AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second) == Hash)
+                    return It->second;
+                return {};
+            });
+        delete[] Header;
+        ReportProgress(100);
+        return Okay;
+    }
+
+    if (WorldProbeMode[0] == L'2' || WorldProbeMode[0] == L'3')
+    {
+        const bool Okay = CaptureBO4ModelCollisionReferences(Pools, ExportPath,
+            [](uint64_t Hash) -> std::string {
+                const auto It = AssetNameCache.NameDatabase.find(Hash);
+                if (It != AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second) == Hash)
+                    return It->second;
+                return {};
+            }, WorldProbeMode[0] == L'3');
+        delete[] Header;
+        ReportProgress(100);
+        return Okay;
+    }
+
+    // An address belongs to a pool only when it sits exactly on an asset header
+    // boundary.  Landing merely inside the span is not membership.
+    const auto PoolOf = [&Pools](uint64_t Address, uint32_t& PoolIndex, uint64_t& AssetIndex) -> bool
+    {
+        if (Address < 0x10000)
+            return false;
+        for (uint32_t i = 0; i < Pools.size(); i++)
+        {
+            const auto& Pool = Pools[i];
+            if (Pool.PoolPtr == 0 || Pool.AssetSize == 0 || Pool.PoolSize == 0)
+                continue;
+            const uint64_t Span = static_cast<uint64_t>(Pool.AssetSize) * Pool.PoolSize;
+            if (Address < Pool.PoolPtr || Address - Pool.PoolPtr >= Span)
+                continue;
+            const uint64_t Delta = Address - Pool.PoolPtr;
+            if (Delta % Pool.AssetSize)
+                continue;
+            PoolIndex = i;
+            AssetIndex = Delta / Pool.AssetSize;
+            return true;
+        }
+        return false;
+    };
+
+    // Describe an asset that a pointer resolved to.  For the image pool this
+    // reads BO4GfxImage, which Greyhound already relies on elsewhere in this
+    // file, so the name hash and dimensions are established rather than guessed.
+    const auto Describe = [&](uint64_t Address, uint32_t PoolIndex) -> nlohmann::json
+    {
+        nlohmann::json Info = nlohmann::json::object();
+        if (PoolIndex != BO4ImagePoolIndex)
+            return Info;
+        const auto Image = CoDAssets::GameInstance->Read<BO4GfxImage>(Address);
+        const uint64_t NameHash = Image.NamePtr & 0xFFFFFFFFFFFFFFF;
+        Info["image_name_hash"] = Strings::Format("0x%llX", NameHash);
+        const auto Known = AssetNameCache.NameDatabase.find(NameHash);
+        if (Known != AssetNameCache.NameDatabase.end() &&
+            (!CoDAssets::VerifiedHashes || BO4CalculateHash(Known->second) == NameHash))
+        {
+            Info["image_name"] = Known->second;
+        }
+        Info["image_format"] = Image.ImageFormat;
+        Info["width"] = Image.LoadedMipWidth;
+        Info["height"] = Image.LoadedMipHeight;
+        Info["mip_levels"] = Image.LoadedMipLevels;
+        Info["has_loaded_mip"] = Image.LoadedMipPtr != 0;
+        return Info;
+    };
+
+    const auto ReadU64 = [Header, BytesRead](size_t Offset) -> uint64_t
+    {
+        uint64_t Value = 0;
+        if (Offset + 8 <= BytesRead)
+            std::memcpy(&Value, Header + Offset, 8);
+        return Value;
+    };
+
+    nlohmann::json Words = nlohmann::json::array();
+    for (size_t Offset = 0; Offset + 8 <= BytesRead; Offset += 8)
+    {
+        uint64_t Value = 0;
+        uint32_t Low = 0, High = 0;
+        float LowFloat = 0.0f, HighFloat = 0.0f;
+        std::memcpy(&Value, Header + Offset, sizeof(Value));
+        std::memcpy(&Low, Header + Offset, sizeof(Low));
+        std::memcpy(&High, Header + Offset + 4, sizeof(High));
+        std::memcpy(&LowFloat, Header + Offset, sizeof(LowFloat));
+        std::memcpy(&HighFloat, Header + Offset + 4, sizeof(HighFloat));
+
+        std::string Sample;
+        const bool Readable = SampleAt(Value, Sample);
+
+        nlohmann::json Word = {
+            {"header_offset", Hex(Offset)},
+            {"u64", Hex(Value)},
+            {"u32_low", Low},
+            {"u32_high", High},
+            {"f32_low", std::isfinite(LowFloat) ? nlohmann::json(LowFloat) : nlohmann::json(nullptr)},
+            {"f32_high", std::isfinite(HighFloat) ? nlohmann::json(HighFloat) : nlohmann::json(nullptr)},
+            {"readable_address", Readable},
+        };
+        if (Readable)
+            Word["sample_16"] = Sample;
+
+        uint32_t PoolIndex = 0;
+        uint64_t AssetIndex = 0;
+        if (PoolOf(Value, PoolIndex, AssetIndex))
+        {
+            Word["pool_index"] = PoolIndex;
+            Word["pool_asset_index"] = AssetIndex;
+            const auto Info = Describe(Value, PoolIndex);
+            if (!Info.empty())
+                Word["asset"] = Info;
+        }
+        Words.push_back(Word);
+    }
+
+    ReportProgress(40);
+
+    // Candidate count/pointer pairs, derived from this header rather than from
+    // Cold War: a readable pointer at P whose preceding qword holds a bounded
+    // integer.  Both the whole qword and its low half are offered as counts,
+    // because the header packs some values as u32 pairs.
+    nlohmann::json Tables = nlohmann::json::array();
+    for (size_t Offset = 8; Offset + 8 <= BytesRead; Offset += 8)
+    {
+        const uint64_t Pointer = ReadU64(Offset);
+        std::string Unused;
+        if (!SampleAt(Pointer, Unused))
+            continue;
+
+        const uint64_t Previous = ReadU64(Offset - 8);
+        const uint32_t PreviousLow = static_cast<uint32_t>(Previous & 0xFFFFFFFF);
+
+        uint64_t Count = 0;
+        std::string Basis;
+        if (Previous >= 1 && Previous <= BO4MaximumTableEntries)
+        {
+            Count = Previous;
+            Basis = "preceding qword is a bounded integer";
+        }
+        else if (PreviousLow >= 1 && PreviousLow <= BO4MaximumTableEntries &&
+                 (Previous >> 32) <= BO4MaximumTableEntries)
+        {
+            Count = PreviousLow;
+            Basis = "preceding qword packs two bounded u32 values; low half used as the count";
+        }
+        else
+        {
+            continue;
+        }
+
+        const uint64_t Wanted = Count * 8;
+        uintptr_t EntriesRead = 0;
+        auto Entries = CoDAssets::GameInstance->Read(Pointer, static_cast<uintptr_t>(Wanted), EntriesRead);
+        if (Entries == nullptr || EntriesRead != Wanted)
+        {
+            delete[] Entries;
+            nlohmann::json Table = {
+                {"count_offset", Hex(Offset - 8)},
+                {"pointer_offset", Hex(Offset)},
+                {"pointer", Hex(Pointer)},
+                {"count", Count},
+                {"count_basis", Basis},
+                {"status", "unreadable_span"},
+                {"interpretation", "the candidate count does not describe a readable span of pointers"},
+            };
+            Tables.push_back(Table);
+            continue;
+        }
+
+        std::map<uint32_t, uint64_t> PoolTally;
+        uint64_t Null = 0, Resolved = 0;
+        nlohmann::json Members = nlohmann::json::array();
+        for (uint64_t i = 0; i < Count; i++)
+        {
+            uint64_t Entry = 0;
+            std::memcpy(&Entry, Entries + static_cast<size_t>(i) * 8, 8);
+            if (Entry == 0) { Null++; continue; }
+            uint32_t PoolIndex = 0;
+            uint64_t AssetIndex = 0;
+            if (PoolOf(Entry, PoolIndex, AssetIndex))
+            {
+                Resolved++;
+                PoolTally[PoolIndex]++;
+                if (Members.size() < BO4ReportedTableMembers)
+                {
+                    nlohmann::json Member = {
+                        {"entry", i},
+                        {"value", Hex(Entry)},
+                        {"pool_index", PoolIndex},
+                        {"pool_asset_index", AssetIndex},
+                    };
+                    const auto Info = Describe(Entry, PoolIndex);
+                    if (!Info.empty())
+                        Member["asset"] = Info;
+                    Members.push_back(Member);
+                }
+            }
+        }
+        delete[] Entries;
+
+        nlohmann::json Tally = nlohmann::json::array();
+        for (const auto& Row : PoolTally)
+            Tally.push_back({{"pool_index", Row.first}, {"entries", Row.second}});
+
+        Tables.push_back({
+            {"count_offset", Hex(Offset - 8)},
+            {"pointer_offset", Hex(Offset)},
+            {"pointer", Hex(Pointer)},
+            {"count", Count},
+            {"count_basis", Basis},
+            {"status", "read"},
+            {"entries_null", Null},
+            {"entries_resolved_to_a_pool", Resolved},
+            {"pool_tally", Tally},
+            {"members", Members},
+            {"interpretation", "entries landing exactly on an asset header boundary in that pool; "
+                               "a table whose entries all resolve to one pool is holding assets of that type"},
+        });
+    }
+
+    ReportProgress(85);
+
+    // Raw arena dumps.  A header qword that reads back but does not land on an
+    // asset boundary points into the zone's own serialized data, whose record
+    // stride is not knowable from the header alone.  Dump the bytes and measure
+    // the stride offline rather than guessing a record size in this process.
+    // Read up to Wanted bytes at Pointer and write them beside the header,
+    // halving the request until the span is readable.  Returns what happened.
+    const auto DumpRegion = [&](uint64_t Pointer, uint64_t Wanted,
+                                const std::string& Name) -> nlohmann::json
+    {
+        nlohmann::json Region = {{"pointer", Hex(Pointer)}};
+        int8_t* Bytes = nullptr;
+        uintptr_t RegionRead = 0;
+        while (Wanted >= 256)
+        {
+            Bytes = CoDAssets::GameInstance->Read(Pointer, static_cast<uintptr_t>(Wanted), RegionRead);
+            if (Bytes != nullptr && RegionRead == Wanted)
+                break;
+            delete[] Bytes;
+            Bytes = nullptr;
+            Wanted /= 2;
+        }
+        if (Bytes == nullptr)
+        {
+            Region["status"] = "unreadable";
+            return Region;
+        }
+
+        auto RegionWriter = BinaryWriter();
+        if (RegionWriter.Create(FileSystems::CombinePath(ExportPath, Name)))
+        {
+            RegionWriter.Write(Bytes, static_cast<uint32_t>(RegionRead));
+            RegionWriter.Close();
+            Region["status"] = "dumped";
+            Region["file"] = Name;
+            Region["bytes"] = static_cast<uint64_t>(RegionRead);
+        }
+        else
+        {
+            Region["status"] = "write_failed";
+        }
+        delete[] Bytes;
+        return Region;
+    };
+
+    // Pull a whole resident mip in chunks.  Unlike DumpRegion this never
+    // shrinks the request: a partial image is reported as partial rather than
+    // written out as if it were the whole thing.
+    const auto DumpImage = [&](uint64_t Pointer, uint64_t Bytes,
+                               const std::string& Name) -> nlohmann::json
+    {
+        nlohmann::json Dump = {{"pointer", Hex(Pointer)}};
+        auto Writer = BinaryWriter();
+        if (!Writer.Create(FileSystems::CombinePath(ExportPath, Name)))
+        {
+            Dump["status"] = "write_failed";
+            return Dump;
+        }
+        uint64_t Written = 0;
+        bool Complete = true;
+        while (Written < Bytes && Complete)
+        {
+            const uint64_t Want = (Bytes - Written) < BO4SectorMapChunkBytes
+                ? (Bytes - Written) : BO4SectorMapChunkBytes;
+            uintptr_t Got = 0;
+            int8_t* Chunk = CoDAssets::GameInstance->Read(
+                Pointer + Written, static_cast<uintptr_t>(Want), Got);
+            if (Chunk == nullptr || Got != Want)
+                Complete = false;
+            else
+                Writer.Write(Chunk, static_cast<uint32_t>(Got));
+            delete[] Chunk;
+            Written += Want;
+        }
+        Writer.Close();
+        Dump["file"] = Name;
+        Dump["bytes"] = Written;
+        Dump["status"] = Complete ? "dumped" : "partial";
+        return Dump;
+    };
+
+    nlohmann::json Regions = nlohmann::json::array();
+    for (size_t Offset = 0; Offset + 8 <= BytesRead; Offset += 8)
+    {
+        const uint64_t Pointer = ReadU64(Offset);
+        std::string Unused;
+        if (!SampleAt(Pointer, Unused))
+            continue;
+        uint32_t RegionPool = 0;
+        uint64_t RegionAsset = 0;
+        if (PoolOf(Pointer, RegionPool, RegionAsset))
+            continue;
+
+        auto Region = DumpRegion(Pointer, BO4RegionDumpBytes,
+                                 Strings::Format("region_%llX.bin", static_cast<uint64_t>(Offset)));
+        Region["header_offset"] = Hex(Offset);
+        Region["interpretation"] = "raw zone bytes at a non-asset header pointer; stride is measured offline";
+        Regions.push_back(Region);
+    }
+
+    ReportProgress(90);
+
+    // Follow the level chain behind header 0x18 and dump what each level
+    // addresses.  The chain's shape was measured from the arena and confirmed
+    // on two maps; the bytes behind each level are where per-tile data lives.
+    nlohmann::json LevelRows = nlohmann::json::array();
+    uint64_t FinestLevelPointer = 0;
+    uint64_t FinestLevelTiles = 0;
+    uint64_t FinestLevelWidth = 0;
+    const uint64_t ChainArena = ReadU64(0x18);
+    if (ChainArena != 0)
+    {
+        const auto LevelCount = CoDAssets::GameInstance->Read<uint64_t>(ChainArena + BO4LodChainCountOffset);
+        const auto LevelList = CoDAssets::GameInstance->Read<uint64_t>(ChainArena + BO4LodChainPointerOffset);
+        std::string Unused;
+        if (LevelCount >= 1 && LevelCount <= BO4MaximumLodLevels &&
+            SampleAt(LevelList, Unused))
+        {
+            for (uint64_t i = 0; i < LevelCount; i++)
+            {
+                const uint64_t Entry = LevelList + i * BO4LodLevelBytes;
+                const auto Width = CoDAssets::GameInstance->Read<uint32_t>(Entry);
+                const auto Height = CoDAssets::GameInstance->Read<uint32_t>(Entry + 4);
+                const auto Data = CoDAssets::GameInstance->Read<uint64_t>(Entry + 8);
+                if (i == 0)
+                {
+                    FinestLevelPointer = Data;
+                    FinestLevelTiles = static_cast<uint64_t>(Width) * Height;
+                    FinestLevelWidth = Width;
+                }
+
+                nlohmann::json Row = {
+                    {"level", i},
+                    {"width", Width},
+                    {"height", Height},
+                    {"tiles", static_cast<uint64_t>(Width) * Height},
+                    {"entry", Hex(Entry)},
+                };
+                if (SampleAt(Data, Unused))
+                {
+                    auto Dump = DumpRegion(Data, BO4LevelDumpBytes,
+                                           Strings::Format("level_%llu.bin", i));
+                    for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                        Row[It.key()] = It.value();
+                }
+                else
+                {
+                    Row["pointer"] = Hex(Data);
+                    Row["status"] = "unreadable";
+                }
+                LevelRows.push_back(Row);
+            }
+        }
+    }
+
+    ReportProgress(95);
+
+    // One hop past the tile record.  Every slot holding a plausible pointer is
+    // dumped; where the pointer lands on an asset boundary the dump is sized to
+    // that pool's asset so the asset's own bytes are captured exactly.
+    // Census of the whole finest level: how many distinct payloads the map
+    // actually references, and which package serves each.  Counting every tile
+    // avoids drawing conclusions from a handful of samples, which can easily be
+    // the same shared tile repeated.
+    nlohmann::json Census = nlohmann::json::object();
+    if (FinestLevelPointer != 0 && FinestLevelTiles != 0)
+    {
+        std::map<uint64_t, uint64_t> HashCounts;
+        std::map<uint64_t, uint64_t> HashFirstTile;
+        std::map<std::string, uint64_t> PackageCounts;
+        uint64_t WithoutStreamKey = 0;
+        for (uint64_t i = 0; i < FinestLevelTiles; i++)
+        {
+            const auto KeyPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                FinestLevelPointer + i * BO4TileRecordBytes + 0x90);
+            uint32_t KeyPool = 0;
+            uint64_t KeyAsset = 0;
+            if (KeyPtr == 0 || !PoolOf(KeyPtr, KeyPool, KeyAsset) ||
+                KeyPool != BO4StreamKeyPoolIndex)
+            {
+                WithoutStreamKey++;
+                continue;
+            }
+            const auto ContentHash = CoDAssets::GameInstance->Read<uint64_t>(
+                KeyPtr + BO4StreamKeyContentHashOffset);
+            HashCounts[ContentHash]++;
+            if (HashFirstTile.find(ContentHash) == HashFirstTile.end())
+                HashFirstTile[ContentHash] = i;
+        }
+
+        nlohmann::json Distinct = nlohmann::json::array();
+        for (const auto& Row : HashCounts)
+        {
+            PackageCacheObject Info{};
+            std::string PackagePath;
+            std::string Package = "not_in_local_package_cache";
+            if (CoDAssets::GamePackageCache != nullptr &&
+                CoDAssets::GamePackageCache->DescribePackageObject(Row.first, Info, PackagePath))
+            {
+                Package = FileSystems::GetFileName(PackagePath);
+            }
+            PackageCounts[Package] += Row.second;
+            if (Distinct.size() < 64)
+            {
+                Distinct.push_back({
+                    {"content_hash", Hex(Row.first)},
+                    {"tiles", Row.second},
+                    {"package", Package},
+                });
+            }
+        }
+
+        nlohmann::json Packages = nlohmann::json::array();
+        for (const auto& Row : PackageCounts)
+            Packages.push_back({{"package", Row.first}, {"tiles", Row.second}});
+
+        // Rarest first: a payload referenced by one tile is that tile's own
+        // terrain, while the most shared one is filler repeated across maps.
+        std::vector<std::pair<uint64_t, uint64_t>> ByRarity;
+        for (const auto& Row : HashCounts)
+            ByRarity.push_back({Row.second, Row.first});
+        std::stable_sort(ByRarity.begin(), ByRarity.end(),
+            [](const auto& A, const auto& B) { return A.first < B.first; });
+
+        // The height map the quadtree's size predicts.  Resolved once so each
+        // dumped tile can carry the samples covering it, which is what lets a
+        // decode be checked against the tile's own world bounds offline.
+        nlohmann::json HeightMap = nlohmann::json::object();
+        uint64_t HeightMipPointer = 0;
+        uint64_t HeightMipWidth = 0;
+        uint64_t HeightMipHeight = 0;
+        const uint64_t HeightTable = ReadU64(BO4HeightMapTableOffset);
+        if (HeightTable != 0)
+        {
+            const auto ImageAddress = CoDAssets::GameInstance->Read<uint64_t>(HeightTable);
+            uint32_t ImagePool = 0;
+            uint64_t ImageAsset = 0;
+            if (ImageAddress != 0 && PoolOf(ImageAddress, ImagePool, ImageAsset) &&
+                ImagePool == BO4ImagePoolIndex)
+            {
+                const auto Image = CoDAssets::GameInstance->Read<BO4GfxImage>(ImageAddress);
+                HeightMipPointer = Image.LoadedMipPtr;
+                HeightMipWidth = Image.LoadedMipWidth;
+                HeightMipHeight = Image.LoadedMipHeight;
+                HeightMap = {
+                    {"image", Hex(ImageAddress)},
+                    {"loaded_mip", Hex(Image.LoadedMipPtr)},
+                    {"loaded_mip_bytes", Image.LoadedMipSize},
+                    {"format", Image.ImageFormat},
+                    {"width", Image.LoadedMipWidth},
+                    {"height", Image.LoadedMipHeight},
+                    {"predicted_side", FinestLevelWidth * BO4TileGridStep + 4},
+                    {"window_side", BO4HeightWindowSide},
+                    {"interpretation", "R16_UNORM samples; the window is wider than a "
+                                       "tile's 33 so the border offset is measured offline"},
+                };
+                std::string Unused;
+                if (!SampleAt(Image.LoadedMipPtr, Unused))
+                {
+                    HeightMap["status"] = "loaded_mip_unreadable";
+                    HeightMipPointer = 0;
+                }
+                else
+                {
+                    HeightMap["status"] = "resident";
+                }
+            }
+            else
+            {
+                HeightMap["status"] = "not_an_image_asset";
+            }
+        }
+        Census["height_map"] = HeightMap;
+
+        nlohmann::json Dumped = nlohmann::json::array();
+        for (size_t k = 0; k < ByRarity.size() && Dumped.size() < BO4DumpedPayloads; k++)
+        {
+            const uint64_t ContentHash = ByRarity[k].second;
+            const uint64_t TileIndex = HashFirstTile[ContentHash];
+            const uint64_t KeyPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                FinestLevelPointer + TileIndex * BO4TileRecordBytes + 0x90);
+            if (KeyPtr == 0)
+                continue;
+            const auto UncompressedSize = CoDAssets::GameInstance->Read<uint32_t>(
+                KeyPtr + BO4StreamKeyUncompressedSizeOffset);
+
+            PackageCacheObject Info{};
+            std::string PackagePath;
+            if (CoDAssets::GamePackageCache == nullptr ||
+                !CoDAssets::GamePackageCache->DescribePackageObject(ContentHash, Info, PackagePath))
+                continue;
+
+            uint32_t ResultSize = 0;
+            std::unique_ptr<uint8_t[]> Payload;
+            try
+            {
+                Payload = CoDAssets::GamePackageCache->ExtractPackageObject(
+                    ContentHash, static_cast<int32_t>(UncompressedSize), ResultSize);
+            }
+            catch (...) { continue; }
+            if (Payload == nullptr || ResultSize == 0)
+                continue;
+
+            const auto Name = Strings::Format("payload_%llX.bin", ContentHash);
+            auto PayloadWriter = BinaryWriter();
+            if (!PayloadWriter.Create(FileSystems::CombinePath(ExportPath, Name)))
+                continue;
+            PayloadWriter.Write(Payload.get(), ResultSize);
+            PayloadWriter.Close();
+
+            // The bounds this tile occupies, so a decode can be checked against
+            // the world space it has to fill.
+            nlohmann::json Bounds = nlohmann::json::array();
+            for (size_t f = 0; f < BO4TileBoundsFloats; f++)
+            {
+                const auto Value = CoDAssets::GameInstance->Read<float>(
+                    FinestLevelPointer + TileIndex * BO4TileRecordBytes +
+                    BO4TileBoundsOffset + f * 4);
+                Bounds.push_back(std::isfinite(Value) ? nlohmann::json(Value)
+                                                      : nlohmann::json(nullptr));
+            }
+
+            // The height samples covering this tile, clamped to stay inside
+            // the image so an edge tile still yields a full window.
+            nlohmann::json Window = nlohmann::json::object();
+            if (HeightMipPointer != 0 && FinestLevelWidth != 0 &&
+                HeightMipWidth >= BO4HeightWindowSide &&
+                HeightMipHeight >= BO4HeightWindowSide)
+            {
+                const uint64_t Column = TileIndex % FinestLevelWidth;
+                const uint64_t Row = TileIndex / FinestLevelWidth;
+                uint64_t OriginX = Column * BO4TileGridStep;
+                uint64_t OriginY = Row * BO4TileGridStep;
+                if (OriginX + BO4HeightWindowSide > HeightMipWidth)
+                    OriginX = HeightMipWidth - BO4HeightWindowSide;
+                if (OriginY + BO4HeightWindowSide > HeightMipHeight)
+                    OriginY = HeightMipHeight - BO4HeightWindowSide;
+
+                std::vector<uint8_t> Samples;
+                Samples.reserve(static_cast<size_t>(BO4HeightWindowSide * BO4HeightWindowSide * 2));
+                bool Complete = true;
+                for (uint64_t r = 0; r < BO4HeightWindowSide && Complete; r++)
+                {
+                    const uint64_t At = HeightMipPointer +
+                        ((OriginY + r) * HeightMipWidth + OriginX) * 2;
+                    uintptr_t RowRead = 0;
+                    int8_t* RowBytes = CoDAssets::GameInstance->Read(
+                        At, static_cast<uintptr_t>(BO4HeightWindowSide * 2), RowRead);
+                    if (RowBytes == nullptr || RowRead != BO4HeightWindowSide * 2)
+                        Complete = false;
+                    else
+                        Samples.insert(Samples.end(), RowBytes, RowBytes + RowRead);
+                    delete[] RowBytes;
+                }
+
+                Window["origin_x"] = OriginX;
+                Window["origin_y"] = OriginY;
+                Window["column"] = Column;
+                Window["row"] = Row;
+                if (Complete)
+                {
+                    const auto WindowName = Strings::Format("height_%llX.bin", ContentHash);
+                    auto WindowWriter = BinaryWriter();
+                    if (WindowWriter.Create(FileSystems::CombinePath(ExportPath, WindowName)))
+                    {
+                        WindowWriter.Write(reinterpret_cast<int8_t*>(Samples.data()),
+                                           static_cast<uint32_t>(Samples.size()));
+                        WindowWriter.Close();
+                        Window["file"] = WindowName;
+                        Window["bytes"] = static_cast<uint64_t>(Samples.size());
+                        Window["status"] = "dumped";
+                    }
+                }
+                else
+                {
+                    Window["status"] = "unreadable";
+                }
+            }
+
+            Dumped.push_back({
+                {"height_window", Window},
+                {"content_hash", Hex(ContentHash)},
+                {"tiles_sharing_it", ByRarity[k].first},
+                {"tile_index", TileIndex},
+                {"package", FileSystems::GetFileName(PackagePath)},
+                {"package_offset", Info.Offset},
+                {"compressed_bytes", Info.CompressedSize},
+                {"uncompressed_bytes", UncompressedSize},
+                {"bytes", ResultSize},
+                {"file", Name},
+                {"tile_bounds_floats", Bounds},
+            });
+        }
+        Census["dumped_payloads"] = Dumped;
+
+        Census["tiles"] = FinestLevelTiles;
+        Census["tiles_without_a_streamkey"] = WithoutStreamKey;
+        Census["distinct_payloads"] = HashCounts.size();
+        Census["by_package"] = Packages;
+        Census["payloads"] = Distinct;
+    }
+
+    // Walk every sector the header declares, not just the first.  Following
+    // only sector 0 is invisible on a map that has one, and loses almost
+    // everything on a map that has 27.
+    ReportProgress(96);
+    std::set<uint64_t> DumpedMaps;
+    std::set<uint64_t> DumpedTextures;
+    nlohmann::json Sectors = nlohmann::json::array();
+    const uint64_t SectorCount = ReadU64(BO4SectorCountOffset);
+    size_t SectorPayloads = 0;
+    if (ChainArena != 0 && SectorCount >= 1 && SectorCount <= BO4MaximumSectors)
+    {
+        for (uint64_t s = 0; s < SectorCount; s++)
+        {
+            const uint64_t Base = ChainArena + s * BO4SectorRecordBytes;
+            std::string Unused;
+            if (!SampleAt(Base, Unused))
+                break;
+
+            const auto GridSide = CoDAssets::GameInstance->Read<uint32_t>(
+                Base + BO4SectorDescriptorOffset);
+            nlohmann::json Row = {{"sector", s}, {"record", Hex(Base)},
+                                  {"grid_side", GridSide}};
+            // The descriptor names its own grid side; anything else means this
+            // is not a sector record and the stride is wrong.
+            if (GridSide != BO4TileGridSide)
+            {
+                Row["status"] = "not_a_sector_record";
+                Sectors.push_back(Row);
+                break;
+            }
+
+            float Placement[BO4SectorDescriptorFloats] = {};
+            for (size_t f = 0; f < BO4SectorDescriptorFloats; f++)
+                Placement[f] = CoDAssets::GameInstance->Read<float>(
+                    Base + BO4SectorDescriptorOffset + 4 + f * 4);
+            const float SectorMinX = Placement[0];
+            const float SectorMinY = Placement[1];
+            const float UnitsPerSample = Placement[2];
+            const float TileSize = UnitsPerSample * BO4TileGridStep;
+
+            nlohmann::json Bounds = nlohmann::json::array();
+            for (size_t f = 0; f < 6; f++)
+            {
+                const auto Value = CoDAssets::GameInstance->Read<float>(
+                    Base + BO4SectorBoundsOffset + f * 4);
+                Bounds.push_back(std::isfinite(Value) ? nlohmann::json(Value)
+                                                      : nlohmann::json(nullptr));
+            }
+
+            const auto Levels = CoDAssets::GameInstance->Read<uint64_t>(
+                Base + BO4SectorLevelCountOffset);
+            const auto LevelList = CoDAssets::GameInstance->Read<uint64_t>(
+                Base + BO4SectorLevelListOffset);
+
+            Row["levels"] = Levels;
+            Row["min_x"] = SectorMinX;
+            Row["min_y"] = SectorMinY;
+            Row["units_per_sample"] = UnitsPerSample;
+            Row["tile_size"] = TileSize;
+            Row["min_z"] = Placement[3];
+            Row["z_range"] = Placement[4];
+            Row["half_extent"] = Placement[5];
+            Row["bounds"] = Bounds;
+
+            // World placement, and the height bias that follows from it.
+            nlohmann::json Place = nlohmann::json::array();
+            nlohmann::json PlaceInv = nlohmann::json::array();
+            for (size_t f = 0; f < 4; f++)
+            {
+                const auto A = CoDAssets::GameInstance->Read<float>(
+                    Base + BO4SectorPlacementOffset + f * 4);
+                const auto B = CoDAssets::GameInstance->Read<float>(
+                    Base + BO4SectorPlacementInverseOffset + f * 4);
+                Place.push_back(std::isfinite(A) ? nlohmann::json(A)
+                                                 : nlohmann::json(nullptr));
+                PlaceInv.push_back(std::isfinite(B) ? nlohmann::json(B)
+                                                    : nlohmann::json(nullptr));
+            }
+            Row["placement"] = Place;
+            Row["placement_inverse"] = PlaceInv;
+            const auto PlaceZ = CoDAssets::GameInstance->Read<float>(
+                Base + BO4SectorPlacementOffset + 8);
+            if (std::isfinite(PlaceZ) && std::isfinite(Placement[3]))
+                Row["height_bias_world"] = Placement[3] + PlaceZ;
+            Row["height_decode"] =
+                "z = height_bias_world + sample * z_range / 65535; "
+                "x = bounds[0] + col * units_per_sample; "
+                "y = bounds[1] + row * units_per_sample. "
+                "bounds[2] is the AABB of the sector contents, not the "
+                "heightfield floor, and is not the bias.";
+
+            // The unopened pairs.  Each count sits at the offset and its
+            // pointer eight bytes later, the same shape the rest of this asset
+            // uses.  Raw bytes only; stride and meaning are measured offline.
+            nlohmann::json Sides = nlohmann::json::array();
+            for (size_t k = 0; k < BO4SectorSideCount; k++)
+            {
+                const size_t At = BO4SectorSideCountOffsets[k];
+                const auto SideCount = CoDAssets::GameInstance->Read<uint64_t>(Base + At);
+                const auto SidePointer = CoDAssets::GameInstance->Read<uint64_t>(Base + At + 8);
+                nlohmann::json Side = {
+                    {"count_offset", Hex(At)},
+                    {"count", SideCount},
+                    {"pointer", Hex(SidePointer)},
+                };
+                std::string Probe;
+                if (SidePointer != 0 && SampleAt(SidePointer, Probe))
+                {
+                    auto Dump = DumpRegion(SidePointer, BO4SectorSideDumpBytes,
+                        Strings::Format("sector%llu_side%llX.bin", s,
+                                        static_cast<uint64_t>(At)));
+                    for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                        Side[It.key()] = It.value();
+
+                    // Follow the layer bindings through to their materials.
+                    if (At == BO4LayerBindingOffset)
+                    {
+                        nlohmann::json Layers = nlohmann::json::array();
+                        const uint64_t Bound = SideCount < BO4LayerCeiling
+                            ? SideCount : BO4LayerCeiling;
+                        for (uint64_t L = 0; L < Bound; L++)
+                        {
+                            const uint64_t At2 = SidePointer + L * BO4LayerBindingBytes;
+                            const auto MaterialPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                                At2 + BO4LayerMaterialOffset);
+                            nlohmann::json Layer = {
+                                {"layer", L},
+                                {"material", Hex(MaterialPtr)},
+                                {"side_table", Hex(CoDAssets::GameInstance->Read<uint64_t>(
+                                    At2 + BO4LayerSideTableOffset))},
+                            };
+
+                            nlohmann::json UV = nlohmann::json::array();
+                            for (size_t f = 0; f < BO4LayerUVFloats; f++)
+                                UV.push_back(CoDAssets::GameInstance->Read<float>(
+                                    At2 + BO4LayerUVOffset + f * sizeof(float)));
+                            Layer["uv"] = UV;
+
+                            std::string MaterialProbe;
+                            if (MaterialPtr != 0 && SampleAt(MaterialPtr, MaterialProbe))
+                            {
+                                const auto Material =
+                                    CoDAssets::GameInstance->Read<BO4XMaterial>(MaterialPtr);
+                                const uint64_t MaterialHash =
+                                    Material.NamePtr & 0xFFFFFFFFFFFFFFF;
+                                const auto Known =
+                                    AssetNameCache.NameDatabase.find(MaterialHash);
+                                if (Known != AssetNameCache.NameDatabase.end())
+                                    Layer["material_name"] = Known->second;
+                                else
+                                    Layer["material_hash"] = Hex(MaterialHash);
+                                Layer["image_count"] = Material.ImageCount;
+
+                                // The images the material binds, by semantic.
+                                nlohmann::json Images = nlohmann::json::array();
+                                const uint64_t Shown = Material.ImageCount < BO4MaterialImageCeiling
+                                    ? Material.ImageCount : BO4MaterialImageCeiling;
+                                std::string TableProbe;
+                                if (Material.ImageTablePtr != 0 &&
+                                    SampleAt(Material.ImageTablePtr, TableProbe))
+                                {
+                                    for (uint64_t I = 0; I < Shown; I++)
+                                    {
+                                        const auto Entry =
+                                            CoDAssets::GameInstance->Read<BO4XMaterialImage>(
+                                                Material.ImageTablePtr +
+                                                I * sizeof(BO4XMaterialImage));
+                                        nlohmann::json Row = {
+                                            {"semantic", Hex(Entry.SemanticHash)},
+                                            {"image", Hex(Entry.ImagePtr)},
+                                        };
+                                        std::string ImageProbe;
+                                        if (Entry.ImagePtr != 0 &&
+                                            SampleAt(Entry.ImagePtr, ImageProbe))
+                                        {
+                                            const auto Image =
+                                                CoDAssets::GameInstance->Read<BO4GfxImage>(
+                                                    Entry.ImagePtr);
+                                            const uint64_t ImageHash =
+                                                Image.NamePtr & 0xFFFFFFFFFFFFFFF;
+                                            const auto KnownImage =
+                                                AssetNameCache.NameDatabase.find(ImageHash);
+                                            if (KnownImage != AssetNameCache.NameDatabase.end())
+                                                Row["name"] = KnownImage->second;
+                                            else
+                                                Row["hash"] = Hex(ImageHash);
+                                            Row["format"] = Image.ImageFormat;
+                                            Row["width"] = Image.LoadedMipWidth;
+                                            Row["height"] = Image.LoadedMipHeight;
+                                            Row["mip_levels"] = Image.LoadedMipLevels;
+                                            Row["loaded_mip"] = Hex(Image.LoadedMipPtr);
+                                            Row["loaded_mip_bytes"] = Image.LoadedMipSize;
+                                            // The colour map, pulled from the XPAK.
+                                            // LoadedMipPtr is useless here: every real
+                                            // layer texture's mip sits in a multi-GB
+                                            // MEM_RESERVE block that was never committed,
+                                            // so the bytes are not in the process.
+                                            // An image whose name hash misses the string table is still perfectly
+                                            // loadable -- LoadXImage goes by ImagePtr, the name is only the output
+                                            // file name.  v44 skipped them, which is why one shared material's
+                                            // layers rendered flat grey over 7-9% of zm_white.
+                                            if (DumpedTextures.count(Entry.ImagePtr) == 0)
+                                            {
+                                                DumpedTextures.insert(Entry.ImagePtr);
+                                                const char* Role = nullptr;
+                                                bool IsNormal = false;
+                                                for (const auto& Sem : BO4TerrainSemantics)
+                                                {
+                                                    if (Sem.Hash == Entry.SemanticHash)
+                                                    {
+                                                        Role = Sem.Role;
+                                                        IsNormal = Sem.Normal;
+                                                        break;
+                                                    }
+                                                }
+                                                const std::string TexName = Row.contains("name")
+                                                    ? Row["name"].get<std::string>()
+                                                    : "ximage_" + Row["hash"].get<std::string>();
+                                                // LoadXImage pulls the largest mip from the XPAK on disk.  LoadedMipPtr is
+                                                // useless here: every real layer texture's mip sits in a multi-GB
+                                                // MEM_RESERVE block that was never committed, so the bytes are not in the
+                                                // process.  It also picks the right patch for the usage, which v44 threw
+                                                // away by hardcoding NoPatch.
+                                                auto Pixels = GameBlackOps4::LoadXImage(
+                                                    XImage_t(IsNormal ? ImageUsageType::NormalMap : ImageUsageType::DiffuseMap,
+                                                             0, Entry.ImagePtr, TexName));
+                                                nlohmann::json Ex;
+                                                Ex["role"] = Role ? Role : "unknown";
+                                                if (Pixels != nullptr && Pixels->DataSize > 0)
+                                                {
+                                                    const auto PngPath = FileSystems::CombinePath(ExportPath, TexName + ".png");
+                                                    const bool Converted = Image::ConvertImageMemory(
+                                                        Pixels->DataBuffer, Pixels->DataSize, ImageFormat::DDS_WithHeader,
+                                                        PngPath, ImageFormat::Standard_PNG, Pixels->ImagePatchType);
+                                                    Ex["source"] = "xpak";
+                                                    Ex["dds_bytes"] = Pixels->DataSize;
+                                                    Ex["patch"] = (int)Pixels->ImagePatchType;
+                                                    Ex["file"] = Converted ? TexName + ".png" : "";
+                                                    Ex["status"] = Converted ? "converted" : "conversion_failed";
+                                                }
+                                                else
+                                                {
+                                                    Ex["status"] = "not_in_package";
+                                                }
+                                                Ex["name"] = TexName;
+                                                Row["export"] = Ex;
+                                                if (Entry.SemanticHash == BO4ColorMapSemantic)
+                                                    Row["albedo"] = Ex;
+                                            }
+                                        }
+                                        Images.push_back(Row);
+                                    }
+                                }
+                                Layer["images"] = Images;
+                            }
+                            else
+                            {
+                                Layer["status"] = "null_or_unreadable";
+                            }
+                            // Dump the material itself, and follow whatever
+                            // its unexplored region points at.
+                            if (MaterialPtr != 0 && L < BO4MaterialsFollowed)
+                            {
+                                auto MatDump = DumpRegion(MaterialPtr,
+                                    BO4MaterialDumpBytes,
+                                    Strings::Format("sector%llu_material%llu.bin", s, L));
+                                nlohmann::json MatInfo;
+                                for (auto It = MatDump.begin(); It != MatDump.end(); ++It)
+                                    MatInfo[It.key()] = It.value();
+
+                                nlohmann::json Followed = nlohmann::json::array();
+                                for (uint64_t q = 0; q < BO4MaterialDumpBytes / 8 &&
+                                     Followed.size() < BO4MaterialFollowCeiling; q++)
+                                {
+                                    const auto Candidate =
+                                        CoDAssets::GameInstance->Read<uint64_t>(
+                                            MaterialPtr + q * 8);
+                                    if (Candidate < 0x10000000000ull ||
+                                        Candidate > 0x1000000000000ull)
+                                        continue;
+                                    std::string CandidateProbe;
+                                    if (!SampleAt(Candidate, CandidateProbe))
+                                        continue;
+                                    nlohmann::json Target = {
+                                        {"field_offset", Hex(q * 8)},
+                                        {"pointer", Hex(Candidate)},
+                                    };
+                                    auto Sub = DumpRegion(Candidate,
+                                        BO4MaterialFollowBytes,
+                                        Strings::Format(
+                                            "sector%llu_material%llu_at%llX.bin",
+                                            s, L, q * 8));
+                                    for (auto It = Sub.begin(); It != Sub.end(); ++It)
+                                        Target[It.key()] = It.value();
+                                    Followed.push_back(Target);
+                                }
+                                MatInfo["followed"] = Followed;
+
+                                // The material's constant buffer, whole.
+                                const auto CBufferBytes =
+                                    CoDAssets::GameInstance->Read<uint32_t>(
+                                        MaterialPtr + BO4MaterialCBufferSizeOffset);
+                                const auto CBufferPtr =
+                                    CoDAssets::GameInstance->Read<uint64_t>(
+                                        MaterialPtr + BO4MaterialCBufferPointerOffset);
+                                std::string CBufferProbe;
+                                if (CBufferPtr != 0 && CBufferBytes > 0 &&
+                                    CBufferBytes <= BO4MaterialCBufferCeiling &&
+                                    SampleAt(CBufferPtr, CBufferProbe))
+                                {
+                                    nlohmann::json CBuffer = {
+                                        {"pointer", Hex(CBufferPtr)},
+                                        {"declared_bytes", CBufferBytes},
+                                    };
+                                    auto Sub = DumpRegion(CBufferPtr, CBufferBytes,
+                                        Strings::Format("sector%llu_material%llu_cbuffer.bin",
+                                                        s, L));
+                                    for (auto It = Sub.begin(); It != Sub.end(); ++It)
+                                        CBuffer[It.key()] = It.value();
+                                    MatInfo["constant_buffer"] = CBuffer;
+                                }
+
+                                // Walk the techset looking for shader blobs.
+                                const auto TechsetPtr =
+                                    CoDAssets::GameInstance->Read<uint64_t>(
+                                        MaterialPtr + BO4MaterialTechsetOffset);
+                                std::string TechsetProbe;
+                                if (TechsetPtr != 0 && SampleAt(TechsetPtr, TechsetProbe))
+                                {
+                                    nlohmann::json Techset = {{"pointer", Hex(TechsetPtr)}};
+                                    auto TDump = DumpRegion(TechsetPtr, BO4TechsetBytes,
+                                        Strings::Format("sector%llu_material%llu_techset.bin",
+                                                        s, L));
+                                    for (auto It = TDump.begin(); It != TDump.end(); ++It)
+                                        Techset[It.key()] = It.value();
+
+                                    nlohmann::json Shaders = nlohmann::json::array();
+                                    nlohmann::json Nodes = nlohmann::json::array();
+                                    std::set<uint64_t> Seen = {TechsetPtr};
+                                    std::map<uint64_t, uint64_t> CameFrom;
+                                    std::vector<std::pair<uint64_t, size_t>> Queue = {
+                                        {TechsetPtr, 0}};
+                                    for (size_t q = 0; q < Queue.size() &&
+                                         Seen.size() < BO4ShaderWalkNodes &&
+                                         Shaders.size() < BO4ShadersPerMaterial; q++)
+                                    {
+                                        const auto Node = Queue[q].first;
+                                        const auto Depth = Queue[q].second;
+
+                                        // A DXBC container names itself and
+                                        // states its own total size at +0x18.
+                                        if (CoDAssets::GameInstance->Read<uint32_t>(Node) ==
+                                            BO4ShaderMagic)
+                                        {
+                                            const auto Bytes =
+                                                CoDAssets::GameInstance->Read<uint32_t>(
+                                                    Node + 0x18);
+                                            if (Bytes > 0 && Bytes <= BO4ShaderCeiling)
+                                            {
+                                                nlohmann::json Path = nlohmann::json::array();
+                                                for (auto Step = Node;
+                                                     CameFrom.count(Step) != 0;
+                                                     Step = CameFrom[Step])
+                                                    Path.push_back(Hex(CameFrom[Step]));
+                                                nlohmann::json Blob = {
+                                                    {"pointer", Hex(Node)},
+                                                    {"depth", Depth},
+                                                    {"container_bytes", Bytes},
+                                                    {"path", Path},
+                                                };
+                                                auto SDump = DumpRegion(Node, Bytes,
+                                                    Strings::Format(
+                                                        "sector%llu_material%llu_shader%llX.dxbc",
+                                                        s, L, Node & 0xFFFFFF));
+                                                for (auto It = SDump.begin();
+                                                     It != SDump.end(); ++It)
+                                                    Blob[It.key()] = It.value();
+                                                Shaders.push_back(Blob);
+                                                continue;
+                                            }
+                                        }
+
+                                        if (Depth >= BO4ShaderWalkDepth)
+                                            continue;
+
+                                        // Every node on the first two levels is
+                                        // kept whole: if no shader is resident
+                                        // the structures themselves are what
+                                        // there is to read.
+                                        if (Depth <= 1 && Node != TechsetPtr)
+                                        {
+                                            nlohmann::json Kept = {{"pointer", Hex(Node)},
+                                                                   {"depth", Depth}};
+                                            auto NDump = DumpRegion(Node, BO4TechniqueScanBytes,
+                                                Strings::Format(
+                                                    "sector%llu_material%llu_node%llX.bin",
+                                                    s, L, Node & 0xFFFFFF));
+                                            for (auto It = NDump.begin(); It != NDump.end(); ++It)
+                                                Kept[It.key()] = It.value();
+                                            Nodes.push_back(Kept);
+                                        }
+
+                                        for (uint64_t k = 0; k < BO4TechniqueScanBytes / 8; k++)
+                                        {
+                                            const auto Edge =
+                                                CoDAssets::GameInstance->Read<uint64_t>(
+                                                    Node + k * 8);
+                                            std::string EdgeProbe;
+                                            if (Edge < 0x10000000000ull ||
+                                                Edge > 0x1000000000000ull ||
+                                                Seen.count(Edge) != 0 ||
+                                                !SampleAt(Edge, EdgeProbe))
+                                                continue;
+                                            Seen.insert(Edge);
+                                            CameFrom[Edge] = Node;
+                                            Queue.push_back({Edge, Depth + 1});
+                                            if (Seen.size() >= BO4ShaderWalkNodes)
+                                                break;
+                                        }
+                                    }
+                                    Techset["shaders"] = Shaders;
+                                    Techset["nodes"] = Nodes;
+                                    Techset["walked"] = Seen.size();
+                                    MatInfo["techset"] = Techset;
+                                }
+
+                                Layer["material_dump"] = MatInfo;
+                            }
+
+                            // The layer's shader constants, for every layer
+                            // rather than only the ones dumped whole.  The rule
+                            // recovered from the pixel shader thresholds a
+                            // reveal map against a lo/hi pair driven by a
+                            // painted value; no per-vertex paint has been found
+                            // anywhere in the terrain asset, so the remaining
+                            // place that pair can live is here.  Decoded into
+                            // the report so layers can be compared without
+                            // parsing the dumps.
+                            if (MaterialPtr != 0 && L < BO4LayerConstantsCeiling)
+                            {
+                                const auto ConstantBytes =
+                                    CoDAssets::GameInstance->Read<uint32_t>(
+                                        MaterialPtr + BO4MaterialCBufferSizeOffset);
+                                const auto ConstantPtr =
+                                    CoDAssets::GameInstance->Read<uint64_t>(
+                                        MaterialPtr + BO4MaterialCBufferPointerOffset);
+                                std::string ConstantProbe;
+                                if (ConstantPtr != 0 && ConstantBytes >= 4 &&
+                                    ConstantBytes <= BO4MaterialCBufferCeiling &&
+                                    SampleAt(ConstantPtr, ConstantProbe))
+                                {
+                                    const size_t Count = ConstantBytes / 4;
+                                    std::vector<uint32_t> Raw(Count);
+                                    for (size_t i = 0; i < Count; i++)
+                                        Raw[i] = CoDAssets::GameInstance->Read<uint32_t>(
+                                            ConstantPtr + i * 4);
+
+                                    // The buffer observed so far is one struct
+                                    // stored several times over.  Report the
+                                    // struct rather than the repeats: the period
+                                    // is the smallest divisor that tiles the
+                                    // whole buffer, compared as bit patterns so
+                                    // a NaN slot compares equal to itself.
+                                    size_t Period = Count;
+                                    for (size_t p = 1; p <= Count / 2; p++)
+                                    {
+                                        if (Count % p != 0)
+                                            continue;
+                                        bool Tiles = true;
+                                        for (size_t i = p; i < Count && Tiles; i++)
+                                            Tiles = Raw[i] == Raw[i % p];
+                                        if (Tiles)
+                                        {
+                                            Period = p;
+                                            break;
+                                        }
+                                    }
+
+                                    nlohmann::json Values = nlohmann::json::array();
+                                    for (size_t i = 0; i < Period &&
+                                         i < BO4LayerConstantFloats; i++)
+                                    {
+                                        float Value = 0.0f;
+                                        std::memcpy(&Value, &Raw[i], sizeof(Value));
+                                        // A slot that is not a finite number is
+                                        // not a shader constant worth printing
+                                        // as one, and JSON cannot carry it;
+                                        // keep the bits instead.
+                                        if (std::isfinite(Value))
+                                            Values.push_back(Value);
+                                        else
+                                            Values.push_back(Hex(Raw[i]));
+                                    }
+
+                                    Layer["constants"] = {
+                                        {"pointer", Hex(ConstantPtr)},
+                                        {"declared_bytes", ConstantBytes},
+                                        {"floats", Count},
+                                        {"repeating_period_floats", Period},
+                                        {"values", Values},
+                                        {"note", "the layer material's constant buffer, "
+                                                 "decoded; if the blend rule's lo/hi "
+                                                 "thresholds are per-layer constants "
+                                                 "they are in here"},
+                                    };
+                                }
+                            }
+
+                            Layers.push_back(Layer);
+                        }
+                        Side["layers"] = Layers;
+
+                        // The side table the bindings point into, dumped once.
+                        const auto FirstSide = CoDAssets::GameInstance->Read<uint64_t>(
+                            SidePointer + BO4LayerSideTableOffset);
+                        std::string SideProbe;
+                        if (FirstSide != 0 && SampleAt(FirstSide, SideProbe))
+                        {
+                            auto Dump = DumpRegion(FirstSide, BO4LayerSideTableBytes,
+                                Strings::Format("sector%llu_layertable.bin", s));
+                            nlohmann::json Table = {{"pointer", Hex(FirstSide)}};
+                            for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                                Table[It.key()] = It.value();
+                            Side["layer_side_table"] = Table;
+                        }
+                    }
+                }
+                else
+                {
+                    Side["status"] = "null_or_unreadable";
+                }
+                // Every image this side array points at, named.  An image
+                // bound at sector level rather than by a layer material is the
+                // last place a per-texel layer assignment could live.
+                if (SidePointer != 0)
+                {
+                    nlohmann::json Found = nlohmann::json::array();
+                    std::set<uint64_t> SeenImages;
+                    for (uint64_t q = 0;
+                         q * 8 + 8 <= BO4SectorSideDumpBytes &&
+                         Found.size() < BO4SideImageCeiling; q++)
+                    {
+                        const auto Candidate =
+                            CoDAssets::GameInstance->Read<uint64_t>(SidePointer + q * 8);
+                        if (Candidate == 0 || SeenImages.count(Candidate) != 0)
+                            continue;
+                        uint32_t CandidatePool = 0;
+                        uint64_t CandidateAsset = 0;
+                        if (!PoolOf(Candidate, CandidatePool, CandidateAsset) ||
+                            CandidatePool != BO4ImagePoolIndex)
+                            continue;
+                        std::string ImageProbe;
+                        if (!SampleAt(Candidate, ImageProbe))
+                            continue;
+                        SeenImages.insert(Candidate);
+
+                        const auto Image =
+                            CoDAssets::GameInstance->Read<BO4GfxImage>(Candidate);
+                        const uint64_t ImageHash = Image.NamePtr & 0xFFFFFFFFFFFFFFF;
+                        nlohmann::json Entry = {
+                            {"at", Hex(q * 8)},
+                            {"image", Hex(Candidate)},
+                            {"format", Image.ImageFormat},
+                            {"width", Image.LoadedMipWidth},
+                            {"height", Image.LoadedMipHeight},
+                        };
+                        std::string ImageName;
+                        const auto KnownImage =
+                            AssetNameCache.NameDatabase.find(ImageHash);
+                        if (KnownImage != AssetNameCache.NameDatabase.end())
+                            ImageName = KnownImage->second;
+                        for (const auto& Cracked : BO4CrackedNames)
+                        {
+                            if (Cracked.Hash == ImageHash && ImageName.empty())
+                            {
+                                ImageName = Cracked.Name;
+                                Entry["name_source"] = "cracked_offline";
+                            }
+                        }
+                        if (!ImageName.empty())
+                            Entry["name"] = ImageName;
+                        else
+                            Entry["hash"] = Hex(ImageHash);
+
+                        // Is this image's shape tied to the tile grid?  A
+                        // sector of N tiles is N*32+4 samples square, or
+                        // (N*4+1) x (N*8+1) for the half-width family.  Layer
+                        // art is always a power of two and fits neither.
+                        const uint32_t W = Image.LoadedMipWidth;
+                        const uint32_t H = Image.LoadedMipHeight;
+                        const bool GridSquare = W == H &&
+                            W >= BO4SectorMapWidthFloor &&
+                            (W - 4) % BO4TileGridStep == 0;
+                        const bool GridHalfWidth = W >= 8 && H == W * 2 - 1 &&
+                            (H - 1) % 8 == 0;
+                        if (GridSquare || GridHalfWidth)
+                        {
+                            Entry["grid_shape"] = GridSquare
+                                ? "sector_square" : "sector_half_width";
+                            Entry["tiles_across"] = GridSquare
+                                ? (W - 4) / BO4TileGridStep : (W - 1) / 4;
+                            Entry["loaded_mip"] = Hex(Image.LoadedMipPtr);
+                            Entry["loaded_mip_bytes"] = Image.LoadedMipSize;
+                            Entry["mip_levels"] = Image.LoadedMipLevels;
+                            Entry["bytes_per_texel"] = H != 0 && W != 0
+                                ? static_cast<double>(Image.LoadedMipSize) /
+                                  (static_cast<double>(W) * H)
+                                : 0.0;
+
+                            // The height maps are already dumped by the name
+                            // sweep further down, as .r16.bin.  Dumping them
+                            // again here cost 35MB a run for two byte-identical
+                            // copies of the same image.
+                            const std::string HeightPrefix = BO4HeightMapNamePrefix;
+                            std::string MipProbe;
+                            if (ImageName.compare(0, HeightPrefix.size(),
+                                                  HeightPrefix) == 0)
+                                Entry["dump"] = "dumped_by_the_name_sweep";
+                            else if (DumpedMaps.count(Candidate) != 0)
+                                Entry["dump"] = "already_dumped";
+                            else if (Image.LoadedMipPtr != 0 &&
+                                     Image.LoadedMipSize > 0 &&
+                                     Image.LoadedMipSize <= BO4SectorMapMipCeiling &&
+                                     SampleAt(Image.LoadedMipPtr, MipProbe))
+                            {
+                                DumpedMaps.insert(Candidate);
+                                const auto File = ImageName.empty()
+                                    ? Strings::Format("terrain_map_%llX.bin",
+                                                      ImageHash)
+                                    : Strings::Format("%s.bin", ImageName.c_str());
+                                Entry["dump"] = DumpImage(Image.LoadedMipPtr,
+                                                          Image.LoadedMipSize, File);
+                            }
+                            else
+                            {
+                                Entry["dump"] = "no_resident_mip";
+                            }
+                        }
+                        Found.push_back(Entry);
+                    }
+                    Side["images"] = Found;
+                }
+
+                Sides.push_back(Side);
+            }
+            Row["side_arrays"] = Sides;
+            Row["pair_at_0x120"] = nlohmann::json::array({
+                CoDAssets::GameInstance->Read<uint32_t>(Base + BO4SectorPairOffset),
+                CoDAssets::GameInstance->Read<uint32_t>(Base + BO4SectorPairOffset + 4),
+            });
+
+            if (Levels < 1 || Levels > BO4MaximumLodLevels || !SampleAt(LevelList, Unused))
+            {
+                Row["status"] = "no_level_chain";
+                Sectors.push_back(Row);
+                continue;
+            }
+
+            const auto Width = CoDAssets::GameInstance->Read<uint32_t>(LevelList);
+            const auto Height = CoDAssets::GameInstance->Read<uint32_t>(LevelList + 4);
+            const auto Tiles = CoDAssets::GameInstance->Read<uint64_t>(LevelList + 8);
+            const uint64_t TileCount = static_cast<uint64_t>(Width) * Height;
+            Row["finest_width"] = Width;
+            Row["finest_height"] = Height;
+            Row["finest_tiles"] = TileCount;
+
+            if (Tiles == 0 || TileCount == 0 || !SampleAt(Tiles, Unused))
+            {
+                Row["status"] = "no_finest_level";
+                Sectors.push_back(Row);
+                continue;
+            }
+
+            // Census this sector on its own terms.
+            std::map<uint64_t, uint64_t> Counts;
+            std::map<uint64_t, uint64_t> FirstTile;
+            std::map<std::string, uint64_t> Packages;
+            uint64_t Missing = 0;
+            for (uint64_t i = 0; i < TileCount; i++)
+            {
+                const uint64_t KeyPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                    Tiles + i * BO4TileRecordBytes + 0x90);
+                if (KeyPtr == 0)
+                {
+                    Missing++;
+                    continue;
+                }
+                const auto ContentHash = CoDAssets::GameInstance->Read<uint64_t>(
+                    KeyPtr + BO4StreamKeyContentHashOffset);
+                Counts[ContentHash]++;
+                if (FirstTile.find(ContentHash) == FirstTile.end())
+                    FirstTile[ContentHash] = i;
+            }
+            Row["tiles_without_a_streamkey"] = Missing;
+            Row["distinct_payloads"] = Counts.size();
+
+            std::vector<std::pair<uint64_t, uint64_t>> ByRarity;
+            for (const auto& Entry : Counts)
+                ByRarity.push_back({Entry.second, Entry.first});
+            std::stable_sort(ByRarity.begin(), ByRarity.end(),
+                [](const auto& A, const auto& B) { return A.first < B.first; });
+
+            nlohmann::json Taken = nlohmann::json::array();
+            for (size_t k = 0; k < ByRarity.size() &&
+                 Taken.size() < BO4PayloadsPerSector &&
+                 SectorPayloads < BO4SectorPayloadCeiling; k++)
+            {
+                const uint64_t ContentHash = ByRarity[k].second;
+                const uint64_t TileIndex = FirstTile[ContentHash];
+                const uint64_t KeyPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                    Tiles + TileIndex * BO4TileRecordBytes + 0x90);
+                if (KeyPtr == 0)
+                    continue;
+                const auto Size = CoDAssets::GameInstance->Read<uint32_t>(
+                    KeyPtr + BO4StreamKeyUncompressedSizeOffset);
+
+                PackageCacheObject Info{};
+                std::string PackagePath;
+                if (CoDAssets::GamePackageCache == nullptr ||
+                    !CoDAssets::GamePackageCache->DescribePackageObject(
+                        ContentHash, Info, PackagePath))
+                    continue;
+                Packages[FileSystems::GetFileName(PackagePath)]++;
+
+                uint32_t ResultSize = 0;
+                std::unique_ptr<uint8_t[]> Payload;
+                try
+                {
+                    Payload = CoDAssets::GamePackageCache->ExtractPackageObject(
+                        ContentHash, static_cast<int32_t>(Size), ResultSize);
+                }
+                catch (...) { continue; }
+                if (Payload == nullptr || ResultSize == 0)
+                    continue;
+
+                const auto Name = Strings::Format("sector%llu_payload_%llX.bin", s, ContentHash);
+                auto Writer = BinaryWriter();
+                if (!Writer.Create(FileSystems::CombinePath(ExportPath, Name)))
+                    continue;
+                Writer.Write(Payload.get(), ResultSize);
+                Writer.Close();
+                SectorPayloads++;
+
+                nlohmann::json TileBounds = nlohmann::json::array();
+                for (size_t f = 0; f < BO4TileBoundsFloats; f++)
+                {
+                    const auto Value = CoDAssets::GameInstance->Read<float>(
+                        Tiles + TileIndex * BO4TileRecordBytes +
+                        BO4TileBoundsOffset + f * 4);
+                    TileBounds.push_back(std::isfinite(Value) ? nlohmann::json(Value)
+                                                             : nlohmann::json(nullptr));
+                }
+
+                Taken.push_back({
+                    {"content_hash", Hex(ContentHash)},
+                    {"tile_index", TileIndex},
+                    {"column", TileIndex % Width},
+                    {"row", TileIndex / Width},
+                    {"tiles_sharing_it", ByRarity[k].first},
+                    {"package", FileSystems::GetFileName(PackagePath)},
+                    {"bytes", ResultSize},
+                    {"file", Name},
+                    {"tile_bounds_floats", TileBounds},
+                });
+            }
+            Row["payloads"] = Taken;
+
+            // Follow one tile up through its ancestors, so a fine tile's
+            // vertices can be compared against the coarse tile they claim to
+            // morph into.  The middle tile is used to stay clear of the edges,
+            // where the mesh is constrained by its neighbours.
+            nlohmann::json Chain = nlohmann::json::array();
+            uint64_t ChainColumn = Width / 2;
+            uint64_t ChainRow = Height / 2;
+            for (uint64_t Level = 0; Level < Levels &&
+                 Level < BO4AncestorChainCeiling; Level++)
+            {
+                const uint64_t Entry = LevelList + Level * BO4LodLevelBytes;
+                const auto LevelWidth = CoDAssets::GameInstance->Read<uint32_t>(Entry);
+                const auto LevelHeight = CoDAssets::GameInstance->Read<uint32_t>(Entry + 4);
+                const auto LevelTiles = CoDAssets::GameInstance->Read<uint64_t>(Entry + 8);
+                if (LevelWidth == 0 || LevelHeight == 0 || LevelTiles == 0 ||
+                    !SampleAt(LevelTiles, Unused))
+                    break;
+                if (ChainColumn >= LevelWidth || ChainRow >= LevelHeight)
+                    break;
+
+                const uint64_t TileIndex = ChainRow * LevelWidth + ChainColumn;
+                nlohmann::json Step = {
+                    {"level", Level},
+                    {"level_width", LevelWidth},
+                    {"level_height", LevelHeight},
+                    {"column", ChainColumn},
+                    {"row", ChainRow},
+                    {"tile_index", TileIndex},
+                };
+
+                const uint64_t KeyPtr = CoDAssets::GameInstance->Read<uint64_t>(
+                    LevelTiles + TileIndex * BO4TileRecordBytes + 0x90);
+                if (KeyPtr != 0)
+                {
+                    const auto ContentHash = CoDAssets::GameInstance->Read<uint64_t>(
+                        KeyPtr + BO4StreamKeyContentHashOffset);
+                    const auto Size = CoDAssets::GameInstance->Read<uint32_t>(
+                        KeyPtr + BO4StreamKeyUncompressedSizeOffset);
+                    Step["content_hash"] = Hex(ContentHash);
+
+                    PackageCacheObject Info{};
+                    std::string PackagePath;
+                    if (CoDAssets::GamePackageCache != nullptr &&
+                        CoDAssets::GamePackageCache->DescribePackageObject(
+                            ContentHash, Info, PackagePath))
+                    {
+                        uint32_t ResultSize = 0;
+                        std::unique_ptr<uint8_t[]> Payload;
+                        try
+                        {
+                            Payload = CoDAssets::GamePackageCache->ExtractPackageObject(
+                                ContentHash, static_cast<int32_t>(Size), ResultSize);
+                        }
+                        catch (...) { Payload = nullptr; }
+                        if (Payload != nullptr && ResultSize > 0)
+                        {
+                            const auto Name = Strings::Format(
+                                "sector%llu_chain%llu_%llX.bin", s, Level, ContentHash);
+                            auto Writer = BinaryWriter();
+                            if (Writer.Create(FileSystems::CombinePath(ExportPath, Name)))
+                            {
+                                Writer.Write(Payload.get(), ResultSize);
+                                Writer.Close();
+                                Step["file"] = Name;
+                                Step["bytes"] = ResultSize;
+                            }
+                        }
+                    }
+
+                    nlohmann::json ChainBounds = nlohmann::json::array();
+                    for (size_t f = 0; f < BO4TileBoundsFloats; f++)
+                    {
+                        const auto Value = CoDAssets::GameInstance->Read<float>(
+                            LevelTiles + TileIndex * BO4TileRecordBytes +
+                            BO4TileBoundsOffset + f * 4);
+                        ChainBounds.push_back(std::isfinite(Value)
+                            ? nlohmann::json(Value) : nlohmann::json(nullptr));
+                    }
+                    Step["tile_bounds_floats"] = ChainBounds;
+                }
+                else
+                {
+                    Step["status"] = "no_streamkey";
+                }
+
+                Chain.push_back(Step);
+                ChainColumn /= 2;
+                ChainRow /= 2;
+            }
+            Row["ancestors"] = Chain;
+
+            // The per-tile detail array behind each tile record's +0x00.
+            const auto DetailFirst = CoDAssets::GameInstance->Read<uint64_t>(
+                Tiles + BO4TileDetailPointerOffset);
+            std::string DetailProbe;
+            if (DetailFirst != 0 && SampleAt(DetailFirst, DetailProbe))
+            {
+                nlohmann::json Detail = {
+                    {"pointer", Hex(DetailFirst)},
+                    {"record_bytes", BO4TileDetailBytes},
+                };
+                auto Dump = DumpRegion(DetailFirst, BO4TileDetailRunBytes,
+                    Strings::Format("sector%llu_tiledetail.bin", s));
+                for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                    Detail[It.key()] = It.value();
+                Row["tile_detail"] = Detail;
+            }
+
+            // Every tile's +0xA8, level by level, for this sector.
+            nlohmann::json MaskLevels = nlohmann::json::array();
+            for (uint64_t Level = 0; Level < Levels &&
+                 Level < BO4MaximumLodLevels; Level++)
+            {
+                const uint64_t MaskEntry = LevelList + Level * BO4LodLevelBytes;
+                const auto MaskWidth =
+                    CoDAssets::GameInstance->Read<uint32_t>(MaskEntry);
+                const auto MaskHeight =
+                    CoDAssets::GameInstance->Read<uint32_t>(MaskEntry + 4);
+                const auto MaskTiles =
+                    CoDAssets::GameInstance->Read<uint64_t>(MaskEntry + 8);
+                if (MaskWidth == 0 || MaskHeight == 0 || MaskTiles == 0 ||
+                    !SampleAt(MaskTiles, Unused))
+                    continue;
+                const uint64_t MaskCount =
+                    static_cast<uint64_t>(MaskWidth) * MaskHeight;
+                nlohmann::json MaskRow = {
+                    {"level", Level},
+                    {"width", MaskWidth},
+                    {"height", MaskHeight},
+                    {"tiles", MaskCount},
+                };
+                if (MaskCount > BO4TileMaskCeiling)
+                {
+                    // Reported rather than sampled: a partial scan cannot say
+                    // which bits the level never uses, which is the whole point.
+                    MaskRow["status"] = "too_many_tiles_to_scan";
+                    MaskLevels.push_back(MaskRow);
+                    continue;
+                }
+                nlohmann::json Values = nlohmann::json::array();
+                uint32_t Highest = 0;
+                bool AnyBit = false;
+                for (uint64_t t = 0; t < MaskCount; t++)
+                {
+                    const auto Mask = CoDAssets::GameInstance->Read<uint16_t>(
+                        MaskTiles + t * BO4TileRecordBytes + BO4TileMaskOffset);
+                    Values.push_back(Mask);
+                    for (uint32_t b = 0; b < 16; b++)
+                    {
+                        if (!(Mask >> b & 1))
+                            continue;
+                        if (!AnyBit || b > Highest)
+                            Highest = b;
+                        AnyBit = true;
+                    }
+                }
+                MaskRow["highest_bit"] = AnyBit ? nlohmann::json(Highest)
+                                                : nlohmann::json(nullptr);
+                MaskRow["masks"] = Values;
+                MaskLevels.push_back(MaskRow);
+            }
+            if (!MaskLevels.empty())
+                Row["tile_masks"] = MaskLevels;
+
+            // Whatever a resident tile points at from +0x08 and +0x10.
+            nlohmann::json Resident = nlohmann::json::array();
+            uint64_t ResidentSeen = 0;
+            uint64_t ResidentTotal = 0;
+            for (uint64_t Level = 0; Level < Levels &&
+                 Level < BO4MaximumLodLevels; Level++)
+            {
+                const uint64_t ResidentEntry =
+                    LevelList + Level * BO4LodLevelBytes;
+                const auto ResidentWidth =
+                    CoDAssets::GameInstance->Read<uint32_t>(ResidentEntry);
+                const auto ResidentHeight =
+                    CoDAssets::GameInstance->Read<uint32_t>(ResidentEntry + 4);
+                const auto ResidentTiles =
+                    CoDAssets::GameInstance->Read<uint64_t>(ResidentEntry + 8);
+                if (ResidentWidth == 0 || ResidentHeight == 0 ||
+                    ResidentTiles == 0 || !SampleAt(ResidentTiles, Unused))
+                    continue;
+                const uint64_t ResidentCount =
+                    static_cast<uint64_t>(ResidentWidth) * ResidentHeight;
+                // Same rule the mask scan uses: a level too wide to walk is
+                // skipped whole rather than sampled into a misleading count.
+                if (ResidentCount > BO4TileMaskCeiling)
+                    continue;
+                for (uint64_t t = 0; t < ResidentCount; t++)
+                {
+                    const uint64_t ResidentRecord =
+                        ResidentTiles + t * BO4TileRecordBytes;
+                    const auto First = CoDAssets::GameInstance->Read<uint64_t>(
+                        ResidentRecord + BO4TileResidentFirstOffset);
+                    std::string ResidentProbe;
+                    if (First == 0 || !SampleAt(First, ResidentProbe))
+                        continue;
+                    // Counted for every level even once dumping has stopped,
+                    // so the report says how much of the resident set the
+                    // ceiling actually covered.
+                    ResidentTotal++;
+                    if (ResidentSeen >= BO4ResidentTileCeiling)
+                        continue;
+                    const auto Second = CoDAssets::GameInstance->Read<uint64_t>(
+                        ResidentRecord + BO4TileResidentSecondOffset);
+                    nlohmann::json Tile = {
+                        {"level", Level},
+                        {"tile", t},
+                        {"tile_index", CoDAssets::GameInstance->Read<uint32_t>(
+                            ResidentRecord + BO4TileIndexOffset)},
+                        {"layer_mask", CoDAssets::GameInstance->Read<uint16_t>(
+                            ResidentRecord + BO4TileMaskOffset)},
+                        {"vertex_count", CoDAssets::GameInstance->Read<uint32_t>(
+                            ResidentRecord + BO4TileVertexCountOffset)},
+                        {"first_pointer", Hex(First)},
+                        {"second_pointer", Hex(Second)},
+                    };
+                    Tile["first"] = DumpRegion(First, BO4TileResidentBytes,
+                        Strings::Format("sector%llu_resident_l%llu_t%llu_a.bin",
+                                        s, Level, t));
+                    if (Second != 0 && SampleAt(Second, ResidentProbe))
+                    {
+                        Tile["second"] = DumpRegion(Second,
+                            BO4TileResidentBytes,
+                            Strings::Format(
+                                "sector%llu_resident_l%llu_t%llu_b.bin",
+                                s, Level, t));
+                    }
+                    Resident.push_back(Tile);
+                    ResidentSeen++;
+                }
+            }
+            if (ResidentTotal != 0)
+            {
+                Row["resident_tiles"] = {
+                    {"tiles_with_a_pointer", ResidentTotal},
+                    {"dumped", ResidentSeen},
+                    {"first_offset", Hex(BO4TileResidentFirstOffset)},
+                    {"second_offset", Hex(BO4TileResidentSecondOffset)},
+                    {"bytes_each", BO4TileResidentBytes},
+                    {"note", "sparse per-tile pointers, most likely streaming "
+                             "residency; contents not interpreted here"},
+                    {"tiles", Resident},
+                };
+            }
+
+            nlohmann::json ByPackage = nlohmann::json::object();
+            for (const auto& Entry : Packages)
+                ByPackage[Entry.first] = Entry.second;
+            Row["by_package"] = ByPackage;
+            Row["status"] = "walked";
+            Sectors.push_back(Row);
+        }
+    }
+
+    nlohmann::json TileRows = nlohmann::json::array();
+    for (uint64_t t = 0; t < BO4ProbedTiles && t < FinestLevelTiles; t++)
+    {
+        const uint64_t TileIndex = (FinestLevelTiles * t) / BO4ProbedTiles;
+        const uint64_t Record = FinestLevelPointer + TileIndex * BO4TileRecordBytes;
+        nlohmann::json Slots = nlohmann::json::array();
+        for (size_t Offset = 0; Offset + 8 <= BO4TileRecordBytes; Offset += 8)
+        {
+            const auto Value = CoDAssets::GameInstance->Read<uint64_t>(Record + Offset);
+            std::string Unused;
+            if (!SampleAt(Value, Unused))
+                continue;
+
+            nlohmann::json Slot = {{"slot", Hex(Offset)}, {"value", Hex(Value)}};
+            uint64_t Wanted = BO4TileSlotDumpBytes;
+            uint32_t SlotPool = 0;
+            uint64_t SlotAsset = 0;
+            if (PoolOf(Value, SlotPool, SlotAsset))
+            {
+                Slot["pool_index"] = SlotPool;
+                Slot["pool_asset_index"] = SlotAsset;
+                Wanted = Pools[SlotPool].AssetSize > 256
+                    ? Pools[SlotPool].AssetSize : 256;
+            }
+
+            auto Dump = DumpRegion(Value, Wanted,
+                Strings::Format("tile%llu_slot%llX.bin", TileIndex, static_cast<uint64_t>(Offset)));
+            for (auto It = Dump.begin(); It != Dump.end(); ++It)
+            {
+                if (It.key() != "pointer")
+                    Slot[It.key()] = It.value();
+            }
+
+            // One hop further, through the asset this slot names.  A streaming
+            // descriptor holds handles that look like addresses; attempting the
+            // read is the only way to tell a handle from resident memory.
+            if (Slot.contains("pool_index"))
+            {
+                nlohmann::json Inner = nlohmann::json::array();
+                for (uint64_t k = 0; k * 8 + 8 <= Wanted && k < BO4ProbedAssetQwords; k++)
+                {
+                    const auto Target = CoDAssets::GameInstance->Read<uint64_t>(Value + k * 8);
+                    if (Target == 0)
+                        continue;
+                    nlohmann::json Reached = {
+                        {"asset_offset", Hex(k * 8)},
+                        {"value", Hex(Target)},
+                    };
+                    std::string Sampled;
+                    if (!SampleAt(Target, Sampled))
+                    {
+                        // Not a mapped address: a handle, an id, or packed data.
+                        Reached["status"] = "not_readable";
+                        Reached["interpretation"] = "does not address memory this process can read";
+                    }
+                    else
+                    {
+                        uint32_t InnerPool = 0;
+                        uint64_t InnerAsset = 0;
+                        if (PoolOf(Target, InnerPool, InnerAsset))
+                        {
+                            Reached["pool_index"] = InnerPool;
+                            Reached["pool_asset_index"] = InnerAsset;
+                        }
+                        auto Deep = DumpRegion(Target, BO4TileSlotDumpBytes,
+                            Strings::Format("tile%llu_slot%llX_at%llX.bin", TileIndex,
+                                            static_cast<uint64_t>(Offset), k * 8));
+                        for (auto It = Deep.begin(); It != Deep.end(); ++It)
+                        {
+                            if (It.key() != "pointer")
+                                Reached[It.key()] = It.value();
+                        }
+                    }
+                    Inner.push_back(Reached);
+                }
+                Slot["reached"] = Inner;
+            }
+
+            // The streamkey addresses a streamed payload rather than resident
+            // memory, so ask the package cache for it the same way Black Ops 4
+            // model meshes are fetched.  Both candidate hashes are tried, raw
+            // and with the flag nibble masked off, because which field is the
+            // cache id is exactly what this is testing.
+            // The streamkey names a streamed payload rather than resident memory.
+            // Cold War's terrain capture reaches the same kind of payload through
+            // DescribePackageObject, which is a plain const lookup, rather than
+            // through the locking HasCacheLoaded/Exists accessors -- those are not
+            // safe to call from this path.  The same approach is used here, with
+            // Black Ops 4's extractor, since XPAKCache implements only that one.
+            if (Slot.contains("pool_index") &&
+                Slot["pool_index"].get<uint32_t>() == BO4StreamKeyPoolIndex &&
+                CoDAssets::GamePackageCache != nullptr)
+            {
+                // The Black Ops 4 package cache is loaded on a background thread when
+                // the game is attached, so reading its map while that thread is still
+                // filling it is a race.  Wait for it, exactly as every other streamed
+                // Black Ops 4 export depends on it being ready.
+                if (t == 0)
+                    CoDAssets::GamePackageCache->WaitForPackageCacheLoad();
+
+                const auto PayloadSize = CoDAssets::GameInstance->Read<uint32_t>(
+                    Value + BO4StreamKeyPayloadSizeOffset);
+                const auto UncompressedSize = CoDAssets::GameInstance->Read<uint32_t>(
+                    Value + BO4StreamKeyUncompressedSizeOffset);
+                const uint64_t Candidates[2] = {
+                    CoDAssets::GameInstance->Read<uint64_t>(Value + BO4StreamKeyNameHashOffset),
+                    CoDAssets::GameInstance->Read<uint64_t>(Value + BO4StreamKeyContentHashOffset),
+                };
+                const char* Names[2] = { "name_hash", "content_hash" };
+
+                nlohmann::json Lookups = nlohmann::json::array();
+                for (int c = 0; c < 2; c++)
+                {
+                    for (int Masked = 0; Masked < 2; Masked++)
+                    {
+                        const uint64_t Key = Masked
+                            ? (Candidates[c] & 0x0FFFFFFFFFFFFFFFull)
+                            : Candidates[c];
+                        if (Masked && Key == Candidates[c])
+                            continue;
+
+                        nlohmann::json Lookup = {
+                            {"field", Names[c]},
+                            {"key", Hex(Key)},
+                            {"masked", Masked != 0},
+                            {"size_at_0x20", PayloadSize},
+                            {"size_at_0x40", UncompressedSize},
+                        };
+
+                        PackageCacheObject Info{};
+                        std::string PackagePath;
+                        if (!CoDAssets::GamePackageCache->DescribePackageObject(Key, Info, PackagePath))
+                        {
+                            Lookup["status"] = "not_in_local_package_cache";
+                            Lookups.push_back(Lookup);
+                            continue;
+                        }
+
+                        Lookup["package_path"] = PackagePath;
+                        Lookup["package_offset"] = Info.Offset;
+                        Lookup["compressed_bytes"] = Info.CompressedSize;
+
+                        uint32_t ResultSize = 0;
+                        std::unique_ptr<uint8_t[]> Payload;
+                        try
+                        {
+                            // The cache entry carries no uncompressed size for these
+                            // objects, so -1 decompresses into nothing.  The streamkey
+                            // supplies it at +0x40; the 0x20 field is the compressed
+                            // size, and using that overruns the output buffer.
+                            Payload = CoDAssets::GamePackageCache->ExtractPackageObject(
+                                Key, static_cast<int32_t>(UncompressedSize), ResultSize);
+                        }
+                        catch (...)
+                        {
+                            Lookup["status"] = "extraction_threw";
+                            Lookups.push_back(Lookup);
+                            continue;
+                        }
+
+                        if (Payload == nullptr || ResultSize == 0)
+                        {
+                            Lookup["status"] = "present_but_not_extracted";
+                            Lookups.push_back(Lookup);
+                            continue;
+                        }
+
+                        const auto Name = Strings::Format(
+                            "tile%llu_payload_%s%s.bin", TileIndex, Names[c], Masked ? "_masked" : "");
+                        auto PayloadWriter = BinaryWriter();
+                        if (PayloadWriter.Create(FileSystems::CombinePath(ExportPath, Name)))
+                        {
+                            PayloadWriter.Write(Payload.get(), ResultSize);
+                            PayloadWriter.Close();
+                            Lookup["status"] = "extracted";
+                            Lookup["file"] = Name;
+                            Lookup["bytes"] = ResultSize;
+                        }
+                        else
+                        {
+                            Lookup["status"] = "write_failed";
+                        }
+                        Lookups.push_back(Lookup);
+                    }
+                }
+                Slot["package_lookups"] = Lookups;
+            }
+            Slots.push_back(Slot);
+        }
+
+        TileRows.push_back({
+            {"tile", t},
+            {"tile_index", TileIndex},
+            {"record", Hex(Record)},
+            {"slots", Slots},
+            {"interpretation", "raw bytes one hop past the tile record; nothing about "
+                               "their meaning is claimed here"},
+        });
+    }
+
+    delete[] Header;
+
+    // Sweep the image pool by name for the per-sector height maps.
+    ReportProgress(99);
+    nlohmann::json HeightMaps = nlohmann::json::array();
+    nlohmann::json TerrainImages = nlohmann::json::array();
+    nlohmann::json SquareImages = nlohmann::json::array();
+    if (BO4ImagePoolIndex < Pools.size() && Pools[BO4ImagePoolIndex].PoolPtr != 0 &&
+        Pools[BO4ImagePoolIndex].AssetSize == sizeof(BO4GfxImage))
+    {
+        const auto& ImagePool = Pools[BO4ImagePoolIndex];
+        const std::string Prefix = BO4HeightMapNamePrefix;
+        for (uint32_t i = 0; i < ImagePool.PoolSize &&
+             HeightMaps.size() < BO4SweptImageCeiling; i++)
+        {
+            const uint64_t Address = ImagePool.PoolPtr +
+                static_cast<uint64_t>(i) * ImagePool.AssetSize;
+            const auto Image = CoDAssets::GameInstance->Read<BO4GfxImage>(Address);
+            const uint64_t NameHash = Image.NamePtr & 0xFFFFFFFFFFFFFFF;
+            if (NameHash == 0)
+                continue;
+            const auto Known = AssetNameCache.NameDatabase.find(NameHash);
+            if (Known == AssetNameCache.NameDatabase.end())
+                continue;
+            const std::string& Name = Known->second;
+            if (CoDAssets::VerifiedHashes && BO4CalculateHash(Name) != NameHash)
+                continue;
+            bool ControlFormat = false;
+            for (const auto Format : BO4ControlFormats)
+                ControlFormat = ControlFormat || Image.ImageFormat == Format;
+            const bool LargeSquare = ControlFormat &&
+                                     Image.LoadedMipWidth == Image.LoadedMipHeight &&
+                                     Image.LoadedMipWidth >= BO4SquareImageFloor;
+            if (LargeSquare && SquareImages.size() < BO4TerrainImageReportCeiling)
+            {
+                SquareImages.push_back({
+                    {"name", Name},
+                    {"slot", i},
+                    {"format", Image.ImageFormat},
+                    {"width", Image.LoadedMipWidth},
+                    {"levels", Image.LoadedMipLevels},
+                    {"loaded_mip_bytes", Image.LoadedMipSize},
+                });
+            }
+
+            if (Name.find(BO4TerrainNameFragment) == std::string::npos)
+                continue;
+
+            // Everything terrain-named is reported; only the height maps are
+            // dumped, so widening the sweep costs a list and not a gigabyte.
+            if (TerrainImages.size() < BO4TerrainImageReportCeiling)
+            {
+                TerrainImages.push_back({
+                    {"name", Name},
+                    {"slot", i},
+                    {"format", Image.ImageFormat},
+                    {"width", Image.LoadedMipWidth},
+                    {"height", Image.LoadedMipHeight},
+                    {"levels", Image.LoadedMipLevels},
+                    {"loaded_mip", Hex(Image.LoadedMipPtr)},
+                    {"loaded_mip_bytes", Image.LoadedMipSize},
+                });
+            }
+
+            if (Name.compare(0, Prefix.size(), Prefix) != 0)
+                continue;
+
+            nlohmann::json Entry = {
+                {"name", Name},
+                {"image", Hex(Address)},
+                {"slot", i},
+                {"format", Image.ImageFormat},
+                {"width", Image.LoadedMipWidth},
+                {"height", Image.LoadedMipHeight},
+                {"mip_levels", Image.LoadedMipLevels},
+                {"loaded_mip", Hex(Image.LoadedMipPtr)},
+                {"loaded_mip_bytes", Image.LoadedMipSize},
+                {"tiles_if_a_sector_map", Image.LoadedMipWidth >= 4
+                    ? (Image.LoadedMipWidth - 4) / BO4TileGridStep : 0},
+            };
+
+            std::string Unused;
+            if (Image.LoadedMipPtr != 0 && Image.LoadedMipSize > 0 &&
+                Image.LoadedMipSize <= BO4SweptMipCeiling &&
+                SampleAt(Image.LoadedMipPtr, Unused))
+            {
+                const auto File = Strings::Format("%s.r16.bin", Name.c_str());
+                auto Writer = BinaryWriter();
+                if (Writer.Create(FileSystems::CombinePath(ExportPath, File)))
+                {
+                    uint64_t Written = 0;
+                    bool Complete = true;
+                    while (Written < Image.LoadedMipSize && Complete)
+                    {
+                        const uint64_t Want =
+                            (Image.LoadedMipSize - Written) < BO4HeightMapChunkBytes
+                            ? (Image.LoadedMipSize - Written) : BO4HeightMapChunkBytes;
+                        uintptr_t Got = 0;
+                        int8_t* Chunk = CoDAssets::GameInstance->Read(
+                            Image.LoadedMipPtr + Written,
+                            static_cast<uintptr_t>(Want), Got);
+                        if (Chunk == nullptr || Got != Want)
+                            Complete = false;
+                        else
+                            Writer.Write(Chunk, static_cast<uint32_t>(Got));
+                        delete[] Chunk;
+                        Written += Want;
+                    }
+                    Writer.Close();
+                    Entry["file"] = File;
+                    Entry["bytes"] = Written;
+                    Entry["status"] = Complete ? "dumped" : "partial";
+                }
+            }
+            else
+            {
+                Entry["status"] = "no_resident_mip";
+            }
+            HeightMaps.push_back(Entry);
+        }
+    }
+
+    // Follow the two wide tables.
+    nlohmann::json WideTables = nlohmann::json::array();
+    for (size_t w = 0; w < BO4WideTableCount; w++)
+    {
+        const size_t At = BO4WideTableOffsets[w];
+        const auto Count = CoDAssets::GameInstance->Read<uint32_t>(
+            Terrain->AssetPointer + At - 8);
+        const auto Pointer = CoDAssets::GameInstance->Read<uint64_t>(
+            Terrain->AssetPointer + At);
+        nlohmann::json Table = {
+            {"pointer_offset", Hex(At)},
+            {"count", Count},
+            {"pointer", Hex(Pointer)},
+        };
+        std::string Probe;
+        if (Pointer != 0 && SampleAt(Pointer, Probe))
+        {
+            auto Dump = DumpRegion(Pointer, BO4WideTableDumpBytes,
+                Strings::Format("wide_%llX.bin", static_cast<uint64_t>(At)));
+            for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                Table[It.key()] = It.value();
+
+            nlohmann::json Followed = nlohmann::json::array();
+            uint64_t Seen = 0;
+            for (uint64_t i = 0; i < Count && Followed.size() < BO4WideTableFollowed; i++)
+            {
+                const auto Entry = CoDAssets::GameInstance->Read<uint64_t>(
+                    Pointer + i * 8);
+                if (Entry == 0)
+                    continue;
+                Seen++;
+                std::string EntryProbe;
+                if (!SampleAt(Entry, EntryProbe))
+                    continue;
+                nlohmann::json Target = {{"entry", i}, {"pointer", Hex(Entry)}};
+                auto Sub = DumpRegion(Entry, BO4WideTargetBytes,
+                    Strings::Format("wide_%llX_entry%llu.bin",
+                                    static_cast<uint64_t>(At), i));
+                for (auto It = Sub.begin(); It != Sub.end(); ++It)
+                    Target[It.key()] = It.value();
+                Followed.push_back(Target);
+            }
+            Table["followed"] = Followed;
+        }
+        WideTables.push_back(Table);
+    }
+    nlohmann::json PoolRows = nlohmann::json::array();
+    for (uint32_t i = 0; i < Pools.size(); i++)
+    {
+        if (Pools[i].PoolPtr == 0 || Pools[i].AssetsLoaded == 0)
+            continue;
+        PoolRows.push_back({
+            {"pool_index", i},
+            {"pointer", Hex(Pools[i].PoolPtr)},
+            {"asset_size", Pools[i].AssetSize},
+            {"capacity", Pools[i].PoolSize},
+            {"loaded", Pools[i].AssetsLoaded},
+        });
+    }
+
+    nlohmann::json Document;
+    Document["schema"] = "superterrain-bo4-terrain-probe-v45";
+    Document["game"] = "black_ops_4";
+    Document["asset_type"] = "TerrainGfx";
+    Document["decoded"] = false;
+    Document["source_only"] = true;
+    Document["interpretation"] = "pool descriptor, raw header and pool-membership measurement; no field meaning is claimed";
+
+    Document["pool"] = {
+        {"index", Hex(BO4TerrainGfxPoolIndex)},
+        {"symbol", "ASSET_TYPE_TERRAINGFX"},
+        {"symbol_source", "atian-cod-tools src/core/shared/games/bo4/pool.hpp#L175"},
+        {"directory", Hex(BO4DBAssetPoolsOffset)},
+        {"pointer", Hex(TerrainGfxPoolPtr)},
+        {"asset_size", TerrainGfxAssetSize},
+        {"capacity", TerrainGfxPoolSize},
+        {"pool_count", BO4AssetPoolCount},
+    };
+
+    // If BO4's header is the same size as Cold War's the CW offsets are worth
+    // walking; if it is materially different the interior was reorganised
+    // between T8 and T9 and only pool discovery transfers.
+    Document["reference"] = {
+        {"bocw_pool_index", "0xB1"},
+        {"bocw_header_size", BOCWTerrainGfxHeaderSize},
+        {"bo4_header_size", TerrainGfxAssetSize},
+        {"header_size_delta", static_cast<int64_t>(TerrainGfxAssetSize) -
+                              static_cast<int64_t>(BOCWTerrainGfxHeaderSize)},
+        {"header_size_matches_bocw", TerrainGfxAssetSize == BOCWTerrainGfxHeaderSize},
+        {"note", "size agreement is evidence the layout carried over, not proof of it"},
+    };
+
+    Document["asset"] = {
+        {"name", Terrain->AssetName},
+        {"pointer", Hex(Terrain->AssetPointer)},
+        {"header_size", Terrain->AssetSize},
+        {"header_file", "header.terraingfx.bin"},
+    };
+    Document["header_words"] = Words;
+    Document["candidate_tables"] = Tables;
+    Document["regions"] = Regions;
+    Document["levels"] = LevelRows;
+    Document["tiles"] = TileRows;
+    Document["tile_census"] = Census;
+    Document["sectors"] = Sectors;
+    Document["sector_count"] = SectorCount;
+    Document["height_maps"] = HeightMaps;
+    Document["terrain_images"] = TerrainImages;
+    Document["square_images"] = SquareImages;
+    // --- every techset in the game, by the semantics its shaders declare ----
+    nlohmann::json TechsetCatalogue = nlohmann::json::array();
+    if (BO4TechsetPoolIndex < Pools.size() && Pools[BO4TechsetPoolIndex].PoolPtr != 0)
+    {
+        const auto Plausible = [](uint64_t Pointer) -> bool
+        {
+            return Pointer >= 0x10000000000ull && Pointer <= 0x1000000000000ull;
+        };
+
+        // A DXBC container opens with a string table for its input and output
+        // signatures, so the semantics can be read off the first kilobyte
+        // without parsing the chunk directory.
+        const auto Semantics = [](uint64_t Blob, std::set<std::string>& Into)
+        {
+            uintptr_t Got = 0;
+            int8_t* Bytes = CoDAssets::GameInstance->Read(
+                Blob, static_cast<uintptr_t>(BO4SignatureBytes), Got);
+            if (Bytes == nullptr)
+                return;
+            std::string Token;
+            for (uintptr_t i = 0; i < Got; i++)
+            {
+                const auto c = static_cast<char>(Bytes[i]);
+                const bool Word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                                  (c >= '0' && c <= '9') || c == '_';
+                if (Word)
+                {
+                    Token.push_back(c);
+                    continue;
+                }
+                if (Token.size() >= BO4SignatureTokenFloor &&
+                    ((Token[0] >= 'A' && Token[0] <= 'Z') ||
+                     (Token[0] >= 'a' && Token[0] <= 'z')) &&
+                    Into.size() < BO4SignatureTokenCeiling)
+                    Into.insert(Token);
+                Token.clear();
+            }
+            delete[] Bytes;
+        };
+
+        // Does this blob's code chunk belong to a vertex stage, and does that
+        // stage declare a texture?  Reported separately so a techset that fails
+        // the filter still says which half it failed on.
+        const auto Classify = [](uint64_t Blob, bool& Vertex, uint32_t& Textures,
+                                 uint64_t& BlobBytes) -> bool
+        {
+            Vertex = false;
+            Textures = 0;
+            BlobBytes = CoDAssets::GameInstance->Read<uint32_t>(Blob + 24);
+            if (BlobBytes < 32 || BlobBytes > BO4ShaderCeiling)
+                return false;
+            uintptr_t Got = 0;
+            int8_t* Raw = CoDAssets::GameInstance->Read(
+                Blob, static_cast<uintptr_t>(BlobBytes), Got);
+            if (Raw == nullptr || Got < BlobBytes)
+            {
+                delete[] Raw;
+                return false;
+            }
+            const auto Word = [&](uint64_t At) -> uint32_t
+            {
+                uint32_t Value = 0;
+                std::memcpy(&Value, Raw + At, sizeof(Value));
+                return Value;
+            };
+            bool Found = false;
+            const uint32_t Chunks = Word(28);
+            for (uint32_t c = 0; c < Chunks && 32 + c * 4 + 4 <= Got; c++)
+            {
+                const uint64_t At = Word(32 + c * 4);
+                if (At + 8 > Got)
+                    continue;
+                const uint32_t Tag = Word(At);
+                if (Tag != BO4ShaderCodeTag && Tag != BO4ShaderCodeTagOld)
+                    continue;
+                const uint64_t First = At + 8;
+                if (First + 8 > Got)
+                    continue;
+                Vertex = (Word(First) >> 16) == BO4ShaderTypeVertex;
+                // Token zero is the version, token one the dword length; the
+                // declarations begin after them and each token carries its own
+                // length in bits 24-30.
+                uint64_t P = First + 8;
+                const uint64_t End = (std::min)(
+                    First + static_cast<uint64_t>(Word(At + 4)), Got);
+                while (P + 4 <= End)
+                {
+                    const uint32_t Token = Word(P);
+                    const uint32_t Length = (Token >> 24) & 0x7F;
+                    if (Length == 0)
+                        break;
+                    if ((Token & 0x7FF) == BO4OpcodeDeclareResource)
+                        Textures++;
+                    P += static_cast<uint64_t>(Length) * 4;
+                }
+                Found = true;
+                break;
+            }
+            delete[] Raw;
+            return Found;
+        };
+
+        const auto DumpBlob = [&](uint64_t Blob, uint64_t Bytes,
+                                  const std::string& Name) -> nlohmann::json
+        {
+            nlohmann::json Out = {{"pointer", Hex(Blob)}, {"bytes", Bytes}};
+            uintptr_t Got = 0;
+            int8_t* Raw = CoDAssets::GameInstance->Read(
+                Blob, static_cast<uintptr_t>(Bytes), Got);
+            if (Raw == nullptr || Got < Bytes)
+            {
+                delete[] Raw;
+                Out["status"] = "unreadable";
+                return Out;
+            }
+            auto Writer = BinaryWriter();
+            if (Writer.Create(FileSystems::CombinePath(ExportPath, Name)))
+            {
+                Writer.Write(Raw, static_cast<uint32_t>(Got));
+                Writer.Close();
+                Out["status"] = "dumped";
+                Out["file"] = Name;
+            }
+            else
+            {
+                Out["status"] = "write_failed";
+            }
+            delete[] Raw;
+            return Out;
+        };
+
+        size_t TerrainShaped = 0;
+        const auto& ShaderPool = Pools[BO4TechsetPoolIndex];
+        for (uint64_t i = 0; i < ShaderPool.PoolSize; i++)
+        {
+            const auto Entry = ShaderPool.PoolPtr + i * ShaderPool.AssetSize;
+            const auto Hash = CoDAssets::GameInstance->Read<uint64_t>(Entry);
+            if (Hash == 0)
+                continue;
+
+            std::set<std::string> Tokens;
+            std::vector<uint64_t> BlobPointers;
+            size_t Techniques = 0;
+            size_t Blobs = 0;
+            for (uint64_t t = BO4TechsetPassFirst; t < BO4TechsetAssetBytes / 8 &&
+                 Blobs < BO4BlobsPerTechset; t++)
+            {
+                const auto TechPtr = CoDAssets::GameInstance->Read<uint64_t>(Entry + t * 8);
+                if (!Plausible(TechPtr))
+                    continue;
+                Techniques++;
+
+                size_t Stages = 0;
+                for (uint64_t k = 0; k < BO4TechniqueFields &&
+                     Stages < BO4StagesPerTechnique && Blobs < BO4BlobsPerTechset; k++)
+                {
+                    const auto Stage = CoDAssets::GameInstance->Read<uint64_t>(TechPtr + k * 8);
+                    if (!Plausible(Stage))
+                        continue;
+                    Stages++;
+
+                    for (uint64_t m = 0; m < BO4TechniqueFields &&
+                         Blobs < BO4BlobsPerTechset; m++)
+                    {
+                        const auto Candidate =
+                            CoDAssets::GameInstance->Read<uint64_t>(Stage + m * 8);
+                        if (!Plausible(Candidate) ||
+                            CoDAssets::GameInstance->Read<uint32_t>(Candidate) != BO4ShaderMagic)
+                            continue;
+                        Semantics(Candidate, Tokens);
+                        BlobPointers.push_back(Candidate);
+                        Blobs++;
+                    }
+                }
+            }
+
+            if (Blobs == 0)
+                continue;
+            nlohmann::json Row = {
+                {"slot", i},
+                {"pointer", Hex(Entry)},
+                {"hash", Hex(Hash & BO4TechsetNameMask)},
+                {"techniques", Techniques},
+                {"shaders", Blobs},
+            };
+            nlohmann::json Named = nlohmann::json::array();
+            for (const auto& Token : Tokens)
+                Named.push_back(Token);
+            Row["semantics"] = Named;
+            const auto Known = AssetNameCache.NameDatabase.find(Hash & BO4TechsetNameMask);
+            if (Known != AssetNameCache.NameDatabase.end())
+                Row["name"] = Known->second;
+
+            // A skinned vertex rules a techset out whatever its stages sample.
+            const bool Skinned = Tokens.count("BLENDINDICES") != 0 ||
+                                 Tokens.count("BLENDWEIGHT") != 0;
+            uint32_t VertexStages = 0;
+            uint32_t VertexSampling = 0;
+            for (const auto Blob : BlobPointers)
+            {
+                bool Vertex = false;
+                uint32_t Textures = 0;
+                uint64_t BlobBytes = 0;
+                if (!Classify(Blob, Vertex, Textures, BlobBytes) || !Vertex)
+                    continue;
+                VertexStages++;
+                if (Textures != 0)
+                    VertexSampling++;
+            }
+            Row["vertex_stages"] = VertexStages;
+            Row["vertex_stages_sampling_a_texture"] = VertexSampling;
+            Row["skinned"] = Skinned;
+
+            const bool TerrainShapedRow = !Skinned && VertexSampling != 0;
+            Row["terrain_shaped"] = TerrainShapedRow;
+            if (TerrainShapedRow && TerrainShaped < BO4TerrainShapedTechsetCeiling)
+            {
+                nlohmann::json Dumped = nlohmann::json::array();
+                for (const auto Blob : BlobPointers)
+                {
+                    bool Vertex = false;
+                    uint32_t Textures = 0;
+                    uint64_t BlobBytes = 0;
+                    if (!Classify(Blob, Vertex, Textures, BlobBytes))
+                        continue;
+                    auto Entry = DumpBlob(Blob, BlobBytes,
+                        Strings::Format("techset%llu_%llX.dxbc", i, Blob));
+                    Entry["vertex"] = Vertex;
+                    Entry["textures"] = Textures;
+                    Dumped.push_back(Entry);
+                }
+                Row["dumped_shaders"] = Dumped;
+                TerrainShaped++;
+            }
+            TechsetCatalogue.push_back(Row);
+        }
+    }
+
+    Document["wide_tables"] = WideTables;
+    Document["techsets"] = TechsetCatalogue;
+    Document["occupied_pools"] = PoolRows;
+
+    // Walk every committed readable region of the game looking for DXBC
+    // containers, and keep the ones that pull vertices at terrain's stride.
+    // Nothing here follows a pointer out of the terrain asset, because there is
+    // none to follow -- the renderer holds its own shader.  The stride
+    // histogram is reported whether or not anything matches, so a negative says
+    // what was actually looked at rather than only that nothing was found.
+    {
+        nlohmann::json Scan;
+        std::map<uint32_t, uint64_t> StrideHistogram;
+        nlohmann::json Matches = nlohmann::json::array();
+        uint64_t RegionsSeen = 0, BytesScanned = 0, Containers = 0, Parsed = 0;
+        bool Exhausted = true;
+
+        const HANDLE Process = CoDAssets::GameInstance->GetCurrentProcess();
+        std::vector<uint8_t> Buffer(static_cast<size_t>(BO4ScanChunkBytes) + 4);
+        MEMORY_BASIC_INFORMATION Info{};
+        uint64_t Address = 0;
+
+        while (VirtualQueryEx(Process, reinterpret_cast<LPCVOID>(Address),
+                              &Info, sizeof(Info)) == sizeof(Info))
+        {
+            const uint64_t Base = reinterpret_cast<uint64_t>(Info.BaseAddress);
+            const uint64_t Size = static_cast<uint64_t>(Info.RegionSize);
+            Address = Base + Size;
+            if (Size == 0)
+                break;
+
+            const bool Readable = Info.State == MEM_COMMIT &&
+                (Info.Protect & PAGE_GUARD) == 0 &&
+                (Info.Protect & PAGE_NOACCESS) == 0 &&
+                (Info.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                 PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                 PAGE_EXECUTE_WRITECOPY)) != 0;
+            if (!Readable)
+                continue;
+            if (BytesScanned >= BO4ScanRegionCeiling)
+            {
+                Exhausted = false;
+                break;
+            }
+            RegionsSeen++;
+
+            for (uint64_t Offset = 0; Offset < Size; Offset += BO4ScanChunkBytes)
+            {
+                const uint64_t Left = Size - Offset;
+                const uint64_t Want =
+                    (Left < BO4ScanChunkBytes ? Left : BO4ScanChunkBytes) + 4;
+                SIZE_T Got = 0;
+                if (!ReadProcessMemory(Process,
+                        reinterpret_cast<LPCVOID>(Base + Offset),
+                        Buffer.data(), static_cast<SIZE_T>(Want), &Got) || Got < 4)
+                    continue;
+                BytesScanned += Got;
+
+                for (SIZE_T i = 0; i + 4 <= Got; i++)
+                {
+                    uint32_t Word = 0;
+                    std::memcpy(&Word, Buffer.data() + i, sizeof(Word));
+                    if (Word != BO4ShaderContainerMagic)
+                        continue;
+                    Containers++;
+
+                    const uint64_t Blob = Base + Offset + i;
+                    const auto Bytes =
+                        CoDAssets::GameInstance->Read<uint32_t>(Blob + 0x18);
+                    const auto ChunkCount =
+                        CoDAssets::GameInstance->Read<uint32_t>(Blob + 0x1C);
+                    if (Bytes < 32 || Bytes > BO4ScanBlobCeiling ||
+                        ChunkCount == 0 || ChunkCount > 32)
+                        continue;
+
+                    uintptr_t Length = 0;
+                    std::unique_ptr<int8_t[]> Held(
+                        CoDAssets::GameInstance->Read(Blob, Bytes, Length));
+                    if (Held == nullptr || Length < Bytes)
+                        continue;
+                    const uint8_t* Raw =
+                        reinterpret_cast<const uint8_t*>(Held.get());
+
+                    // Find the shader chunk and walk its instruction tokens.
+                    uint64_t Code = 0, CodeBytes = 0;
+                    for (uint32_t c = 0; c < ChunkCount; c++)
+                    {
+                        uint32_t At = 0;
+                        std::memcpy(&At, Raw + 32 + c * 4, sizeof(At));
+                        if (At + 8 > Bytes)
+                            continue;
+                        uint32_t Tag = 0, Span = 0;
+                        std::memcpy(&Tag, Raw + At, sizeof(Tag));
+                        std::memcpy(&Span, Raw + At + 4, sizeof(Span));
+                        if ((Tag == BO4ShaderCodeTag || Tag == BO4ShaderCodeTagOld) &&
+                            At + 8 + Span <= Bytes)
+                        {
+                            Code = At + 8;
+                            CodeBytes = Span;
+                            break;
+                        }
+                    }
+                    if (CodeBytes < 8)
+                        continue;
+                    Parsed++;
+
+                    uint32_t Version = 0;
+                    std::memcpy(&Version, Raw + Code, sizeof(Version));
+                    const uint32_t Kind = Version >> 16;
+
+                    std::vector<uint32_t> Strides;
+                    for (uint64_t q = 8; q + 4 <= CodeBytes;)
+                    {
+                        uint32_t Token = 0;
+                        std::memcpy(&Token, Raw + Code + q, sizeof(Token));
+                        const uint32_t Opcode = Token & 0x7FF;
+                        const uint32_t Words = (Token >> 24) & 0x7F;
+                        if (Words == 0)
+                            break;
+                        if (Opcode == BO4OpcodeDeclareStructured && Words >= 2 &&
+                            q + static_cast<uint64_t>(Words) * 4 <= CodeBytes)
+                        {
+                            uint32_t Stride = 0;
+                            std::memcpy(&Stride, Raw + Code + q + (Words - 1) * 4,
+                                        sizeof(Stride));
+                            Strides.push_back(Stride);
+                            StrideHistogram[Stride]++;
+                        }
+                        q += static_cast<uint64_t>(Words) * 4;
+                    }
+
+                    const bool Terrain =
+                        Kind == BO4ShaderTypeVertex &&
+                        std::find(Strides.begin(), Strides.end(),
+                                  BO4TerrainVertexStride) != Strides.end();
+                    if (!Terrain || Matches.size() >= BO4ScanDumpCeiling)
+                        continue;
+
+                    nlohmann::json Hit = {
+                        {"pointer", Hex(Blob)},
+                        {"container_bytes", Bytes},
+                        {"program_kind", Kind},
+                    };
+                    nlohmann::json Declared = nlohmann::json::array();
+                    for (auto Stride : Strides)
+                        Declared.push_back(Stride);
+                    Hit["structured_strides"] = Declared;
+                    auto Dump = DumpRegion(Blob, Bytes,
+                        Strings::Format("scan_vs_stride8_%llX.dxbc", Blob & 0xFFFFFF));
+                    for (auto It = Dump.begin(); It != Dump.end(); ++It)
+                        Hit[It.key()] = It.value();
+                    Matches.push_back(Hit);
+                }
+            }
+        }
+
+        nlohmann::json Histogram = nlohmann::json::object();
+        for (const auto& Entry : StrideHistogram)
+            Histogram[std::to_string(Entry.first)] = Entry.second;
+
+        Scan["looking_for"] = "a vertex shader that pulls from a structured "
+                              "buffer with a stride of 8, which is what a "
+                              "terrain tile vertex is: four u16";
+        Scan["regions_scanned"] = RegionsSeen;
+        Scan["bytes_scanned"] = BytesScanned;
+        Scan["scanned_everything_committed"] = Exhausted;
+        Scan["dxbc_magics_seen"] = Containers;
+        Scan["containers_parsed"] = Parsed;
+        Scan["structured_stride_histogram"] = Histogram;
+        Scan["matches"] = Matches;
+        if (Matches.empty())
+            Scan["note"] = "nothing in the scanned memory pulls vertices at "
+                           "stride 8; if scanned_everything_committed is false "
+                           "this is not yet a negative";
+        Document["shader_scan"] = Scan;
+    }
+
+    std::ofstream Report(FileSystems::CombinePath(ExportPath, "terraingfx_probe.json"),
+        std::ios::binary | std::ios::trunc);
+    if (!Report.is_open())
+        return false;
+    Report << Document.dump(2);
+    Report.close();
+
+    ReportProgress(100);
+    return true;
+}
 std::unique_ptr<XAnim_t> GameBlackOps4::ReadXAnim(const CoDAnim_t* Animation)
 {
     // Verify that the program is running
@@ -2582,15 +5710,17 @@ std::string GameBlackOps4::LoadStringEntry(uint64_t Index)
 }
 void GameBlackOps4::PerformInitialSetup()
 {
-    // Load Caches
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xanims.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_ximages.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xmaterials.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xmodels.wni"));
-
-    // TODO: Need to verify
-    // https://github.com/Scobalula/Greyhound/pull/49/commits
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xsounds.wni"));
+    const auto Provider=SettingsManager::GetSetting("bo4namedatabase","bundled");
+    // A switch is a replacement, not an overlay. Old cached names must not
+    // survive a second Load Game with a different provider.
+    AssetNameCache.NameDatabase.clear();
+    if (Provider!="bundled" && Provider!="echo000")
+        throw std::runtime_error("Unknown BO4 name database selection.");
+    if (Provider=="echo000" && !BO4NameDatabase::Ready(Provider))
+        throw std::runtime_error("The echo000 BO4 name database is not installed. Select Bundled or import the local CSV checkout.");
+    for (const auto* File:BO4NameDatabase::Files)
+        AssetNameCache.LoadIndex(FileSystems::CombinePath(BO4NameDatabase::Root(Provider),File));
+    ActiveNameDatabase=Provider;
 
     // Prepare to copy the oodle dll
     auto OurPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "oo2core_6_win64.dll");
@@ -2598,4 +5728,96 @@ void GameBlackOps4::PerformInitialSetup()
     // Copy if not exists
     if (!FileSystems::FileExists(OurPath))
         FileSystems::CopyFile(FileSystems::CombinePath(FileSystems::GetDirectoryName(CoDAssets::GameInstance->GetProcessPath()), "oo2core_6_win64.dll"), OurPath);
+}
+
+
+std::string GameBlackOps4::ExportModelPlacements(const std::string& Directory, const std::function<void(uint32_t)>& Progress)
+{
+    if (CoDAssets::GameID!=SupportedGames::BlackOps4 || !CoDAssets::GameInstance || !BO4DBAssetPoolsOffset)
+        return "Load a supported Black Ops 4 map first.";
+    std::vector<BO4XAssetPoolData> Pools(BO4AssetPoolCount);
+    for (uint32_t I=0;I<BO4AssetPoolCount;++I)
+        Pools[I]=CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BO4DBAssetPoolsOffset+sizeof(BO4XAssetPoolData)*I);
+    const auto Diagnostics=FileSystems::CombinePath(Directory,"diagnostics");
+    FileSystems::CreateDirectory(Diagnostics); Progress(10);
+    std::string Failure;
+    const bool Okay=CaptureBO4ModelPlacements(Pools,Diagnostics,[](uint64_t Hash)->std::string {
+        const auto It=AssetNameCache.NameDatabase.find(Hash);
+        if (It!=AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second)==Hash) return It->second;
+        return {};
+    },Directory,ActiveNameDatabase,&Failure);
+    Progress(100);
+    if (!Okay) return "BO4 placements: "+Failure+". Details: "+FileSystems::CombinePath(Diagnostics,"placement_error.json");
+    return "Complete BO4 static-model placement export. Open static_models.json; unresolved names and scope are listed in placement_report.json.";
+}
+
+
+std::string GameBlackOps4::ExportRadiantBrushes(const std::function<void(uint32_t, const std::string&)>& Progress)
+{
+    if(CoDAssets::GameID!=SupportedGames::BlackOps4 || !CoDAssets::GameInstance || !BO4DBAssetPoolsOffset)
+        return "Load Game with a Black Ops 4 map open first.";
+    if(!CWRadiantExport::Available()) return "Bundled brush converter is missing. Restore tools beside Greyhound.exe.";
+    std::vector<BO4XAssetPoolData> Pools(BO4AssetPoolCount);
+    for(uint32_t I=0;I<BO4AssetPoolCount;++I)
+        Pools[I]=CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BO4DBAssetPoolsOffset+sizeof(BO4XAssetPoolData)*I);
+    const auto Output=ExportRun::Reserve("brushes","run");
+    if(Output.empty())return "Could not reserve the BO4 brush export folder.";
+    CoDAssets::LatestExportPath=Output;
+    const auto Capture=FileSystems::CombinePath(Output,"diagnostics");
+    const auto World=FileSystems::CombinePath(Capture,"world");
+    const auto Physics=FileSystems::CombinePath(Capture,"model_physics");
+    FileSystems::CreateDirectory(Capture);FileSystems::CreateDirectory(World);FileSystems::CreateDirectory(Physics);
+    const auto Resolve=[](uint64_t Hash)->std::string {
+        const auto It=AssetNameCache.NameDatabase.find(Hash);
+        return It!=AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second)==Hash ? It->second : std::string();
+    };
+    Progress(5,"BO4: capturing world brushes, contents declarations and entities...");
+    if(!CaptureBO4WorldPools(Pools,World,"brush_export",Resolve))
+        return "BO4 world brush capture failed. Retained diagnostics: "+World;
+    Progress(20,"BO4: capturing model-attached physics separately...");
+    if(!CaptureBO4ModelCollisionReferences(Pools,Physics,Resolve,true))
+        return "BO4 model physics capture failed. Retained diagnostics: "+Physics;
+    const bool Types=SettingsManager::GetSetting("cwradianttypes","true")=="true";
+    const bool Volumes=SettingsManager::GetSetting("cwradiantvolumes","true")=="true";
+    const bool ModelTriangles=SettingsManager::GetSetting("cwmodeltriangles","false")=="true";
+    // The triangle-surface decode needs the full collision reference probe, not
+    // the physics-only one. It shares file names with that probe, so it gets its
+    // own folder; it is a second walk and stays opt-in for that reason.
+    if(ModelTriangles)
+    {
+        const auto Collision=FileSystems::CombinePath(Capture,"model_collision");
+        FileSystems::CreateDirectory(Collision);
+        Progress(30,"BO4: capturing model collision surfaces...");
+        if(!CaptureBO4ModelCollisionReferences(Pools,Collision,Resolve,false))
+            return "BO4 model collision capture failed. Retained diagnostics: "+Collision;
+    }
+    if(!CWRadiantExport::Run(Capture,Output,"",Progress,Types,Volumes?World:std::string(),"",true,false,ModelTriangles))
+        return "BO4 brush conversion failed. See diagnostics/radiant_error.log in "+Output;
+    Progress(100,"BO4 separate prefabs saved; review limitations are in metadata/export_report.json.");
+    return "BO4 brush, clip and model-physics prefabs exported. Trigger/volume association and unsupported primitives remain flagged in metadata/export_report.json. Open latest export folder.";
+}
+
+// Direct Dev Tools entry point: diagnostics do not require a TerrainGfx row.
+bool GameBlackOps4::ExportDiagnostic(int Mode, const std::string& Directory)
+{
+    if(CoDAssets::GameID!=SupportedGames::BlackOps4 || !CoDAssets::GameInstance || !BO4DBAssetPoolsOffset)
+        return false;
+    if(Mode<1 || Mode>7 || Mode==5)return false; // Prefabs use ExportRadiantBrushes.
+    if(Mode==6)return CaptureBO4CollisionHandlers(Directory);
+    std::vector<BO4XAssetPoolData> Pools(BO4AssetPoolCount);
+    for(uint32_t I=0;I<BO4AssetPoolCount;++I)
+        Pools[I]=CoDAssets::GameInstance->Read<BO4XAssetPoolData>(BO4DBAssetPoolsOffset+sizeof(BO4XAssetPoolData)*I);
+    const auto Resolve=[](uint64_t Hash)->std::string {
+        const auto It=AssetNameCache.NameDatabase.find(Hash);
+        return It!=AssetNameCache.NameDatabase.end() && BO4CalculateHash(It->second)==Hash ? It->second : std::string();
+    };
+    switch(Mode)
+    {
+    case 1: return CaptureBO4WorldPools(Pools,Directory,"dev_tools",Resolve);
+    case 2: return CaptureBO4ModelCollisionReferences(Pools,Directory,Resolve,false);
+    case 3: return CaptureBO4ModelCollisionReferences(Pools,Directory,Resolve,true);
+    case 4: return CaptureBO4ModelPlacements(Pools,Directory,Resolve);
+    case 7: return CaptureBO4WorldPools(Pools,Directory,"dev_tools",Resolve,true);
+    default:return false;
+    }
 }

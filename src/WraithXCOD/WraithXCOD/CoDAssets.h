@@ -226,6 +226,23 @@ public:
     // Returns the deterministic output directory used by ExportAsset.
     static std::string GetExportPath(const CoDAsset_t* Asset);
 
+    // Runs a script from the tools folder beside the executable, e.g.
+    // "cold_war/capture/organize_cw_placements.py". Returns the interpreter exit code,
+    // or -1 when no interpreter or the script itself could not be found.
+    // Post-processing of an already saved capture; it never touches the running game.
+    // LogDirectory, when given, receives terrain_pipeline.log with the script's
+    // stdout and stderr. Assertion-based auditors report their reason only there.
+    static int RunCaptureScript(const std::string& ScriptName,
+        const std::vector<std::string>& ScriptArguments,
+        const std::string& LogDirectory = std::string());
+
+    // The folder every export for the loaded game shares, e.g. "black_ops_cw".
+    // Empty when the loaded game has no folder assigned.
+    static std::string GameFolderName();
+    // exported_files\<game>\<Category>, for map-level exports that have no
+    // CoDAsset_t to key off. Empty when GameFolderName() is empty.
+    static std::string BuildMapExportPath(const std::string& Category);
+
     // Exports the game asset
     static ExportGameResult ExportAsset(const CoDAsset_t* Asset,
         void* ProgressCaller = nullptr, uint32_t ProgressStart = 0,

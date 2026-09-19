@@ -27,15 +27,14 @@ $msbuildPath = Join-Path $visualStudioPath "MSBuild\Current\Bin\MSBuild.exe"
 $solutionPath = Join-Path $PSScriptRoot "src\WraithXCOD\WraithXCOD.sln"
 & $msbuildPath $solutionPath /m:1 /t:Build "/p:Configuration=$Configuration" "/p:Platform=$Platform" /p:PlatformToolset=v143 /v:minimal
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-if ($BuildOnly) { return }
 
 $builtExe = Join-Path $PSScriptRoot "src\WraithXCOD\$Platform\$Configuration\Greyhound.exe"
 if (-not (Test-Path -LiteralPath $builtExe)) { throw "Built executable not found: $builtExe" }
 
-$runtimeRoots = @(
-    (Join-Path $PSScriptRoot "bin"),
-    (Join-Path $PSScriptRoot "bin\cli")
-)
+$runtimeRoots = @((Split-Path $builtExe))
+if (-not $BuildOnly) {
+    $runtimeRoots += (Join-Path $PSScriptRoot "bin"), (Join-Path $PSScriptRoot "bin\cli")
+}
 foreach ($runtimeRoot in $runtimeRoots) {
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
     $target = if ($runtimeRoot.EndsWith("\cli")) {
@@ -43,17 +42,18 @@ foreach ($runtimeRoot in $runtimeRoots) {
     } else {
         Join-Path $runtimeRoot "Greyhound.exe"
     }
-    Copy-Item -LiteralPath $builtExe -Destination $target -Force
+    if ([IO.Path]::GetFullPath($builtExe) -ne [IO.Path]::GetFullPath($target)) {
+        Copy-Item -LiteralPath $builtExe -Destination $target -Force
+    }
 
     $runtimeTools = Join-Path $runtimeRoot "tools"
-    if (Test-Path -LiteralPath $runtimeTools) {
-        Remove-Item -LiteralPath $runtimeTools -Recurse -Force
-    }
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "tools") -Destination $runtimeTools -Recurse -Force
+    New-Item -ItemType Directory -Path $runtimeTools -Force | Out-Null
+    # The packager stages the same game/task hierarchy used in the source tree.
 }
 
 $pythonCandidates = @()
 if ($env:SUPERTERRAIN_PYTHON) { $pythonCandidates += $env:SUPERTERRAIN_PYTHON }
+$pythonCandidates += (Join-Path $PSScriptRoot "..\..\.venv\Scripts\python.exe")
 $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
 if ($pythonCommand) { $pythonCandidates += $pythonCommand.Source }
 $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
@@ -68,8 +68,11 @@ foreach ($candidate in ($pythonCandidates | Select-Object -Unique)) {
 if ($capturePython) {
     foreach ($runtimeRoot in $runtimeRoots) {
         Set-Content -LiteralPath (Join-Path $runtimeRoot "terrain-python.txt") -Value $capturePython -Encoding ascii
+        # Keep native switches and their converter implementation in the same build.
+        & $capturePython (Join-Path $PSScriptRoot "tools\shared\runtime\package_runtime.py") --destination (Join-Path $runtimeRoot "tools")
+        if ($LASTEXITCODE -ne 0) { throw "Brush runtime packaging failed for $runtimeRoot" }
     }
-    "staged source-only Greyhound runtimes with Python $capturePython"
+    "staged Greyhound capture helpers and packaged brush converters with Python $capturePython"
 } else {
-    Write-Warning "No Python 3.10+ runtime found. Set SUPERTERRAIN_PYTHON before exporting terrain."
+    throw "No Python 3.10+ runtime found. Set SUPERTERRAIN_PYTHON to an interpreter with NumPy and SciPy to package the export runtime."
 }

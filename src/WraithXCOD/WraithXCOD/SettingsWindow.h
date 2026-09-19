@@ -25,6 +25,9 @@ private:
     // -- Event delegates
 
     void OnGeneralPage();
+    void OnRunBO4Diagnostic();
+    void OnVerifyRuntime();
+    void OnVerifyExport();
     void OnExportPlacements();
     void OnExportJsonModels();
     void OnExportBrushes();

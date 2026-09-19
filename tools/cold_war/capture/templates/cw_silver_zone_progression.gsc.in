@@ -1,0 +1,101 @@
+#using scripts\shared\flag_shared;
+#using scripts\zm\_zm_zonemgr;
+#using scripts\zm\_zm_blockers;
+
+#namespace cw_silver_zone_progression_v1;
+
+// Replace the host map's zone-manager block with this main(), after
+// zm_usermap::main(). Do not run two zone managers. Import/stamp the prefab
+// at origin 0, angles 0, scale 1. Eight REVIEW volumes need final authoring.
+function main()
+{
+    if ( isdefined( level.cwzv1_started ) )
+        return;
+    assert( !level flag::get( "zones_initialized" ), "CW Silver: replace the old zone manager block; do not start a second one." );
+    level.cwzv1_started = true;
+    level.cwzv1_flags = [];
+@FLAGS@
+    level.zone_manager_init_func = &zone_init;
+    init_zones = [];
+    init_zones[0] = "zone_proto_start";
+    level thread zm_zonemgr::manage_zones( init_zones );
+    level thread initialize_gate_pathing();
+    level thread debug_controls();
+}
+
+function ensure_flag( name )
+{
+    if ( !isdefined( level.flag[name] ) )
+        level flag::init( name );
+}
+
+function zone_init()
+{
+@ZONE_INIT@
+}
+
+function initialize_gate_pathing()
+{
+    gates = getentarray( "clip", "script_noteworthy" );
+    foreach ( gate in gates )
+    {
+        if ( isdefined( gate.targetname ) && getsubstr( gate.targetname, 0, 6 ) == "cwzv1_" )
+        {
+            gate solid();
+            gate disconnectpaths();
+        }
+    }
+}
+
+// Opt-in developer controls. These do nothing until cw_silver_zone_debug = 1.
+// set cw_silver_zone_test_flag <name> is a one-shot quest/flag test.
+// set cw_silver_zone_test_power 1 uses the host BO3 global power system.
+// Console logging reports zone changes; it does not enable zones by proximity.
+function debug_controls()
+{
+    level flag::wait_till( "zones_initialized" );
+    previous = [];
+    while ( true )
+    {
+        if ( getdvarint( "cw_silver_zone_debug" ) )
+        {
+            test_flag = getdvarstring( "cw_silver_zone_test_flag" );
+            if ( test_flag != "" )
+            {
+                setdvar( "cw_silver_zone_test_flag", "" );
+                if ( isdefined( level.cwzv1_flags[test_flag] ) )
+                {
+                    level flag::set( test_flag );
+                    /#
+                    println( "CW Silver test flag set: " + test_flag );
+                    #/
+                }
+                else
+                {
+                    /#
+                    println( "CW Silver unknown flag rejected: " + test_flag );
+                    #/
+                }
+            }
+            if ( getdvarint( "cw_silver_zone_test_power" ) )
+            {
+                setdvar( "cw_silver_zone_test_power", 0 );
+                ensure_flag( "power_on" );
+                level flag::set( "power_on" );
+            }
+            names = getarraykeys( level.zones );
+            foreach ( name in names )
+            {
+                enabled = level.zones[name].is_enabled;
+                if ( !isdefined( previous[name] ) || previous[name] != enabled )
+                {
+                    /#
+                    println( "CW Silver zone " + name + " enabled=" + enabled );
+                    #/
+                    previous[name] = enabled;
+                }
+            }
+        }
+        wait 0.25;
+    }
+}

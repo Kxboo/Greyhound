@@ -49,6 +49,19 @@ namespace
         bool CWCapturePlacements = true;
         bool CWCaptureCollision = true;
         bool CWCaptureSplines = false;
+        // Build-pinned research dump that replaces the CW pool evidence export.
+        bool CWCollisionCodeProbe = false;
+        bool CWNonStaticPlacements = false;
+        bool CWRadiantTypes = true;
+        bool CWRadiantVolumes = true;
+        bool CWProxyFilter = false;
+        bool CWOrganizePlacements = false;
+        bool CWVerifyPlacements = false;
+        bool CWFloatTriangles = false;
+        bool CWModelTriangles = false;
+        std::string BO4NameDatabase = "bundled";
+        // Which capture a Black Ops 4 terrain export runs; "0" is the terrain probe.
+        std::string BO4CaptureMode = "0";
         uint32_t Limit = 0;
 
         std::set<std::string> ModelFormats;
@@ -319,7 +332,37 @@ namespace
             else if (Argument == "--cw-skip-entities") Options.CWCaptureEntities = false;
             else if (Argument == "--cw-skip-placements") Options.CWCapturePlacements = false;
             else if (Argument == "--cw-splines") Options.CWCaptureSplines = true;
+            else if (Argument == "--cw-collision-code-probe") Options.CWCollisionCodeProbe = true;
             else if (Argument == "--cw-skip-collision") Options.CWCaptureCollision = false;
+            else if (Argument == "--cw-non-static-placements") Options.CWNonStaticPlacements = true;
+            else if (Argument == "--cw-skip-radiant-types") Options.CWRadiantTypes = false;
+            else if (Argument == "--cw-skip-radiant-volumes") Options.CWRadiantVolumes = false;
+            // Sorting keys off the focused capture the non-static stage writes,
+            // so it implies that stage rather than failing later.
+            else if (Argument == "--cw-organize-placements")
+            { Options.CWOrganizePlacements = true; Options.CWNonStaticPlacements = true; }
+            // The auditors read the non-static stage's files, so asking for them
+            // implies that stage exactly as sorting does.
+            else if (Argument == "--cw-verify-placements")
+            { Options.CWVerifyPlacements = true; Options.CWNonStaticPlacements = true; }
+            else if (Argument == "--cw-proxy-filter") Options.CWProxyFilter = true;
+            else if (Argument == "--cw-float-triangles") Options.CWFloatTriangles = true;
+            else if (Argument == "--cw-model-triangles") Options.CWModelTriangles = true;
+            else if (Argument == "--bo4-name-database")
+            {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.BO4NameDatabase = Value;
+                if (Options.BO4NameDatabase != "bundled" && Options.BO4NameDatabase != "echo000")
+                { Error = "--bo4-name-database must be 'bundled' or 'echo000'"; return false; }
+            }
+            else if (Argument == "--bo4-capture-mode")
+            {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.BO4CaptureMode = Value;
+                if (Options.BO4CaptureMode.size() != 1 ||
+                    Options.BO4CaptureMode[0] < '0' || Options.BO4CaptureMode[0] > '7')
+                { Error = "--bo4-capture-mode must be 0-7 (0 = terrain source probe)"; return false; }
+            }
             else if (Argument == "--limit")
             {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
@@ -455,7 +498,7 @@ namespace
         if (!Options.ModelBatchRoot.empty())
         {
             if (Options.ModelFormatExplicit && (Options.ModelFormats.size()!=1 || !Options.ModelFormats.count("cast")))
-            { Error = "--model-batch-root supports Cold War CAST only"; return false; }
+            { Error = "--model-batch-root supports Cold War / BO4 CAST only"; return false; }
             Options.ModelFormats = {"cast"};
         }
         if (Options.AnimationFormatExplicit && !Options.Types.count("animation"))
@@ -474,7 +517,14 @@ namespace
     {
         return {
             {"schema", "greyhound-cli-capabilities-v1"},
-            {"commands", {"assets capabilities", "assets list", "assets export", "superterrain"}},
+            {"commands", {"assets capabilities", "assets list", "assets export", "superterrain", "placements"}},
+            {"placement_command", {
+                {"syntax", "placements [--name-db bundled|echo000] [--non-static|--static-only] [--verify] [--organize]"},
+                {"games", {"black_ops_cw", "black_ops_4"}},
+                {"cw_only_options", {"--non-static", "--verify", "--organize"}},
+                {"organization", "opt_in; categorized_in_place; requires_non_static"},
+                {"output_mode", "human"}, {"exports_meshes", false}
+            }},
             {"output_modes", {"human", "json", "jsonl"}},
             {"source_research", {
                 {"mode", "source_data_only"}, {"new_session_per_export", true}, {"preview_mesh", false},
@@ -541,18 +591,35 @@ namespace
             "  Greyhound-cli.exe assets capabilities [--json|--jsonl]\r\n"
             "  Greyhound-cli.exe assets list [--type TYPE] [--name EXACT] [--glob PATTERN] [--limit N] [--json|--jsonl]\r\n"
             "  Greyhound-cli.exe assets export --type TYPE (--name EXACT|--glob PATTERN|--all) [options]\r\n\r\n"
+            "  Greyhound-cli.exe placements [--name-db bundled|echo000]\r\n"
+            "      CW options: --non-static | --static-only; --verify; --organize\r\n"
+            "      --verify and --organize enable non-static capture. Organization is in place.\r\n"
+            "      This command writes placement JSON, not model meshes.\r\n\r\n"
             "Formats (repeat model/animation options to emit more than one):\r\n"
             "  --model-format semodel|gltf|glb|obj|smd|ma|xna|xmodel-export|xmodel-bin|cast\r\n"
-            "  --model-batch-root PATH (Cold War CAST only; flat models/materials/images)\r\n"
+            "  --model-batch-root PATH (CW / BO4 CAST; model-name folders with _images and _mat_info)\r\n"
             "  --animation-format seanim|xanim-v17|xanim-v19|cast\r\n"
             "  --image-format png|dds|tga|tiff   --sound-format wav|flac\r\n\r\n"
             "Controls:\r\n"
             "  --dry-run --limit N --overwrite|--skip-existing --all-lods|--largest-lod\r\n"
             "  --cw-probe (one-hop prefixes) --cw-deep-probe (bounded two-hop evidence graph)\r\n"
             "  --cw-splines (capture spline inputs; no deformed meshes)\r\n"
+            "  --cw-collision-code-probe (dump the collision reader code span instead of\r\n"
+            "      the pool evidence; pinned to the measured CW build)\r\n"
             "  --cw-skip-entities | --cw-skip-placements | --cw-skip-collision (omit typed sections)\r\n"
             "  --cw-radiant-brushes (verified CW brush prefab .map + metadata; bundled runtime)\r\n"
+            "  --cw-skip-radiant-types | --cw-skip-radiant-volumes (omit automatic BO3 types / trigger JSON)\r\n"
+            "  --cw-float-triangles --cw-model-triangles (captured collision surfaces beside the brushes)\r\n"
             "  --cw-map-data (supported map records and collision payloads with readback)\r\n"
+            "  --cw-non-static-placements (entity-class model placements and per-class JSON)\r\n"
+            "  --cw-proxy-filter (drop building proxies duplicating captured detail models)\r\n"
+            "  --cw-organize-placements (categorize the finished run in place; implies non-static)\r\n"
+            "  --cw-verify-placements (audit the finished run against its captured bytes;\r\n"
+            "      implies non-static; a discrepancy is reported, the export is kept)\r\n"
+            "  --bo4-name-database bundled|echo000\r\n"
+            "  --bo4-capture-mode 0-7 (BO4 terrain Export: 0 terrain probe, 1 world pools,\r\n"
+            "      2 model collision, 3 model physics, 4 placements, 5 Radiant brushes,\r\n"
+            "      6 collision handlers, 7 surface-flag declarations)\r\n"
             "  --hitbox --vertex-colors --model-images|--no-model-images --image-names\r\n"
             "  --material-folders|--flat-materials --global-images|--local-images\r\n"
             "  --patch-normals|--no-patch-normals --patch-color|--no-patch-color\r\n"
@@ -570,6 +637,17 @@ namespace
             {"cw_capture_entities", Options.CWCaptureEntities},
             {"cw_capture_placements", Options.CWCapturePlacements},
             {"cw_capture_collision", Options.CWCaptureCollision},
+            {"cw_non_static_placements", Options.CWNonStaticPlacements},
+            {"cw_radiant_types", Options.CWRadiantTypes},
+            {"cw_radiant_volumes", Options.CWRadiantVolumes},
+            {"cw_proxy_filter", Options.CWProxyFilter},
+            {"cw_organize_placements", Options.CWOrganizePlacements},
+            {"cw_verify_placements", Options.CWVerifyPlacements},
+            {"cw_collision_code_probe", Options.CWCollisionCodeProbe},
+            {"cw_float_triangles", Options.CWFloatTriangles},
+            {"cw_model_triangles", Options.CWModelTriangles},
+            {"bo4_name_database", Options.BO4NameDatabase},
+            {"bo4_capture_mode", Options.BO4CaptureMode},
             {"limit", Options.Limit == 0 ? json(nullptr) : json(Options.Limit)},
             {"model_formats", Options.ModelFormats},
             {"animation_formats", Options.AnimationFormats},
@@ -891,6 +969,17 @@ int AssetCli::Run(int argc, char** argv)
     SetBool("cwcaptureplacements", Options.CWCapturePlacements);
     SetBool("cwcapturecollision", Options.CWCaptureCollision);
     SetBool("cwcapturesplines", Options.CWCaptureSplines);
+    SetBool("cwcollisioncodeprobe", Options.CWCollisionCodeProbe);
+    SetBool("cwnonstaticplacements", Options.CWNonStaticPlacements);
+    SetBool("cwradianttypes", Options.CWRadiantTypes);
+    SetBool("cwradiantvolumes", Options.CWRadiantVolumes);
+    SetBool("cwproxyfilter", Options.CWProxyFilter);
+    SetBool("cworganizeplacements", Options.CWOrganizePlacements);
+    SetBool("cwverifyplacements", Options.CWVerifyPlacements);
+    SetBool("cwfloattriangles", Options.CWFloatTriangles);
+    SetBool("cwmodeltriangles", Options.CWModelTriangles);
+    SettingsManager::SetSetting("bo4namedatabase", Options.BO4NameDatabase);
+    SettingsManager::SetSetting("bo4capturemode", Options.BO4CaptureMode);
 
     Diagnostic("attaching to a supported game");
     const auto Found = CoDAssets::BeginGameMode();

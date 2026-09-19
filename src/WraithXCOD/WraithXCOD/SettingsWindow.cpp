@@ -20,6 +20,9 @@
 #include "Strings.h"
 
 BEGIN_MESSAGE_MAP(SettingsWindow, WraithWindow)
+    ON_COMMAND(IDC_DEV_BO4_RUN, OnRunBO4Diagnostic)
+    ON_COMMAND(IDC_DEV_VERIFY_RUNTIME, OnVerifyRuntime)
+    ON_COMMAND(IDC_DEV_VERIFY_EXPORT, OnVerifyExport)
     ON_COMMAND(IDC_EXPORT_PLACEMENTS, OnExportPlacements)
     ON_COMMAND(IDC_EXPORT_JSON_MODELS, OnExportJsonModels)
     ON_COMMAND(IDC_EXPORT_BRUSHES, OnExportBrushes)
@@ -287,3 +290,8 @@ void SettingsWindow::OnSize(UINT nType, int cx, int cy)
 void SettingsWindow::OnExportPlacements() { EndDialog(IDC_EXPORT_PLACEMENTS); }
 void SettingsWindow::OnExportJsonModels() { EndDialog(IDC_EXPORT_JSON_MODELS); }
 void SettingsWindow::OnExportBrushes() { EndDialog(IDC_EXPORT_BRUSHES); }
+
+void SettingsWindow::OnRunBO4Diagnostic() { EndDialog(IDC_DEV_BO4_RUN); }
+void SettingsWindow::OnVerifyRuntime() { EndDialog(IDC_DEV_VERIFY_RUNTIME); }
+
+void SettingsWindow::OnVerifyExport() { EndDialog(IDC_DEV_VERIFY_EXPORT); }

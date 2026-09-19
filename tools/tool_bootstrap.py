@@ -1,4 +1,4 @@
-"""Make Greyhound's small source-capture helper tree importable."""
+"""Resolve the same game-organized tool tree in source and packaged runtimes."""
 
 from __future__ import annotations
 
@@ -6,12 +6,19 @@ import pathlib
 import sys
 
 
-CATEGORIES = ("core", "capture")
+CATEGORIES = (
+    "shared/core", "shared/capture", "shared/brushes", "shared/runtime",
+    "shared/name_db", "black_ops_3/reference",
+    "cold_war/capture", "cold_war/placements", "cold_war/brushes", "cold_war/research",
+    "black_ops_4/capture", "black_ops_4/placements", "black_ops_4/brushes", "black_ops_4/research",
+)
 
 
 def tool_root(file_name) -> pathlib.Path:
-    directory = pathlib.Path(file_name).resolve().parent
-    return directory.parent if directory.name in CATEGORIES else directory
+    for directory in pathlib.Path(file_name).resolve().parents:
+        if (directory / "tool_bootstrap.py").is_file():
+            return directory
+    raise FileNotFoundError("Cannot locate Greyhound's tool_bootstrap.py")
 
 
 def activate(file_name) -> pathlib.Path:

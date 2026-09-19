@@ -107,6 +107,9 @@ private:
     void OnExportJsonModels();
     void OnExportPlacements();
     void OnExportBrushes();
+    void OnRunBO4Diagnostic();
+    void OnVerifyRuntime();
+    void OnVerifyExport();
     void OnSupport();
     void OnLoadFile();
     void OnExportSelected();

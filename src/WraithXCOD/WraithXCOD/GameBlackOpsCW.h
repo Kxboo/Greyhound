@@ -23,6 +23,7 @@ public:
     // -- Game Name Caches
     static WraithNameIndex AssetNameCache;
     static WraithNameIndex StringCache;
+    static std::string ActiveNameDatabase;
 
     // -- Game functions
 
@@ -70,7 +71,9 @@ public:
         const std::function<void(uint32_t)>& ReportProgress);
 
     static bool ExportResearchPool(const CoDRawFile_t* Asset, const std::string& ExportPath, bool Radiant = false, const std::function<void(uint32_t, const std::string&)>& Progress = {});
-    static std::string ExportRadiantBrushes(const std::string& Directory, const std::function<void(uint32_t, const std::string&)>& Progress);
+    // The destination is chosen by the export itself; it depends on the map hash,
+    // which only the capture can supply.
+    static std::string ExportRadiantBrushes(const std::function<void(uint32_t, const std::string&)>& Progress);
 
     // Reads an XAnim from Black Ops CW
     static std::unique_ptr<XAnim_t> ReadXAnim(const CoDAnim_t* Animation);

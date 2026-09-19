@@ -3,8 +3,11 @@
 ## Kxboo terrain fork
 
 This fork adds Black Ops Cold War `TerrainGfx` discovery and exports complete,
-portable source captures. Greyhound does not reconstruct terrain, bake OMPV,
-or generate BO3 maps. Reconstruction lives in a private repo for now.
+portable source captures, CW/BO4 model placements and supported Radiant brush exports.
+Terrain reconstruction and OMPV baking remain external.
+
+Start with the [documentation and CLI guide](docs/README.md), then the
+[contribution and AI-assistance walkthrough](docs/contributing.md).
 
 The interchange boundary is the sealed terrain export: native arrays and
 dependencies under `_source/capture/` plus `_source/research_capture.report.json`.
@@ -61,13 +64,13 @@ Please also see [Contributors](https://github.com/Scobalula/Greyhound/graphs/con
 
 In-Game Settings exposes 27 Cold War research pools across collision/clips, map
 worlds, navigation, effects, entities/dynamic models, triggers and AI/animation
-tables. An optional bounded one-hop probe saves unverified referenced prefixes. See [pool research and capture limits](docs/CW_ASSET_POOL_RESEARCH.md).
+tables. An optional bounded one-hop probe saves unverified referenced prefixes. See [pool research and capture limits](docs/capture-research.md).
 These exports preserve evidence for future decoding; they are not reconstructed BO3 assets.
 
 
 ### Resume a Cold War CAST batch
 
-In **Settings > CW Map Export > Export Models from JSON**, select `static_models.json` inside the existing `models_from_json_*` export folder. Choose **Yes** to resume there, **No** for a new export, or **Cancel** to leave it untouched. Keep the original export settings when continuing an interrupted batch.
+In **Settings > Map & Model Export > Models from JSON**, select `static_models.json` inside the existing model batch folder. Choose **Yes** to resume there, **No** for a new export, or **Cancel** to leave it untouched. Keep the original export settings when continuing an interrupted batch. For a new batch from organized placements, select `models/static.json` or `models/non_static.json`; see the [model export guide](docs/models.md).
 
 Resume checks recorded model identities and CAST file lengths, then skips completed models before loading their geometry or textures. Failed or unfinished models are retried. Older single-LOD batches can resume from their existing CAST files without a checkpoint. All-LOD completion uses checkpoints rather than assuming that one LOD means the whole model finished. Truncated CAST files are rewritten.
 

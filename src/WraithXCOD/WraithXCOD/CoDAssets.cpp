@@ -1,5 +1,4 @@
 #include "stdafx.h"
-#include "FlatMaterialExport.h"
 #include "spdlog/spdlog.h"
 
 // The class we are implementing
@@ -242,7 +241,7 @@ namespace
         // Greyhound owns source acquisition only. Put the native files beneath
         // capture/ without interpreting or rebuilding them; the independent
         // reconstruction tool consumes this directory after Greyhound exits.
-        if (RunTerrainPython("organize_export.py", { SourcePath }) != 0)
+        if (RunTerrainPython("shared/capture/organize_export.py", { SourcePath }) != 0)
         {
             CoDAssets::Log->error("Could not organize the terrain capture at {0}", SourcePath);
             return false;
@@ -253,9 +252,20 @@ namespace
             ReportProgress(42);
 
         const auto Progress = FileSystems::CombinePath(LogPath, "source_capture.progress");
-        return RunTerrainPython("capture/finalize_research_capture.py",
+        return RunTerrainPython("shared/capture/finalize_research_capture.py",
             { SourcePath, "--progress-file", Progress }, Progress, ReportProgress) == 0;
     }
+}
+
+int CoDAssets::RunCaptureScript(const std::string& ScriptName,
+    const std::vector<std::string>& ScriptArguments,
+    const std::string& LogDirectory)
+{
+    // RunTerrainProcess derives the log path from the progress file's directory,
+    // so name a progress file inside LogDirectory purely to place the log.
+    return RunTerrainPython(ScriptName, ScriptArguments, LogDirectory.empty()
+        ? std::string()
+        : FileSystems::CombinePath(LogDirectory, "capture_script.progress"));
 }
 
 // We need the game cache functions
@@ -1295,8 +1305,13 @@ ExportGameResult CoDAssets::ExportAsset(const CoDAsset_t* Asset,
 
     // Terrain export ends by organizing and sealing immutable source data.
     // Reconstruction is a separate program and is never launched by Greyhound.
+    // Cold War only: the finalizer calls GameBlackOpsCW::ExportTerrainDecals,
+    // which walks CW pool offsets, and the Python stages expect the CW capture
+    // layout.  Running either against a Black Ops 4 process would read the
+    // wrong memory.  The BO4 probe writes its own two files and needs neither.
     if (Result == ExportGameResult::Success &&
         Asset->AssetType == WraithAssetType::Terrain &&
+        CoDAssets::GameID == SupportedGames::BlackOpsCW &&
         !FinishTerrainExport(TerrainSourcePath, TerrainLogPath,
             ReportProgress))
     {
@@ -1570,35 +1585,53 @@ bool CoDAssets::LocateGameInfo()
     return false;
 }
 
+std::string CoDAssets::GameFolderName()
+{
+    switch (GameID)
+    {
+    case SupportedGames::QuantumSolace: return "quantum_solace";
+    case SupportedGames::WorldAtWar: return "world_at_war";
+    case SupportedGames::BlackOps: return "black_ops_1";
+    case SupportedGames::BlackOps2: return "black_ops_2";
+    case SupportedGames::BlackOps3: return "black_ops_3";
+    case SupportedGames::BlackOps4: return "black_ops_4";
+    case SupportedGames::BlackOpsCW: return "black_ops_cw";
+    case SupportedGames::ModernWarfare: return "modern_warfare";
+    case SupportedGames::ModernWarfare2: return "modern_warfare_2";
+    case SupportedGames::ModernWarfare3: return "modern_warfare_3";
+    case SupportedGames::ModernWarfare4: return "modern_warfare_4";
+    case SupportedGames::ModernWarfare5: return "modern_warfare_5";
+    case SupportedGames::ModernWarfare6: return "modern_warfare_6";
+    case SupportedGames::Ghosts: return "ghosts";
+    case SupportedGames::AdvancedWarfare: return "advanced_warfare";
+    case SupportedGames::ModernWarfareRemastered: return "modern_warfare_rm";
+    case SupportedGames::ModernWarfare2Remastered: return "modern_warfare_2_rm";
+    case SupportedGames::InfiniteWarfare: return "infinite_warfare";
+    case SupportedGames::WorldWar2: return "world_war_2";
+    case SupportedGames::Vanguard: return "vanguard";
+    }
+    return {};
+}
+
+// Map-level exports (brushes, placements, models from JSON) have no asset to key
+// off, but must still land beside the game's other exports rather than loose in
+// exported_files. They share the game folder table above.
+std::string CoDAssets::BuildMapExportPath(const std::string& Category)
+{
+    const auto Game = GameFolderName();
+    if (Game.empty()) return {};
+    return FileSystems::CombinePath(FileSystems::CombinePath(
+        FileSystems::CombinePath(FileSystems::GetApplicationPath(), "exported_files"), Game), Category);
+}
+
 std::string CoDAssets::BuildExportPath(const CoDAsset_t* Asset)
 {
     // Build the export path
     auto ApplicationPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "exported_files");
 
     // Append the game directory
-    switch (GameID)
-    {
-    case SupportedGames::QuantumSolace: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "quantum_solace"); break;
-    case SupportedGames::WorldAtWar: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "world_at_war"); break;
-    case SupportedGames::BlackOps: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "black_ops_1"); break;
-    case SupportedGames::BlackOps2: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "black_ops_2"); break;
-    case SupportedGames::BlackOps3: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "black_ops_3"); break;
-    case SupportedGames::BlackOps4: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "black_ops_4"); break;
-    case SupportedGames::BlackOpsCW: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "black_ops_cw"); break;
-    case SupportedGames::ModernWarfare: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare"); break;
-    case SupportedGames::ModernWarfare2: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_2"); break;
-    case SupportedGames::ModernWarfare3: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_3"); break;
-    case SupportedGames::ModernWarfare4: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_4"); break;
-    case SupportedGames::ModernWarfare5: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_5"); break;
-    case SupportedGames::ModernWarfare6: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_6"); break;
-    case SupportedGames::Ghosts: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "ghosts"); break;
-    case SupportedGames::AdvancedWarfare: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "advanced_warfare"); break;
-    case SupportedGames::ModernWarfareRemastered: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_rm"); break;
-    case SupportedGames::ModernWarfare2Remastered: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "modern_warfare_2_rm"); break;
-    case SupportedGames::InfiniteWarfare: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "infinite_warfare"); break;
-    case SupportedGames::WorldWar2: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "world_war_2"); break;
-    case SupportedGames::Vanguard: ApplicationPath = FileSystems::CombinePath(ApplicationPath, "vanguard"); break;
-    }
+    const auto GameFolder = GameFolderName();
+    if (!GameFolder.empty()) ApplicationPath = FileSystems::CombinePath(ApplicationPath, GameFolder);
 
     // Append the asset type folder (Some assets have specific folder names)
     switch (Asset->AssetType)
@@ -1850,16 +1883,16 @@ bool CoDAssets::ShouldExportModel(std::string ExportPath)
 
 ExportGameResult CoDAssets::ExportJsonBatchModel(const CoDModel_t* Model, const std::string& Root)
 {
-    if (GameID != SupportedGames::BlackOpsCW) throw std::runtime_error("JSON batch layout supports Cold War only");
+    if (GameID != SupportedGames::BlackOpsCW && GameID != SupportedGames::BlackOps4) throw std::runtime_error("JSON batch layout supports Cold War and BO4");
     if (Root.empty()) throw std::runtime_error("Missing JSON batch output directory");
-    const auto Models = FileSystems::CombinePath(Root, "models");
-    const auto Images = FileSystems::CombinePath(Root, "images");
-    const auto Materials = FileSystems::CombinePath(Root, "materials");
+    const auto Models = FileSystems::CombinePath(Root, ModelFileName(Model->AssetName));
+    const auto Images = FileSystems::CombinePath(Models, "_images");
+    const auto Materials = FileSystems::CombinePath(Models, "_mat_info");
     FileSystems::CreateDirectory(Models);
     FileSystems::CreateDirectory(Images);
     FileSystems::CreateDirectory(Materials);
     LatestExportPath = Root;
-    return ExportModelAsset(Model, Models, Images, "../images/",
+    return ExportModelAsset(Model, Models, Images, "_images/",
         "." + Strings::ToLower(SettingsManager::GetSetting("exportimg", "PNG")), Root);
 }
 
@@ -1878,13 +1911,13 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
             std::ifstream Input(Path); if (Input) Input >> Identities;
             auto Key = Strings::ToLower(ModelFileName(Model->AssetName));
             if (Identities.contains(Key) && Identities[Key].get<std::string>() != Model->AssetName)
-                throw std::runtime_error("Flat model name collision: " + ModelFileName(Model->AssetName));
+                throw std::runtime_error("Model folder name collision: " + ModelFileName(Model->AssetName));
             if (!Identities.contains(Key))
             {
                 const auto Stem = ModelFileName(Model->AssetName);
                 if (!FileSystems::GetFiles(ExportPath, Stem + ".*").empty() ||
                     !FileSystems::GetFiles(ExportPath, Stem + "_LOD*").empty())
-                    throw std::runtime_error("Existing flat model files have no recorded identity: " + Stem);
+                    throw std::runtime_error("Existing model files have no recorded identity: " + Stem);
                 Identities[Key] = Model->AssetName;
                 std::ofstream Output(Path, std::ios::binary); Output << Identities.dump(2); Output.close();
                 if (!Output) throw std::runtime_error("Could not save batch model identities");
@@ -1922,12 +1955,14 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
     // Check setting
     auto ImageSetting = SettingsManager::GetSetting("exportimg", "PNG");
     // Check if we even need images
-    auto ExportImages = SettingsManager::GetSetting("exportmodelimg") == "true";
+    auto ExportImages = !BatchRoot.empty() || SettingsManager::GetSetting("exportmodelimg") == "true";
     // Check if we want image names
-    auto ExportImageNames = SettingsManager::GetSetting("exportimgnames") == "true";
+    auto ExportImageNames = !BatchRoot.empty() || SettingsManager::GetSetting("exportimgnames") == "true";
     // Check if we want material folders
-    auto ExportMaterialFolders = BatchRoot.empty() && SettingsManager::GetSetting("mdlmtlfolders") == "true";
-    const auto MaterialsPath = BatchRoot.empty() ? std::string() : FileSystems::CombinePath(BatchRoot, "materials");
+    auto ExportMaterialFolders = !BatchRoot.empty() || SettingsManager::GetSetting("mdlmtlfolders") == "true";
+    const auto MaterialsPath = BatchRoot.empty() ? std::string() : FileSystems::CombinePath(ExportPath, "_mat_info");
+    // Material metadata sits next to "_images", wherever that landed.
+    const auto MaterialInfoPath = FileSystems::CombinePath(FileSystems::GetDirectoryName(ImagesPath), "_mat_info");
 
 
     // Only create if Model Images are enabled
@@ -1974,26 +2009,12 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
             // Iterate over all materials for the lod
             for (auto& Material : LOD.Materials)
             {
-                bool NewBatchMaterial = false;
                 if (!BatchRoot.empty())
                 {
-                    const auto OriginalMaterial = Material.MaterialName;
-                    Material.MaterialName = ModelExportNaming::Escape(Material.MaterialName);
-                    nlohmann::json Bindings = nlohmann::json::array(), Parameters = nlohmann::json::array();
-                    for (auto& Image : Material.Images)
-                    {
-                        const auto SourceName = Image.ImageName;
-                        Image.ImageName = ModelExportNaming::Escape(Image.ImageName);
-                        Bindings.push_back({{"Name",Image.ImageName},{"SourceName",SourceName},
-                            {"File","../images/" + Image.ImageName + ImageExtension}, {"SemanticHash",Image.SemanticHash}});
-                    }
-                    for (const auto& Setting : Material.Settings)
-                        Parameters.push_back({{"Name",Setting.Name},{"Type",Setting.Type},
-                            {"Value",{Setting.Data[0],Setting.Data[1],Setting.Data[2],Setting.Data[3]}}});
-                    const nlohmann::json Description = {{"Name",Material.MaterialName},{"SourceName",OriginalMaterial},
-                        {"Techset",Material.TechsetName},{"SurfaceType",Material.SurfaceTypeName},{"Images",Bindings},{"Settings",Parameters}};
-                    // One exported material per name; keep the first description.
-                    Material.MaterialName = FlatMaterialExport::Save(MaterialsPath, Description, &NewBatchMaterial);
+                    if (Material.MaterialSourceName.empty()) Material.MaterialSourceName=Material.MaterialName;
+                    Material.MaterialName=ModelExportNaming::Escape(Material.MaterialName);
+                    for (auto& Image:Material.Images)
+                        Image.ImageName=ModelExportNaming::Escape(Image.ImageName);
                 }
                 auto CompleteImagesPath = ImagesPath;
                 auto CompleteImageRelativePath = ImageRelativePath;
@@ -2003,19 +2024,24 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
                 {
                     // Create a new Folder
                     CompleteImagesPath = FileSystems::CombinePath(ImagesPath, Material.MaterialName);
-                    CompleteImageRelativePath = FileSystems::CombinePath(ImageRelativePath, Material.MaterialName) + "\\\\";
+                    CompleteImageRelativePath = BatchRoot.empty()
+                        ? FileSystems::CombinePath(ImageRelativePath, Material.MaterialName) + "\\\\"
+                        : ImageRelativePath + Material.MaterialName + "/";
                     // Create if not exists
                     if (ExportImages || ExportImageNames)
                         FileSystems::CreateDirectory(CompleteImagesPath);
                 }
 
                 // Export image names if needed
-                if (ExportImageNames && (BatchRoot.empty() || NewBatchMaterial))
+                if (ExportImageNames)
                 {
                     // Process Image Names
-                    // Keep parameter/settings files beside this material's textures,
-                    // including metadata-only exports. Flat exports retain the model folder.
-                    ExportMaterialImageNames(Material, !BatchRoot.empty() ? MaterialsPath : (ExportMaterialFolders ? CompleteImagesPath : ExportPath));
+                    // Material metadata collects in its own folder beside the
+                    // textures, never mixed in with them. Each JSON batch model
+                    // owns its material text files.
+                    const auto MetadataPath = BatchRoot.empty() ? MaterialInfoPath : MaterialsPath;
+                    FileSystems::CreateDirectory(MetadataPath);
+                    ExportMaterialImageNames(Material, MetadataPath);
                 }
                 if (ExportImages)
                 {
@@ -2387,11 +2413,27 @@ ExportGameResult CoDAssets::ExportRawfileAsset(const CoDRawFile_t* Rawfile, cons
 ExportGameResult CoDAssets::ExportTerrainAsset(const CoDTerrain_t* Terrain, const std::string& ExportPath,
     const std::function<void(uint32_t)>& ReportProgress)
 {
-    if (CoDAssets::GameID != SupportedGames::BlackOpsCW ||
-        CoDAssets::GameInstance == nullptr ||
+    if (CoDAssets::GameInstance == nullptr ||
         Terrain->AssetPointer == 0 ||
         Terrain->AssetSize <= 0 ||
         Terrain->AssetSize > UINT32_MAX)
+    {
+        return ExportGameResult::UnknownError;
+    }
+
+    // Black Ops 4 is the only other game that has a terraingfx pool, and no
+    // BO4 TerrainGfx structure has been reversed.  It gets the probe rather
+    // than this capture path: the Cold War offsets below are measured against
+    // a BOCW build and must not be replayed against a BO4 header as if they
+    // were known.  Scoring one against the other is done offline.
+    if (CoDAssets::GameID == SupportedGames::BlackOps4)
+    {
+        return GameBlackOps4::ExportTerrainProbe(Terrain, ExportPath, ReportProgress)
+            ? ExportGameResult::Success
+            : ExportGameResult::UnknownError;
+    }
+
+    if (CoDAssets::GameID != SupportedGames::BlackOpsCW)
     {
         return ExportGameResult::UnknownError;
     }
@@ -6158,58 +6200,53 @@ void CoDAssets::ExportMaterialImageNames(const XMaterial_t& Material, const std:
     // Try write the image name
     try
     {
-        // Image Names Output
-        TextWriter ImageNames;
+        // One file per material, named after the material, matching the layout
+        // other Cold War extractors write into "_mat_info". Binary mode keeps
+        // the line endings they use, rather than translating to CRLF.
+        std::ofstream Info(FileSystems::CombinePath(ExportPath, Material.MaterialName + ".txt"), std::ios::binary);
 
-        // Get File Name
-        auto ImageNamesPath = FileSystems::CombinePath(ExportPath, Material.MaterialName + "_images.txt");
+        // The full game path when the name database resolved one, otherwise the
+        // generated name that also names this file.
+        Info << "Name: " << (Material.MaterialSourceName.empty() ?
+            Material.MaterialName : Material.MaterialSourceName) << "\n\n";
 
-        // Create File
-        ImageNames.Create(ImageNamesPath);
-        // Write header
-        //ImageNames.WriteLineFmt("# Material: %s", Material.MaterialName.c_str());
-        //ImageNames.WriteLineFmt("# Techset/Type: %s", Material.TechsetName.c_str());
-        ImageNames.WriteLine("semantic,image_name");
+        // Greyhound prefixes generated techset names with "x"; the hash beneath
+        // it is what identifies the techset, so report it unprefixed.
+        auto Techset = Material.TechsetName;
+        if (Techset.compare(0, 9, "xtechset_") == 0)
+            Techset.erase(0, 1);
+        Info << "Techset: " << Techset << "\n\n";
+
+        Info << "semantic,image_name\n";
         // Write each name
         for (auto& Image : Material.Images)
         {
             if (SemanticHashes.find(Image.SemanticHash) != SemanticHashes.end())
             {
-                ImageNames.WriteLineFmt("%s,%s", SemanticHashes[Image.SemanticHash].c_str(), Image.ImageName.c_str());
+                Info << SemanticHashes[Image.SemanticHash] << "," << Image.ImageName << "\n";
             }
             else
             {
-                ImageNames.WriteLineFmt("unk_semantic_0x%X,%s", Image.SemanticHash, Image.ImageName.c_str());
+                Info << Strings::Format("unk_semantic_0x%X", Image.SemanticHash) << "," << Image.ImageName << "\n";
             }
         }
 
-        // Check if we have settings
+        // Captured shader constants have no counterpart in that layout, so they
+        // follow the image table instead of being dropped.
         if (Material.Settings.size() > 0)
         {
-            // Image Names Output
-            TextWriter Settings;
-
-            // Get File Name
-            auto SettingsPath = FileSystems::CombinePath(ExportPath, Material.MaterialName + "_settings.txt");
-
-            // Create File
-            Settings.Create(SettingsPath);
-
-            // Write header
-            Settings.WriteLineFmt("# Material: %s", Material.MaterialName.c_str());
-            Settings.WriteLineFmt("# Techset/Type: %s", Material.TechsetName.c_str());
-            Settings.WriteLine("name,type,x,y,z,w");
+            Info << "\nname,type,x,y,z,w\n";
 
             // Write each name
             for (auto& Setting : Material.Settings)
             {
-                Settings.WriteLineFmt("%s,%s,%f,%f,%f,%f",
+                Info << Strings::Format("%s,%s,%f,%f,%f,%f",
                     Setting.Name.c_str(),
                     Setting.Type.c_str(),
                     Setting.Data[0],
                     Setting.Data[1],
                     Setting.Data[2],
-                    Setting.Data[3]);
+                    Setting.Data[3]) << "\n";
             }
         }
     }
@@ -6480,7 +6517,10 @@ void CoDAssets::ExportSelectedAssets(void* Caller, const std::unique_ptr<std::ve
                         (100ull * (AssetToConvert + 1)) / AssetsToConvert);
                     Result = CoDAssets::ExportAsset(Asset, Caller, ProgressStart,
                         ProgressEnd - ProgressStart);
-                    CoDAssets::Log->info("Successfully exported: {0}", Asset->AssetName);
+                    if (Result == ExportGameResult::Success)
+                        CoDAssets::Log->info("Successfully exported: {0}", Asset->AssetName);
+                    else
+                        CoDAssets::Log->error("Export failed: {0}", Asset->AssetName);
                 }
                 catch (std::exception& ex)
                 {

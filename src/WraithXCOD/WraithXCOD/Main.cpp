@@ -29,6 +29,8 @@
 #include "AssetCli.h"
 #include "CoDAssets.h"
 #include "GameBlackOpsCW.h"
+#include "GameBlackOps4.h"
+#include "ExportRun.h"
 #include "FileSystems.h"
 #include "json.hpp"
 #include <set>
@@ -202,6 +204,7 @@ namespace
             FileSystems::GetApplicationPath(), "superterrain_cli.log");
         fopen_s(&CliLogFile, LogPath.c_str(), "w");
 
+        const bool Placements = strcmp(argv[1], "placements") == 0;
         std::string Match;
         bool ListOnly = false;
         bool ListPools = false;
@@ -214,8 +217,25 @@ namespace
 
         for (int i = 2; i < argc; i++)
         {
-            if (strcmp(argv[i], "--list") == 0)
+            if (strcmp(argv[i], "--name-db") == 0 && i+1<argc) {
+                const std::string Provider=argv[++i];
+                if (Provider!="bundled" && Provider!="echo000") { CliPrint("--name-db expects bundled or echo000"); return 1; }
+                SettingsManager::SetSetting("bo4namedatabase",Provider);
+            }
+            else if (strcmp(argv[i], "--list") == 0)
                 ListOnly = true;
+            else if (strcmp(argv[i], "--non-static") == 0)
+                SettingsManager::SetSetting("cwnonstaticplacements", "true");
+            else if (strcmp(argv[i], "--static-only") == 0)
+                SettingsManager::SetSetting("cwnonstaticplacements", "false");
+            else if (Placements && strcmp(argv[i], "--organize") == 0) {
+                SettingsManager::SetSetting("cworganizeplacements", "true");
+                SettingsManager::SetSetting("cwnonstaticplacements", "true");
+            }
+            else if (Placements && strcmp(argv[i], "--verify") == 0) {
+                SettingsManager::SetSetting("cwverifyplacements", "true");
+                SettingsManager::SetSetting("cwnonstaticplacements", "true");
+            }
             else if (strcmp(argv[i], "--list-pools") == 0)
                 ListPools = true;
             else if (strcmp(argv[i], "--pool-limit") == 0 && i + 1 < argc)
@@ -240,7 +260,7 @@ namespace
         }
 
         // There is one terrain export mode: a complete source capture.
-        CliPrint("mode: full source data only; reconstruction is external");
+        CliPrint(Placements ? "mode: static model placements" : "mode: full source data only; reconstruction is external");
 
         if (PoolLimit > 0xDC || PeekBytes == 0 || PeekBytes > 16u * 1024u * 1024u ||
             std::any_of(DumpPools.begin(), DumpPools.end(), [](uint32_t P) { return P > 0xDC; }))
@@ -254,6 +274,26 @@ namespace
         {
             CliPrint("attach failed: %s", FindGameResultText(Found));
             return 2;
+        }
+
+        if (CoDAssets::GameID==SupportedGames::BlackOps4)
+            CliPrint("BO4 name database: %s (%zu names)",GameBlackOps4::ActiveNameDatabase.c_str(),GameBlackOps4::AssetNameCache.NameDatabase.size());
+        if (CoDAssets::GameID==SupportedGames::BlackOpsCW)
+            CliPrint("CW name database: %s (%zu names)",GameBlackOpsCW::ActiveNameDatabase.c_str(),GameBlackOpsCW::AssetNameCache.NameDatabase.size());
+        if (Placements)
+        {
+            const auto Directory=ExportRun::Reserve("placements","run");
+            if (Directory.empty()) { CoDAssets::CleanUpGame(); return 4; }
+            std::string Status;
+            try {
+                const auto Progress=[](uint32_t) {};
+                Status=CoDAssets::GameID==SupportedGames::BlackOps4
+                    ? GameBlackOps4::ExportModelPlacements(Directory,Progress)
+                    : GameBlackOpsCW::ExportModelPlacements(Directory,Progress);
+            } catch (const std::exception& E) { Status=std::string("Placement export failed: ")+E.what(); }
+            CliPrint("%s",Status.c_str()); CliPrint("output: %s",Directory.c_str());
+            const bool Okay=Status.find("Complete")==0 || Status.find("Static export: ")==0;
+            CoDAssets::CleanUpGame(); return Okay ? 0 : 4;
         }
 
         std::vector<CoDAsset_t*> Terrains;
@@ -481,7 +521,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
         char** argv = __argv;
 #endif
         const bool HeadlessCommand = argc > 1 &&
-            (strcmp(argv[1], "superterrain") == 0 || strcmp(argv[1], "assets") == 0);
+            (strcmp(argv[1], "superterrain") == 0 || strcmp(argv[1], "assets") == 0 || strcmp(argv[1], "placements") == 0);
         const std::map<std::string, std::string> DefaultSettings = {
             { "exportimg", "PNG" },
             { "exportsnd", "WAV" },
@@ -548,7 +588,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
         }
 
         // Headless research export: no window, no update check, no message pump.
-        if (argc > 1 && strcmp(argv[1], "superterrain") == 0)
+        if (argc > 1 && (strcmp(argv[1], "superterrain") == 0 || strcmp(argv[1], "placements") == 0))
         {
             if (!WraithX::InitializeAPI(true))
             {

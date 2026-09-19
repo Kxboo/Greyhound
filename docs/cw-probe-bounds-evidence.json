@@ -1,0 +1,81 @@
+{
+  "schema": "cw-probe-influence-bounds-evidence-v1",
+  "map": "zm_silver",
+  "process_id": 9388,
+  "module_base": "0x7FF73F9C0000",
+  "source_export": "C:\\SuperTerrain\\repos\\Greyhound\\src\\WraithXCOD\\x64\\Release\\exported_files\\black_ops_cw\\placements\\run_06",
+  "audit": "validation.json",
+  "reader": "src/WraithXCOD/WraithXCOD/CWProbeBounds.h",
+  "descriptor": {
+    "bytes": 88,
+    "bounds_pointer": 24,
+    "bounds_count_u32": 84,
+    "probe_pointer": 16,
+    "probe_count_u32": 0
+  },
+  "probe": {
+    "bytes": 376,
+    "first_volume_u16": 88,
+    "volume_count_u16": 90,
+    "capture_origin": 92,
+    "guid_u32": 328
+  },
+  "volume": {
+    "bytes": 604,
+    "origin": 0,
+    "axes": 12,
+    "size_min": 48,
+    "size_max": 60,
+    "blend_mins": 72,
+    "blend_maxs": 84,
+    "plane_count_u32": 96,
+    "planes": 100,
+    "outer_center": 580,
+    "subtract_byte": 600
+  },
+  "consumer_evidence": [
+    {
+      "file": "C:\\SuperTerrain\\research\\cw-placement-mapping\\probe_bounds_consumers\\function_8b6b174.txt",
+      "claim": "probe start/count index descriptor bounds pointer with 604-byte stride"
+    },
+    {
+      "file": "C:\\SuperTerrain\\research\\cw-placement-mapping\\probe_bounds_consumers\\function_be9696c.txt",
+      "claim": "local point plane test, separate four extent triples, outer center and include/subtract branch"
+    }
+  ],
+  "constants": {
+    "RVA_0xD669FD8": -1.0,
+    "RVA_0xD6694D0": 0.5
+  },
+  "plane_equation": "dot(normal, point) + D <= 0",
+  "authored_check": {
+    "guid": "0x57439433",
+    "size_min": [
+      22.31100082397461,
+      8,
+      33.9010009765625
+    ],
+    "size_max": [
+      20,
+      8,
+      19.940000534057617
+    ],
+    "blend_mins": [
+      19,
+      19,
+      3
+    ],
+    "blend_maxs": [
+      23,
+      19,
+      3
+    ]
+  },
+  "limitations": [
+    "Descriptor purpose is not identified as a BO3 lighting-state number.",
+    "CW clipping planes are not cubemap parallax planes.",
+    "BO3 facePlane/faceBlend authoring conversion not proven.",
+    "Current map has no subtraction-role 1 volumes; role identified from consumer branch and BO3 docs.",
+    "Other game builds require fresh layout validation."
+  ]
+}

@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <array>
+#include <functional>
 
 // We need the DBGameAssets and CoDAssetType classes
 #include "DBGameAssets.h"
@@ -17,6 +18,7 @@ class GameBlackOps4
 public:
     // -- Game Name Caches
     static WraithNameIndex AssetNameCache;
+    static std::string ActiveNameDatabase;
 
     // -- Game functions
 
@@ -24,6 +26,12 @@ public:
     static bool LoadOffsets();
     // Loads assets for Black Ops 4
     static bool LoadAssets();
+
+    static bool ExportDiagnostic(int Mode, const std::string& Directory);
+
+    static std::string ExportRadiantBrushes(const std::function<void(uint32_t, const std::string&)>& Progress);
+
+    static std::string ExportModelPlacements(const std::string& Directory, const std::function<void(uint32_t)>& Progress);
 
     // Reads an XAnim from Black Ops 4
     static std::unique_ptr<XAnim_t> ReadXAnim(const CoDAnim_t* Animation);
@@ -44,6 +52,12 @@ public:
 
     // Perform setup required before ripping
     static void PerformInitialSetup();
+
+    // Writes the first-pass terraingfx probe for Black Ops 4.  Measurement
+    // only: it records the pool descriptor and the raw header, and never
+    // asserts a field meaning carried over from Cold War.
+    static bool ExportTerrainProbe(const CoDTerrain_t* Terrain, const std::string& ExportPath,
+        const std::function<void(uint32_t)>& ReportProgress);
 
 private:
     // -- Game offsets databases

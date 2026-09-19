@@ -27,6 +27,13 @@
 #include "CWRadiantExport.h"
 #include "CWBrushTypeCapture.h"
 #include "ModelExportNaming.h"
+#include "CWStaticPlacementFilter.h"
+#include "ExportRun.h"
+#include "BO4NameDatabase.h"
+#include "CWNonStaticCapture.h"
+#include "CWPlacementOrganize.h"
+#include "CWPlacementVerify.h"
+#include "CWModelProxyCatalog.h"
 
 // We need Opus
 #include "../../External/Opus/include/opus.h"
@@ -47,6 +54,7 @@ using Microsoft::WRL::ComPtr;
 
 WraithNameIndex GameBlackOpsCW::AssetNameCache = WraithNameIndex();
 WraithNameIndex GameBlackOpsCW::StringCache = WraithNameIndex();
+std::string GameBlackOpsCW::ActiveNameDatabase = "bundled";
 
 // -- Initialize built-in game offsets databases
 
@@ -904,7 +912,7 @@ namespace
     };
 }
 
-bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::string& ExportPath, bool Radiant, const std::function<void(uint32_t, const std::string&)>& Progress)
+bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::string& RequestedPath, bool Radiant, const std::function<void(uint32_t, const std::string&)>& Progress)
 {
     using namespace TerrainResearch;
     if (!CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset) return false;
@@ -912,13 +920,36 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
     for (const auto& P : CWResearchPools) if (P.Index == Asset->ResearchPoolIndex) Target = &P;
     if (!Target) return false;
     Radiant = Target->Index == 0x18 && (Radiant || SettingsManager::GetSetting("cwradiantbrushes", "false") == "true");
-    if (Radiant && !CWRadiantExport::Available()) { if(Progress)Progress(0,"Missing brush_export runtime beside Greyhound.exe.");return false; }
+    if (Radiant && !CWRadiantExport::Available()) { if(Progress)Progress(0,"Missing brush_export runtime in the tools folder beside Greyhound.exe.");return false; }
+    // Brush exports always land in exported_files/<game>/brushes/<map>, whether they
+    // started from the GUI button or --cw-radiant-brushes, which otherwise arrives
+    // here pointed at xrawfiles. The final name needs the map hash the capture below
+    // recovers, so the run is reserved under a .pending name and renamed once known.
+    std::string ExportPath = RequestedPath;
+    if (Radiant)
+    {
+        ExportPath = ExportRun::Reserve("brushes", Strings::Format(".pending_%llu", GetTickCount64()));
+        if (ExportPath.empty()) { if(Progress)Progress(0,"Could not create the brushes export folder.");return false; }
+    }
     if(Radiant && Progress)Progress(0,"Capturing collision payloads and direct brush placements...");
-    const auto Root = FileSystems::CombinePath(ExportPath, Radiant ? std::string("diagnostics") : Strings::Format("cw_pool_%03X_%llu",
+    auto Root = FileSystems::CombinePath(ExportPath, Radiant ? std::string("diagnostics") : Strings::Format("cw_pool_%03X_%llu",
         Target->Index, GetTickCount64()));
     // Reserve a new directory; never mix evidence from separate exports.
     if (!CreateDirectoryA(Root.c_str(), nullptr)) return false;
     Capture C(Root, {});
+    // Build-pinned research dump that replaces the pool evidence export. Dev Tools
+    // is the discoverable control; the environment variable still forces it on so
+    // existing research scripts keep working without being edited.
+    if (!Radiant && (SettingsManager::GetSetting("cwcollisioncodeprobe","false")=="true" ||
+        GetEnvironmentVariableA("GREYHOUND_CW_COLLISION_CODE_PROBE",nullptr,0)))
+    {
+        const auto Base=CoDAssets::GameInstance->GetMainModuleAddress();
+        const auto Code=C.Span(Base+0xC800000,0x1000000,"collision_reader_code.bin","current build collision reader code; read only");
+        C.Report["module_base"]=Hex(Base);
+        C.Report["code_rva"]=Hex(0xC800000);
+        C.Report["readback_unchanged"]=C.VerifySpan(Base+0xC800000,Code,"collision_reader_code.bin");
+        return C.Finish() && Code.size()==0x1000000;
+    }
     C.Report["schema"] = "greyhound-cw-pool-evidence-v1";
     C.Report["pool_name_candidate"] = Target->Name;
     C.Report["pool_index"] = Target->Index;
@@ -946,7 +977,7 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
     const bool MapData = Radiant || SettingsManager::GetSetting("cwmapdata", "false") == "true";
     const bool AutoTypes=Radiant && SettingsManager::GetSetting("cwradianttypes","true")=="true";
     CWBrushTypeCapture::Types TypeCapture;
-    bool TypesComplete=!AutoTypes;
+    bool TypesComplete=!Radiant;
     C.Report["capture_sections"] = {{"entities_triggers", !Radiant && SettingsManager::GetSetting("cwcaptureentities", "true")=="true"},
         {"model_placements", !Radiant && SettingsManager::GetSetting("cwcaptureplacements", "true")=="true"},
         {"model_splines", !Radiant && SettingsManager::GetSetting("cwcapturesplines", "false")=="true"},
@@ -967,7 +998,7 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
                 {
                     const auto First = Headers.begin() + size_t(S) * P.AssetSize;
                     const std::vector<uint8_t> Slot(First, First + P.AssetSize);
-                    if(AutoTypes)TypeCapture.Begin(C,BOCWDBAssetPoolsOffset,Slot);
+                    if(Radiant)TypeCapture.Begin(C,BOCWDBAssetPoolsOffset,Slot);
                     if (!Radiant && SettingsManager::GetSetting("cwcaptureentities", "true")=="true")
                         CWMapCandidateCapture::Capture(C, Target->Index, Slot);
                     if (!Radiant && SettingsManager::GetSetting("cwcaptureplacements", "true")=="true")
@@ -978,7 +1009,7 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
                         CWClipMapCapture::Capture(C, Target->Index, Slot);
                 }
         C.Report["headers_readback_unchanged"]=C.VerifySpan(P.PoolPtr,Headers,"headers.bin");
-        if(AutoTypes)TypesComplete=TypeCapture.Finish(C);
+        if(Radiant)TypesComplete=TypeCapture.Finish(C);
         if(MapData)
             C.Report["map_data_status"]=(C.Report.contains("typed_candidates")
                 || C.Report.contains("gfx_map_static_models")
@@ -1110,6 +1141,42 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
         C.Report.contains("district_static_models");
     if (CollisionOnly)
     {
+        // Capture actual loaded XModel -> collision references, independently
+        // of collision-world instances. No instance transform is applied here.
+        const auto ModelDescriptorAddress=BOCWDBAssetPoolsOffset+6*32;
+        auto MD=C.Span(ModelDescriptorAddress,32,"model_owners/descriptor.bin","XModel pool descriptor");
+        json Owners={{"schema","cw-local-model-collision-owners-v1"},{"status","failed"},{"models",json::array()}};
+        if(MD.size()==32)
+        {
+            const auto MB=CWClipModelExport::U64(MD.data());
+            const auto MS=CWClipModelExport::U32(MD.data()+8), MC=CWClipModelExport::U32(MD.data()+12);
+            if(MS==sizeof(BOCWXModel) && MC && uint64_t(MS)*MC<=32ull*1024*1024)
+            {
+                auto MH=C.Span(MB,uint64_t(MS)*MC,"model_owners/headers.bin","loaded XModel headers and free-list occupancy");
+                auto Occupancy=CWPoolProbe::FreeSlots(MH,MS,MB,CWClipModelExport::U64(MD.data()+24),CWClipModelExport::U32(MD.data()+20));
+                if(MH.size()==uint64_t(MS)*MC && Occupancy.Valid)
+                {
+                    for(uint32_t I=0;I<MC;++I)if(!Occupancy.Free.count(I))
+                    {
+                        const auto R=MH.data()+I*MS;
+                        const auto CP=CWClipModelExport::U64(R+offsetof(BOCWXModel,XCollisionPtr));
+                        if(!CP)continue;
+                        const auto Hash=CWClipModelExport::U64(R)&0xFFFFFFFFFFFFFFFull;
+                        const auto Hit=AssetNameCache.NameDatabase.find(Hash);
+                        const std::string Name=Hit==AssetNameCache.NameDatabase.end()?Strings::Format("xmodel_%llx",Hash):Hit->second;
+                        Owners["models"].push_back({{"name",Name},{"name_hash",TerrainResearch::Hex(Hash)},
+                            {"xmodel_address",TerrainResearch::Hex(MB+uint64_t(I)*MS)},
+                            {"collision_pointer",TerrainResearch::Hex(CP)}});
+                    }
+                    const bool Stable=C.VerifySpan(MB,MH,"model_owners/headers.bin") && C.VerifySpan(ModelDescriptorAddress,MD,"model_owners/descriptor.bin") && C.VerifySpan(P.PoolPtr,Headers,"headers.bin") && C.VerifySpan(Descriptor,Start,"descriptor_start.bin");
+                    Owners["status"]=Stable?"captured":"changed_during_capture";
+                    Owners["readback_unchanged"]=Stable;
+                }
+            }
+        }
+        const auto OwnerText=Owners.dump(2);
+        const bool OwnerSaved=C.Write("model_collision_owners.json",reinterpret_cast<const uint8_t*>(OwnerText.data()),OwnerText.size());
+        if(!OwnerSaved || Owners.value("status","")!="captured")ReadsSaved=false;
         for (const auto* Section : {"clip_models", "collision_arrays", "collision_world_instances"})
             if (!C.Report.contains(Section) || !C.Report[Section].value("saved", false)) ReadsSaved = false;
         if (!C.Report.value("clip_models", json::object()).value("all_payloads_verified", false) ||
@@ -1139,6 +1206,12 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
         MapHash=std::stoull(Owners.at("map_hash").get<std::string>(),nullptr,16);
         MapPath=CWMapEntityExport::ResolveHash(MapHash);
     } catch(const std::exception&) {return false;}
+    // Name the run now, before the converter writes metadata: export_report.json,
+    // collision_metadata.json, triggers.json and radiant_progress.json all record
+    // absolute paths, so a rename after publishing would leave them stale.
+    const auto Stem=CWRadiantExport::MapStem(MapHash,MapPath);
+    const auto Named=ExportRun::Rename(ExportPath,Stem);
+    if(Named!=ExportPath){ExportPath=Named;Root=FileSystems::CombinePath(ExportPath,"diagnostics");}
     std::string TriggerCapture;
     if(SettingsManager::GetSetting("cwradiantvolumes","true")=="true")
     {
@@ -1148,7 +1221,8 @@ bool GameBlackOpsCW::ExportResearchPool(const CoDRawFile_t* Asset, const std::st
     }
     const auto Output=ExportPath;
     CoDAssets::LatestExportPath=Root;
-    const bool Converted=CWRadiantExport::Run(Root,Output,MapPath,Progress,AutoTypes,TriggerCapture);
+    const bool Converted=CWRadiantExport::Run(Root,Output,MapPath,Progress,AutoTypes,TriggerCapture,Stem,false,
+        SettingsManager::GetSetting("cwfloattriangles","false")=="true");
     if(Converted)CoDAssets::LatestExportPath=Output;
     return Converted;
 }
@@ -1920,7 +1994,12 @@ const XMaterial_t GameBlackOpsCW::ReadXMaterial(uint64_t MaterialPointer)
 
     // Check for an override in the name DB
     if (AssetNameCache.NameDatabase.find(MaterialData.NamePtr) != AssetNameCache.NameDatabase.end())
-        Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(AssetNameCache.NameDatabase[MaterialData.NamePtr]);
+    {
+        // Keep the resolved name whole as well; the material metadata file
+        // reports the game path ("mc/name"), not just the file-safe stem.
+        Result.MaterialSourceName = AssetNameCache.NameDatabase[MaterialData.NamePtr];
+        Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(Result.MaterialSourceName);
+    }
 
     // Iterate over material images, assign proper references if available
     for (uint32_t m = 0; m < MaterialData.ImageCount; m++)
@@ -2476,12 +2555,18 @@ std::string GameBlackOpsCW::LoadStringEntry(uint64_t Index)
 }
 void GameBlackOpsCW::PerformInitialSetup()
 {
-    // Load Caches
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),    "package_index\\fnv1a_xmaterials.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),    "package_index\\fnv1a_ximages.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),    "package_index\\fnv1a_xsounds.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),    "package_index\\fnv1a_xmodels.wni"));
-    AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),    "package_index\\fnv1a_xanims.wni"));
+    // BO4 and CW share these five 60-bit FNV1a asset dictionaries. Keep the
+    // existing preference/path so already imported databases work for both.
+    const auto Provider = SettingsManager::GetSetting("bo4namedatabase", "bundled");
+    AssetNameCache.NameDatabase.clear();
+    StringCache.NameDatabase.clear();
+    if (Provider != "bundled" && Provider != "echo000")
+        throw std::runtime_error("Unknown Cold War name database selection.");
+    if (Provider == "echo000" && !BO4NameDatabase::Ready(Provider))
+        throw std::runtime_error("The echo000 BO4/CW name database is not installed. Select Bundled or import the local CSV checkout.");
+    for (const auto* File : BO4NameDatabase::Files)
+        AssetNameCache.LoadIndex(FileSystems::CombinePath(BO4NameDatabase::Root(Provider), File));
+    ActiveNameDatabase = Provider;
     StringCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),       "package_index\\fnv1a_string.wni"));
     // Prepare to copy the oodle dll
     auto OurPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "oo2core_8_win64.dll");
@@ -2519,37 +2604,130 @@ std::string GameBlackOpsCW::ExportModelPlacements(const std::string& Directory, 
     std::ifstream Input(FileSystems::CombinePath(FileSystems::CombinePath(Directory, "diagnostics"), "static_models.json"));
     TerrainResearch::json Document;
     Input >> Document;
+    Input.close(); // Release the Windows handle before publishing an organized run.
     Document["complete"] = D.value("complete",false);
     Document["placement_source_unchanged"] = SourceStable;
+    Document["name_database"] = ActiveNameDatabase;
     if (!Document.contains("StaticModels") || !Document["StaticModels"].is_array())
         return "Placement JSON has no model array.";
     for (auto& Row : Document["StaticModels"])
         ModelExportNaming::PublishPlacementName(Row);
+    TerrainResearch::json Deferred;
+    const auto Selection = CWStaticPlacementFilter::Separate(Document["StaticModels"], Deferred);
+    Document["placement_selection"] = Selection;
+    Document["captured_unique_models"] = Document.value("unique_models", 0);
+    Document["unique_models"] = Selection["exported_unique_models"];
+    Document["captured_unresolved_model_names"] = Document.value("unresolved_model_names", 0);
+    Document["unresolved_model_names"] = Selection["exported_unresolved_model_names"];
+    Document["exported_instances"] = Selection["exported_instances"];
+    // Combined building proxies stand in for a whole district's detail models.
+    // Exporting both stacks two versions of the same building, so drop a proxy
+    // only where the detail geometry it duplicates was actually captured.
+    if(SettingsManager::GetSetting("cwproxyfilter","false")=="true")
+    {
+        TerrainResearch::json Excluded=TerrainResearch::json::array();
+        auto Proxy=CWModelProxyCatalog::Apply(Document["StaticModels"],Excluded,Progress);
+        if(Proxy.value("applied",false))
+        {
+            std::ofstream Dropped(FileSystems::CombinePath(Directory,"excluded_proxies.json"),std::ios::binary);
+            Dropped << Excluded.dump(2);
+            Proxy["excluded_file"]=Dropped ? "excluded_proxies.json" : "";
+            // Dropping placements can retire a model entirely, so recount
+            // instead of carrying the pre-filter totals forward.
+            std::set<std::string> Remaining;
+            for(const auto& Row:Document["StaticModels"]) Remaining.insert(Row.value("Name",std::string()));
+            Document["exported_instances"]=Document["StaticModels"].size();
+            Document["unique_models"]=Remaining.size();
+        }
+        Document["proxy_filter"]=Proxy;
+    }
+    // The complete unfiltered rows remain in diagnostics/static_models.json.
+    Document["deferred_spline_evidence"] = "diagnostics/static_models.json";
     std::ofstream Output(FileSystems::CombinePath(Directory, "static_models.json"), std::ios::binary);
     Output << Document["StaticModels"].dump(2);
     Output.close();
     if (!Output) return "Placement JSON could not be saved.";
+    const bool NonStaticSelected=SettingsManager::GetSetting("cwnonstaticplacements","false")=="true";
+    bool NonStaticComplete=true;
+    size_t NonStaticCount=0;
+    if(NonStaticSelected)
+    {
+        uint64_t MapHash=0;
+        for(uint32_t I=0;I<P.PoolSize;++I) if(!Occupancy.Free.count(I))
+            MapHash=TerrainResearch::U64(Headers,size_t(I)*P.AssetSize)&0xFFFFFFFFFFFFFFFull;
+        auto NonStatic=CWNonStaticCapture::Capture(BOCWDBAssetPoolsOffset,Directory,MapHash,Progress);
+        NonStaticComplete=NonStatic.value("complete",false);
+        NonStaticCount=NonStatic.value("model_placements",size_t(0));
+        Document["non_static_export"]={{"report","non_static_report.json"},{"complete",NonStaticComplete},
+            {"entity_count",NonStatic.value("entity_count",size_t(0))},{"model_placements",NonStaticCount}};
+        const bool SplinesSaved=CWNonStaticCapture::Save(Directory,"spline_models.json",Deferred);
+        Document["spline_export"]={{"file","spline_models.json"},{"saved",SplinesSaved},
+            {"instances",Deferred.size()},{"bo3_mapping","requires_spline_deformation; not a rigid model placement"}};
+        NonStaticComplete&=SplinesSaved;
+        auto Catalog=TerrainResearch::json({{"schema","cw-placement-catalog-v1"},
+            {"map_hash",TerrainResearch::Hex(MapHash)},{"name_database",ActiveNameDatabase},
+            {"bo3_mapping","bo3_mapping.json"},{"capture_report","non_static_report.json"},
+            {"outputs",TerrainResearch::json::array({
+                {{"file","static_models.json"},{"kind","rigid_static_models"},{"records",Selection["exported_instances"]},{"model_batch_input",true}},
+                {{"file","non_static_models.json"},{"kind","authored_entity_models"},{"records",NonStaticCount},{"model_batch_input",true}},
+                {{"file","non_static_models/"},{"kind","model_placements_by_entity_class"},{"model_batch_input",true}},
+                {{"file","entities/"},{"kind","all_entities_and_triggers_by_class"},{"records",NonStatic.value("entity_count",size_t(0))},{"model_batch_input",false}},
+                {{"file","spline_models.json"},{"kind","deferred_spline_models"},{"records",Deferred.size()},{"model_batch_input",false}},
+                {{"file","fx_placement_candidates.json"},{"kind","level_FX_candidates"},{"model_batch_input",false}},
+                {{"file","light_placement_candidates.json"},{"kind","primary_light_candidates"},{"model_batch_input",false}},
+                {{"file","reflection_probes.json"},{"kind","compiled_reflection_probes"},{"model_batch_input",false}},
+                {{"file","reflection_probe_bounds.json"},{"kind","probe_influence_bounds_and_blends"},{"model_batch_input",false}},
+                {{"file","sun_volumes.json"},{"kind","sun_volume_and_global_probe_evidence"},{"model_batch_input",false}},
+                {{"file","dynmodel_assets.json"},{"kind","dynamic_model_definitions_without_instance_transforms"},{"model_batch_input",false}},
+                {{"file","trigger_geometry_candidates.json"},{"kind","trigger_hulls_and_source_references"},{"model_batch_input",false}}})}});
+        NonStaticComplete&=CWNonStaticCapture::Save(Directory,"placement_catalog.json",Catalog);
+    }
+    Document["complete"]=D.value("complete",false)&&NonStaticComplete;
     Document.erase("StaticModels");
     Document.erase("UniqueModels");
     std::ofstream Report(FileSystems::CombinePath(Directory, "placement_report.json"), std::ios::binary);
     Report << Document.dump(2);
     Report.close();
     if (!Report) return "Placements saved, but placement_report.json could not be saved.";
-    Progress(100);
-    return std::string(D.value("complete",false)?"Complete export: ":"Partial export: ")+std::to_string(D.value("instances",0))+
-        " placements saved. " + std::to_string(D.value("recovered_package_districts",0)) +
+    // Sorting runs last so the catalogue covers placement_report.json too. It
+    // stages and verifies the categorized run before publishing it in place.
+    // Auditing runs before sorting so the categorized copy carries the
+    // validation files too, and so a discrepancy is reported against the run
+    // that produced it rather than against a copy.
+    std::string Verified;
+    if(SettingsManager::GetSetting("cwverifyplacements","false")=="true")
+        Verified=CWPlacementVerify::Describe(CWPlacementVerify::Run(Directory));
+    std::string Organized;
+    bool IsOrganized=false;
+    if(SettingsManager::GetSetting("cworganizeplacements","false")=="true")
+    {
+        const auto Result=CWPlacementOrganize::Run(Directory);
+        IsOrganized=Result.value("organized",false);
+        Organized=IsOrganized
+            ? " Categorized run: "+Result.value("directory",std::string())+" (see catalog.json)."
+            : " Organization did not complete ("+Result.value("reason",std::string("unknown"))+"); inspect the run and helper log.";
+    }
+    if(Progress) Progress(100);
+    return std::string(D.value("complete",false)&&NonStaticComplete?"Static export: ":"Partial static export: ")+
+        std::to_string(Selection.value("exported_instances",size_t(0)))+" placements / "+
+        std::to_string(Selection.value("exported_unique_models",size_t(0)))+" unique models saved. "+
+        std::to_string(Selection.value("deferred_spline_instances",size_t(0)))+" spline placements excluded. " +
+        std::to_string(D.value("recovered_package_districts",0)) +
         " districts recovered from local packages; " + std::to_string(D.value("unresolved_districts",0)) +
-        " unresolved. Open static_models.json. Validation details are in placement_report.json.";
+        " unresolved. Open "+(IsOrganized ? std::string("models/static.json. Validation details are in metadata/placement_report.json.") : std::string("static_models.json. Validation details are in placement_report.json."))+
+        (NonStaticSelected ? " Additional entity model placements: "+std::to_string(NonStaticCount)+
+            (IsOrganized ? ". See models/non_static.json, entities/ and metadata/." : ". See non_static_models.json, entities/, bo3_mapping.json and non_static_report.json.") : "")+
+        Verified+Organized;
 }
 
 
-std::string GameBlackOpsCW::ExportRadiantBrushes(const std::string& Directory, const std::function<void(uint32_t, const std::string&)>& Progress)
+std::string GameBlackOpsCW::ExportRadiantBrushes(const std::function<void(uint32_t, const std::string&)>& Progress)
 {
     if(CoDAssets::GameID!=SupportedGames::BlackOpsCW || !CoDAssets::GameInstance || !BOCWDBAssetPoolsOffset)
         return "Load Game with a Cold War map open first.";
-    FileSystems::CreateDirectory(Directory);
     CoDRawFile_t Asset;Asset.ResearchPoolIndex=0x18;
-    return ExportResearchPool(&Asset,Directory,true,Progress)
-        ? "Brush prefab exported. Open latest export folder for the .map and metadata."
-        : "Brush export failed. Check the capture diagnostics and bundled brush_export runtime.";
+    if(!ExportResearchPool(&Asset,{},true,Progress))
+        return "Brush export failed. Check the capture diagnostics and bundled tools runtime.";
+    return "Brush prefab exported to brushes\\"+FileSystems::GetFileName(CoDAssets::LatestExportPath)+
+        ". Open latest export folder for the .map and metadata.";
 }

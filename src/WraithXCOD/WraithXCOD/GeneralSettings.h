@@ -24,11 +24,22 @@ private:
     // -- Event delegates
 
     int Page = 0;
+    int DevPage = 0;
+    void OnDevSection();
+    void OnBO4DiagnosticMode();
+    void OnRunBO4Diagnostic();
+    void OnVerifyRuntime();
+    void OnVerifyExport();
+    void OnTerrainSettings();
     void ConfigurePage();
     void OnCWRadiantEnable();
     void OnCWRadiantOptions();
     void OnExportBrushes();
     void OnExportPlacements();
+    void OnNonStaticPlacements();
+    void OnPlacementOptions();
+    void UpdatePlacementOptions();
+    void OnCollisionCoverage();
     void OnExportJsonModels();
     void OnXModels();
     void OnXAnims();
@@ -48,6 +59,7 @@ private:
     void OnCWCaptureOptions();
     void UpdateCWExportHint();
     void OnAssetSortMethod();
+    void OnBO4NameDatabase();
 
 
 protected:

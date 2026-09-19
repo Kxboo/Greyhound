@@ -1,0 +1,46 @@
+{
+  "schema": "greyhound-bo3-brush-contents-reference-v1",
+  "source": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Call of Duty Black Ops III\\bin\\cod2map64.exe",
+  "source_sha256": "201a6b31072f74cfacab944014d446185570608e37e556132cc00db3f9db8efd",
+  "rows": [
+    {
+      "name": "triangulatedWeaponClip",
+      "contents_mask": "0x802080",
+      "record_rva": "0xa02710"
+    },
+    {
+      "name": "weaponClip",
+      "contents_mask": "0x2080",
+      "record_rva": "0xa02720"
+    },
+    {
+      "name": "ai_nosight",
+      "contents_mask": "0x1000",
+      "record_rva": "0xa02730"
+    },
+    {
+      "name": "triangulatedClip",
+      "contents_mask": "0x880000",
+      "record_rva": "0xa02740"
+    },
+    {
+      "name": "nonColliding",
+      "contents_mask": "0x80004",
+      "record_rva": "0xa02750"
+    },
+    {
+      "name": "detail",
+      "contents_mask": "0x0",
+      "record_rva": "0xa02760"
+    },
+    {
+      "name": "umbraTarget",
+      "contents_mask": "0x80000",
+      "record_rva": "0xa02770"
+    }
+  ],
+  "parser_rva": "0xb33a0",
+  "brush_apply_rva": "0xa2685",
+  "evidence": "Parser ORs named 16-byte entries. Brush apply clears bit 1 if mask&0x2080, adds bits 0x2000/0x80/0x1000. Stock maps independently use contents weaponClip ai_nosight.",
+  "clear_solid_when_masked": "0x2080"
+}

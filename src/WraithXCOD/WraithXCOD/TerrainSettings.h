@@ -20,6 +20,10 @@ public:
 private:
     void OnShowTerrains();
     void OnSkipPreviousTerrains();
+    void OnBO4CaptureMode();
+    // Keeps the hint and the status line describing the capture the Export
+    // button will actually run, rather than the terrain probe it used to imply.
+    void UpdateBO4CaptureMode();
 
 protected:
     virtual void OnBeforeLoad();
