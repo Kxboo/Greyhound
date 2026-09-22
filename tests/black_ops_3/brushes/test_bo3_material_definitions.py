@@ -50,3 +50,16 @@ def test_commented_out_definitions_are_not_candidates(tmp_path):
     assert rows[0]['name'] == 'real'
     assert rows[0]['line'] == 3
     assert rows[0]['properties']['colorMap'] == 'tools//image'
+
+
+def test_mixed_gdt_does_not_treat_inherited_models_as_materials(tmp_path):
+    path = tmp_path / 'mixed.gdt'
+    path.write_text('"base" ("material.gdf") {"noDraw" "1"}\n'
+                    '"base" ("image.gdf") {}\n'
+                    '"invisible" ["base"] {"nonSolid" "1"}\n'
+                    '"model" ("xmodel.gdf") {}\n'
+                    '"model_child" ["model"] {}\n'
+                    '"model_grandchild" ["model_child"] {}')
+    rows = materials([path])
+    assert [r['name'] for r in rows] == ['base', 'invisible']
+    assert rows[1]['properties'] == {'noDraw': '1', 'nonSolid': '1'}

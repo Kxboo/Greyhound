@@ -38,7 +38,7 @@ def main():
             assert brush['filter_association'] == 'pointer_backed_union_verified'
             assert brush['uniform_surface_flags'] and 'slick' in brush['common_surface_flags']
         if not brush['named_contents'] and decision['selection_policy']!='basic_named_tool':
-            assert decision['status'] == 'REVIEW_EXISTING_FALLBACK'
+            assert decision['status'] in ('REVIEW_EXISTING_FALLBACK','REVIEW_STOCK_SURFACE_FALLBACK')
         if decision['status'] == 'EXACT_NAMED_PROPERTIES':
             assert not any(decision[k] for k in ('added_contents', 'omitted_contents',
                                                 'added_surface_flags', 'omitted_surface_flags'))

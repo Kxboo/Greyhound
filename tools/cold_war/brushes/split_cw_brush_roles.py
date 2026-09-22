@@ -1,4 +1,4 @@
-"""Keep assigned collision clip families together, preserving source uncertainty."""
+"""Route brush prefabs using captured behavior before stock material names."""
 
 # Support direct execution and the isolated packaged Python runtime.
 import sys as _tool_sys
@@ -12,6 +12,7 @@ from collections import Counter
 import hashlib
 import json
 import re
+from cw_collision_role_policy import POLICY, REFERENCE_MATERIAL, REFERENCE_LAYER, reference_reason, reference_properties
 
 
 def sha(path):
@@ -20,22 +21,32 @@ def sha(path):
 
 def classify(row, reference, assignments):
     name = row['assigned_material']
+    key = row.get('material_assignment_key')
+    if key is None and 'collision_asset_index' in row and 'brush_index' in row:
+        # Automatic material application is optional; source-role exclusions
+        # still apply to its original generic material assignments.
+        key = f"{row['collision_asset_index']}:{row['brush_index']}"
+    assignment = assignments.get('brushes', {}).get(key, {})
+    reason = reference_reason(assignment, {})
+    if reason:
+        return 'reference_brushes', reason
     matches = [m for m in reference['materials'] if m['name'] == name]
     if len(matches) != 1:
         return 'other_brushes', 'missing_or_ambiguous_bo3_definition'
     props = matches[0]['properties']
-    # Prefab organization follows the assigned BO3 tool family, not which
-    # actors it blocks or how certain the original CW interpretation is.
-    # Keep fallback clip assignments and their evidence/uncertainty intact.
-    if name == 'nosight_noclip' or 'clip' in name.split('_'):
-        reason = ('assigned_clip_fallback_retained_for_review'
-                  if row.get('assignment_status', '').startswith('REVIEW')
-                  else 'assigned_bo3_collision_clip_family')
-        return 'brushes_clips', reason
     if (props.get('climbType', '<none>') not in ('', '<none>', 'none')
             or props.get('mount') == '1' or name in ('ladder', 'wall_climb', 'pipe_climb')
             or 'mantle' in name):
         return 'other_brushes', 'traversal_tool'
+    clip = name == 'nosight_noclip' or 'clip' in name.split('_')
+    reason = reference_reason(assignment, props if clip else {})
+    if reason:
+        return 'reference_brushes', reason
+    if clip:
+        reason = ('assigned_clip_fallback_retained_with_unknown_source_behavior'
+                  if row.get('assignment_status', '').startswith('REVIEW')
+                  else 'assigned_bo3_collision_clip_family')
+        return 'brushes_clips', reason
     return 'other_brushes', 'other_bo3_tool_family'
 
 
@@ -59,10 +70,13 @@ def split(folder, reference):
         raise ValueError('Unaccounted text between brush blocks')
     assignments_path = folder / 'material_assignments.json'
     assignments = json.loads(assignments_path.read_text()) if assignments_path.exists() else {}
-    buckets = {'brushes_clips': [], 'other_brushes': []}
+    reference_properties(reference)
+    buckets = {'brushes_clips': [], 'other_brushes': [], 'reference_brushes': []}
     counts = {k: Counter() for k in buckets}
     reasons = Counter()
-    filenames = {'brushes_clips': source.name, 'other_brushes': metadata['map'] + '_other_brushes.map'}
+    filenames = {'brushes_clips': source.name, 'other_brushes': metadata['map'] + '_other_brushes.map',
+                 'reference_brushes': metadata['map'] + '_nonblocking_reference.map'}
+    material_changes = 0
     for row, match in zip(rows, matches):
         if int(match[1]) != row['map_brush_index']:
             raise ValueError('Source brush index mismatch')
@@ -71,14 +85,30 @@ def split(folder, reference):
         if len(faces) != row['face_count'] or set(faces) != {row['assigned_material']}:
             raise ValueError('Face materials differ from metadata')
         role, reason = classify(row, reference, assignments)
+        if role == 'reference_brushes':
+            old_material = row['assigned_material']
+            block, changed = re.subn(r'(^\s*\(.*\)\s+)' + re.escape(old_material) + r'(?=\s)',
+                                    lambda m: m[1] + REFERENCE_MATERIAL, block, flags=re.M)
+            if changed != row['face_count']:
+                raise ValueError('Reference material replacement missed a face')
+            row.update(collision_candidate_material=old_material, assigned_material=REFERENCE_MATERIAL,
+                       reference_material_policy=POLICY, previous_layer=row.get('layer'),
+                       layer=REFERENCE_LAYER, compile_excluded=True)
+            block, layers_changed = re.subn(r'^layer "[^"]+"$', 'layer "'+REFERENCE_LAYER+'"', block, flags=re.M)
+            if layers_changed != 1:
+                raise ValueError('Reference brush must have exactly one editor layer')
+            material_changes += old_material != REFERENCE_MATERIAL
         row.update(prefab_file=filenames[role], prefab_brush_index=len(buckets[role]),
                    prefab_role=role, prefab_role_reason=reason)
         buckets[role].append(block)
         counts[role][row['assigned_material']] += 1
         reasons[reason] += 1
-    # Keep original brush comments/planes/projections verbatim, including the
-    # per-piece projection offsets which prevent merged winding failures.
-    if Counter(m[0] for m in matches) != Counter(b for group in buckets.values() for b in group):
+    # Only material and editor layer may change. All comments, planes,
+    # transforms and per-piece projection offsets must remain verbatim.
+    def geometry(block):
+        block = re.sub(r'^layer "[^"]+"$', 'layer "<ROLE>"', block, flags=re.M)
+        return re.sub(r'(^\s*\(.*\)\s+)\S+(?=\s)', r'\1<MATERIAL>', block, flags=re.M)
+    if Counter(geometry(m[0]) for m in matches) != Counter(geometry(b) for group in buckets.values() for b in group):
         raise ValueError('Split changed brush coverage')
     prefabs = {}
     for role, blocks in buckets.items():
@@ -86,16 +116,24 @@ def split(folder, reference):
         header = ''.join(line for line in prefix.splitlines(keepends=True)
                          if not re.match(r'^"000_Global/CW_Types/', line)
                          or any('"'+layer+'"' in line or layer.startswith(line.split('"')[1]+'/') for layer in layers))
+        if role == 'reference_brushes':
+            # Corvid's BO3 No Comp layer uses `ignore`. Keep it visible here:
+            # references remain selectable in Radiant, outside BSP compilation.
+            header = header.replace('iwmap 4\n', 'iwmap 4\n"'+REFERENCE_LAYER+'" flags ignore\n', 1)
         dest = folder / filenames[role]
         dest.write_text(header + ''.join(blocks) + suffix)
         prefabs[role] = dict(file=dest.name, sha256=sha(dest), brushes=len(blocks),
                              material_counts=dict(counts[role]))
+        if role == 'reference_brushes':
+            prefabs[role].update(compile_excluded=True, editor_layer=REFERENCE_LAYER)
     metadata['unsplit_map_sha256'] = metadata['map_sha256']
     metadata['map_sha256'] = prefabs['brushes_clips']['sha256']
     metadata['prefabs'] = prefabs
-    metadata['role_split'] = dict(version=3, all_brush_blocks_preserved=True,
-        geometry_materials_and_projection_offsets_unchanged=True, reasons=dict(reasons),
-        policy='Primary prefab keeps assigned BO3 clip families, including nosight_noclip, missile, physics, AI, AI-wallrun and unresolved clip fallbacks. Membership does not imply physical collision. Original source flags and assignment uncertainty remain unchanged. Traversal and other tool families are separate.',
+    metadata['role_split'] = dict(version=4, all_brush_blocks_preserved=True,
+        geometry_and_projection_offsets_unchanged=True, reasons=dict(reasons),
+        reference_material_changes=material_changes, policy_id=POLICY,
+        reference_layer=REFERENCE_LAYER, reference_layer_flags=['ignore'],
+        policy='Source non-solid/no-query brushes, zero-contents brushes with unjoined surfaces, and clip candidates that add player collision to fully decoded non-player query masks are separate nonblocking references. Reference status does not prove the source had no other collision queries. Unknown contents are not treated as empty. Original selected materials and source assignments remain recorded. Traversal and other tools are separate.',
         row_index_note='map_brush_index retains the source index/comment; prefab_brush_index is the ordinal within prefab_file.')
     metadata_path.write_text(json.dumps(metadata, indent=2))
     return prefabs

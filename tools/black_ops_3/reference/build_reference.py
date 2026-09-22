@@ -34,6 +34,25 @@ def build(root):
     names = [m['name'] for m in materials]
     if len(names) != len(set(names)):
         raise ValueError('Duplicate material definitions require review before packaging')
+    scan_paths=sorted([*(root/'texture_assets').rglob('*.gdt'),*(root/'art_assets').rglob('*.gdt'),
+        root/'source_data/lens_flare.gdt',root/'source_data/shader_templates/postfx_templates.gdt',
+        root/'source_data/shader_templates/shader_templates.gdt'])
+    installed_materials=resolve_materials(scan_paths,relative_to=root)
+    supplemental=[];other_material_inventory=[]
+    for material in installed_materials:
+        if material['name'] in names:continue
+        props=material['properties']
+        if (props.get('noDraw')=='1' or props.get('usage') in ('tools','clip')
+                or props.get('materialType','').startswith('tools')):
+            supplemental.append(material)
+        else:
+            other_material_inventory.append(dict(name=material['name'],source=material['source'],line=material['line'],
+                surfaceType=props.get('surfaceType'),materialType=props.get('materialType'),usage=props.get('usage')))
+    for relative in sorted({m['source'] for m in supplemental}-set(material_paths)):
+        sources.append(dict(file=relative,sha256=hashlib.sha256((root/relative).read_bytes()).hexdigest()))
+    scan=dict(gdt_files=len(scan_paths),material_definitions=len(installed_materials),
+        sources=[dict(file=p.relative_to(root).as_posix(),sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in scan_paths],
+        comparison_scope='All primary clip/tool definitions plus every other installed definition with noDraw=1, usage=tools/clip or a tools materialType. Inherited properties are resolved. Remaining render materials are inventoried separately; original texture names are not recoverable from compiled collision flags.')
     relative = 'map_source/zm/zm_giant.map'
     path = root / relative
     volumes = [e for e in entities(path) if e['properties'].get('classname') == 'info_volume'
@@ -131,7 +150,8 @@ def build(root):
                      'share/raw/behavior/zombie/ZombieTraverseBehavior.json',reverse_prefab,one_way_prefab):
         entry=dict(file=relative,sha256=hashlib.sha256((root/relative).read_bytes()).hexdigest())
         sources.append(dict(entry));navigation_sources.append(entry)
-    return dict(schema='bo3-tool-reference-v2', sources=sources, materials=materials,tool_images=tool_images,
+    return dict(schema='bo3-tool-reference-v3', sources=sources, materials=materials,tool_images=tool_images,
+                supplemental_materials=supplemental,material_catalogue_scan=scan,other_material_inventory=other_material_inventory,
                 entity_reference=dict(source='bin/t7.def.json',classes=entity_reference),
                 navigation_reference=dict(procedural_flag=procedural_bit,requires_both_endpoints=True,
                     source_function='zombieShouldProceduralTraverse',sources=navigation_sources,

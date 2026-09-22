@@ -35,6 +35,8 @@ def main():
         help='Also write the captured float-triangle collision branch as OBJ reference geometry')
     p.add_argument('--model-triangles',action='store_true',
         help='BO4: also decode model triangle collision surfaces beside the convex brushes')
+    p.add_argument('--surfaces',type=Path,
+        help='CW: verified brush-render-surface-v1 JSONL; otherwise use verified_render_surfaces.jsonl in the capture when present')
     a=p.parse_args();a.capture=a.capture.resolve();a.output=a.output.resolve()
     progress=a.capture/'radiant_progress.json'
     def status(stage,percent=0,**extra):
@@ -51,6 +53,7 @@ def main():
             target=(HERE/name).resolve()
             if not target.is_relative_to(HERE) or sha(target)!=digest:raise ValueError('Packaged converter failed integrity check: '+name)
         if a.game == 'bo4':
+            if a.surfaces:raise ValueError('--surfaces currently requires --game cw')
             from bo4_brush_export import run as bo4_run
             return bo4_run(a.capture,a.output,json.loads((TOOLS_ROOT / 'black_ops_3/reference/bo3_reference.json').read_text()),status,a.auto_types,a.trigger_capture is not None,a.model_triangles)
         status('Checking verified capture')
@@ -83,14 +86,19 @@ def main():
             with contextlib.redirect_stdout(stream):__import__(module).main()
         normalized=work/'normalized';geometry=work/'geometry';staged=work/'final'
         run('prepare_cw_native_brush_capture',[a.capture,'--map',name,'--verified-map-hash',format(key,'x'),'--output',normalized],'Checking brush ownership and placements')
-        run('export_cw_radiant_brushes',[normalized,'--output',geometry,'--gdt',tool_gdt,'--max-faces','12','--cleanup-world-tolerance','0.01','--halfspace-partitions','--canonical-planes'],'Building brush hulls')
+        run('export_cw_radiant_brushes',[normalized,'--output',geometry,'--gdt',tool_gdt,'--max-faces','12','--cleanup-world-tolerance','0.01','--halfspace-partitions','--canonical-planes','--recombine-max-faces','32'],'Building and reconstructing brush hulls')
         assignments=None
         if a.auto_types:
             status('Selecting BO3 brush and tool types from captured properties')
             from assign_cw_bo3_types import apply
             assignments=apply(normalized,a.capture,reference,geometry)
+        else:
+            # The stock catalogue and captured comparison data travel with
+            # every export, including runs that keep legacy material choices.
+            from assign_cw_bo3_types import build_assignments
+            assignments=build_assignments(normalized,a.capture,reference)
         run('separate_cw_tool_surface_projections',[geometry,'--output',staged,'--gdt',tool_gdt],'Writing Radiant tool surfaces')
-        if assignments is not None:shutil.copy2(geometry/'material_assignments.json',staged/'material_assignments.json')
+        (staged/'material_assignments.json').write_text(json.dumps(assignments,indent=2),encoding='utf-8')
         volumes=None
         if a.trigger_capture:
             status('Writing separate trigger and volume prefabs')
@@ -111,12 +119,12 @@ def main():
         from split_cw_brush_roles import split as split_brush_roles
         status('Separating collision clips from other brush roles')
         brush_prefabs=split_brush_roles(staged,reference)
-        report=dict(schema='greyhound-cw-radiant-v6',status='exported',map=name,map_hash=owners['map_hash'],name_resolved=not name.startswith('cw_map_'),
+        report=dict(schema='greyhound-cw-radiant-v11',status='exported',map=name,map_hash=owners['map_hash'],name_resolved=not name.startswith('cw_map_'),
             map_file=target.name,summary=m['summary'],bounded_cleanup=m['bounded_cleanup'],all_placed_brushes_present=True,
             source_capture=str(a.capture),converter_manifest_sha256=sha(HERE/'manifest.json'),map_sha256=sha(target),
             scope='Supported brush hulls only; other collision mesh layouts and render models are not included.',
             compiler_validated=False,compile_note='Prefab export only. No BO3 map host, compilation, lighting or linking was performed.')
-        report['automatic_materials']=assignments['summary'] if assignments else {'enabled':False}
+        report['automatic_materials']=dict(assignments['summary'],enabled=a.auto_types)
         report['trigger_entities']=volumes['summary'] if volumes else {'enabled':False}
         report['bo3_reference_sha256']=sha(TOOLS_ROOT / 'black_ops_3/reference/bo3_reference.json')
         report['scope']='Brush collision and optional supported trigger/volume entities. Render models, unsupported layouts and gameplay scripts are separate.'
@@ -124,15 +132,14 @@ def main():
         report['prefabs']=brush_prefabs
         report['summary']['collision_clip_brushes']=brush_prefabs['brushes_clips']['brushes']
         report['summary']['other_brushes']=brush_prefabs['other_brushes']['brushes']
+        report['summary']['nonblocking_reference_brushes']=brush_prefabs['reference_brushes']['brushes']
+        report['role_split']=json.loads((staged/'collision_metadata.json').read_text())['role_split']
         report['all_placed_brushes_present_across_prefabs']=True
         if volumes is not None:
             report['prefabs'].update(volumes['map_files'])
         report['prefab_layout']='separate_world_space_prefabs'
         if (a.capture/'model_collision_owners.json').exists():
             status('Writing individual model-local collision maps')
-            if assignments is None:
-                from assign_cw_bo3_types import build_assignments
-                assignments=build_assignments(normalized,a.capture,reference)
             from export_cw_model_collmaps import export as export_collmaps
             collmaps_root=a.collmaps_root or a.output.parents[2]/'collmaps'
             report['model_collmaps']=export_collmaps(normalized,a.capture,geometry,assignments,
@@ -155,6 +162,33 @@ def main():
                 format='obj_reference_geometry_not_radiant_brushes',
                 coordinates='source_capture_coordinates_no_placement_applied',
                 compiled=False)
+        status('Verifying stock materials and embedding reference data')
+        from stock_material_metadata import write_stock_metadata
+        embedded=write_stock_metadata(staged,reference,assignments)
+        report['prefabs'].update(json.loads((staged/'collision_metadata.json').read_text()).get('prefabs',{}))
+        for prefab in report['prefabs'].values():
+            prefab['sha256']=sha(staged/prefab['file'])
+        report['map_sha256']=sha(target)
+        report['embedded_data']={name:dict(entry,file='metadata/'+entry['file']) for name,entry in embedded.items()}
+        report['stock_materials_only']=True
+        status('Checking final brush faces and writing ordered corner metadata')
+        from cw_brush_reconstruction import write_face_audit
+        face_audit,face_files=write_face_audit(geometry,staged)
+        report['reconstruction']=m['reconstruction']
+        report['face_audit']={key:face_audit[key] for key in ('counts','maximum','all_final_map_brushes_checked','polygon_status','render_associations')}
+        report['embedded_data'].update(face_files)
+        # Render patches carry captured material/UV attributes, so they are
+        # published after the collision-only stock substitution and face audit.
+        # Never rewrite an unavailable visible material into invisible clip.
+        from export_cw_render_surfaces import export as export_render
+        supplied=a.surfaces or (a.capture/'verified_render_surfaces.jsonl' if (a.capture/'verified_render_surfaces.jsonl').is_file() else None)
+        status('Publishing verified render surfaces and texture-transfer status')
+        transfer,render_prefabs,render_files=export_render(normalized,staged,supplied)
+        report['texture_transfer']=transfer
+        report['prefabs'].update(render_prefabs);report['embedded_data'].update(render_files)
+        report['collision_stock_materials_only']=True
+        report['stock_materials_only']=not render_prefabs
+        report['stock_material_audit_scope']='Collision, tool, trigger and volume prefabs; render surface materials are preserved separately in render_transfer.json.'
         (staged/'export_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
         shutil.copy2(HERE/'manifest.json',staged/'converter_manifest.json')
         log.close();a.output.parent.mkdir(parents=True,exist_ok=True);publish(staged,a.output)

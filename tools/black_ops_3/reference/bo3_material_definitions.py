@@ -19,7 +19,8 @@ from pathlib import Path
 
 def materials(paths, relative_to=None):
     records = {}
-    pattern = r'"([^"\n]+)"\s*(?:\(\s*"material.gdf"\s*\)|\[\s*"([^"\n]+)"\s*\])\s*\{([^{}]*)\}'
+    other_asset_roots = set()
+    pattern = r'"([^"\n]+)"\s*(?:\(\s*"([^"\n]+\.gdf)"\s*\)|\[\s*"([^"\n]+)"\s*\])\s*\{([^{}]*)\}'
     for path in map(Path, paths):
         text = path.read_text(encoding='utf-8-sig')
         # Remove comments without changing source line numbers or quoted strings.
@@ -29,11 +30,14 @@ def materials(paths, relative_to=None):
         source = path.relative_to(relative_to).as_posix() if relative_to else str(path)
         for match in re.finditer(pattern, text):
             name = match[1]
+            if match[2] and match[2] != 'material.gdf':
+                other_asset_roots.add(name)
+                continue
             if name in records:
                 raise ValueError('Duplicate material definition: ' + name)
-            records[name] = dict(name=name, parent=match[2], source=source,
+            records[name] = dict(name=name, parent=match[3], source=source,
                                  line=text.count('\n', 0, match.start()) + 1,
-                                 own_properties=dict(re.findall(r'"([^"\n]*)"\s*"([^"\n]*)"', match[3])))
+                                 own_properties=dict(re.findall(r'"([^"\n]*)"\s*"([^"\n]*)"', match[4])))
     resolved = {}
 
     def resolve(name, trail=()):
@@ -53,4 +57,14 @@ def materials(paths, relative_to=None):
         resolved[name] = dict(**row, properties=properties, inheritance_chain=chain)
         return resolved[name]
 
-    return [resolve(name) for name in records]
+    def material_chain(name, trail=()):
+        # Mixed stock GDTs also contain inherited models/images. Only a chain
+        # ending at an explicitly non-material root is excluded; unresolved
+        # parents and cycles still reach resolve() and fail with provenance.
+        if name not in records:
+            return name not in other_asset_roots
+        if name in trail or not records[name]['parent']:
+            return True
+        return material_chain(records[name]['parent'], (*trail, name))
+
+    return [resolve(name) for name in records if material_chain(name)]

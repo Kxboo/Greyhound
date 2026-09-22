@@ -7,12 +7,33 @@ export are enabled by default. The BO3 reference catalogue and isolated conversi
 runtime ship in `tools/` beside Greyhound; users need no GDT paths, scripts,
 Python installation or BO3 installation to produce the prefabs.
 
+Cold War direct export also reconstructs the supported whole-map brush set:
+after the existing bounded cleanup and conservative subdivision, it recombines
+certified convex pieces within each source brush, up to 32 faces. Merges must
+reuse supplied support equations and pass independent face-volume/hull-volume
+checks. This adds no simplification tolerance and never merges different source
+brushes or placements. Uncertified and tetrahedral fallback partitions stay as
+they were. Model-local collmaps and BO4 keep their separate conversion policies.
+
+The 32-face cap was chosen after a full-map BO3 compile; a 64-face variant failed
+the compiler's intermediate winding limit even with smaller final polygons.
+That regression test does not imply every newly exported map has been compiled.
+
 The export folder contains:
 
-* `<map>_brush_collision.map`: assigned BO3 collision clip families, including
-  player, missile, physics, AI, AI-wallrun, `nosight_noclip` and unresolved `clip` fallbacks
-  (including source solid geometry assigned `clip`). Source flags and uncertainty
-  remain in the metadata; organization does not claim a more certain decode.
+* `<map>_brush_collision.map`: collision clip families after source-based role
+  exclusions. Unknown contents (including the unresolved base-solid bit) still
+  retain their collision fallback and explicit uncertainty.
+* `<map>_nonblocking_reference.map`: source non-solid/no-query shapes, zero-contents
+  shapes with unjoined surfaces, and stock clip candidates that would add player
+  collision to a fully decoded non-player query mask. Every face uses stock
+  `nodraw_notsolid`; proposed materials, source flags and exclusion reasons remain
+  in metadata. These shapes retain their placement on the visible `CW_Reference`
+  editor layer, with `flags ignore` to exclude them from compilation. This uses
+  the same BO3 layer mechanism as Corvid's No Comp layer, without hiding it.
+  Keep this layer excluded: compiling thousands of reference brushes can exceed
+  BSP compiler limits even when their material has no collision queries.
+  A reference classification does not assert the source lacked projectile/AI queries.
 * `<map>_other_brushes.map`: ladder/mantle/mount,
   caulk, skip and other non-clip tools. These are preserved for optional use.
   Material properties and geometry are unchanged.
@@ -23,6 +44,19 @@ The export folder contains:
   prefabs already use the same world coordinates. No combined prefab is generated.
 * `collision_metadata.json`: original brush identity, placements, partition
   certificates, bounds and bounded geometry cleanup measurements.
+* `brush_faces.jsonl`: ordered world-space face corners, support planes, areas,
+  source identities, final prefab brush ordinals, assigned materials and internal
+  partition-face classification. Render material/UV fields remain unset until a
+  verified render association exists; collision surface flags cannot supply it.
+* `brush_face_audit.json`: independent final MAP plane/material readback against
+  the checked hull cache, corner coverage, cache hashes and measured float32
+  plane-parsing error. Unresolved polygons remain explicit and never remove a
+  solid. Both face files and collision metadata are hashed in the v11 report.
+* `render_transfer.json`: explicit texture-transfer availability, source hashes,
+  material dependencies and surface counts. Collision face UVs remain unset;
+  actual render associations live in `verified_render_surfaces.jsonl`.
+* `<map>_render_surfaces.map`, when verified associations are supplied: separate
+  nonColliding render patches preserving material names, corner UVs and colors.
 * `material_assignments.json`: original contents and side-filter values, named
   flags, chosen BO3 material, source reference, confidence, unknown fields and
   added/omitted properties. Closest alternatives are recorded for review.
@@ -34,6 +68,36 @@ The export folder contains:
 * `export_report.json`: map hash, completeness, output hashes and summary counts.
   `prefabs` lists the category, filename, SHA-256 and counts for each output.
   `primary_map_file` identifies the brushes/clips prefab for older consumers.
+* `bo3_stock_reference.json`: the complete bundled stock material definitions,
+  inheritance, GDT source hashes, tool-image aliases and editor property data.
+* `stock_material_audit.json`: every emitted brush and lightmap material name,
+  its stock definition and per-map face counts. Unavailable names use the closest
+  captured stock recommendation, then a compatible stock authoring profile when
+  available, with generic `clip` as the last fallback. Geometry is retained and
+  every substitution is recorded. Lightmaps fall back to stock `lightmap_gray`.
+  These files and `material_assignments.json` are always embedded and hashed,
+  even when automatic assignment is disabled. The source comparison then remains
+  a recommendation; the audit inventories the materials actually emitted.
+  Individual model collmap runs carry the same reference and source decisions.
+
+### Verified texture transfer
+
+The direct CW export consumes `verified_render_surfaces.jsonl` automatically
+when present beside the native capture, or accepts `--surfaces <file>` in the
+packaged converter CLI. Records follow TerrainReconstructor's
+`brush-render-surface-v1` contract: matching normalized capture SHA-256,
+`source_id` (world, instance, collision asset, brush), `association: verified`,
+producer evidence, world vertices, normalized-repeat UVs, texture dimensions,
+material name and optional vertex RGBA. Planar convex polygons are accepted;
+source triangles preserve triangulation-dependent UVs. Quads produce one patch;
+triangles produce three nondegenerate quads with interpolated attributes.
+
+The material names and UVs are retained without collision-stock substitution.
+Required target materials/images must be installed separately. The producer's
+join is not established by this writer: the saved collision-only Silver and
+Mauer captures currently contain no verified render/UV association file. Such
+exports explicitly report unavailable and emit no fabricated textured prefab.
+All supplied association bytes and rendered prefab hashes are sealed in v11.
 
 ### Optional collision surfaces
 
@@ -63,6 +127,16 @@ not export stages; `combine_cw_radiant_prefabs` targets a different volume-expor
 shape than `export_cw_bo3_trigger_entities` returns and would need that mismatch
 resolved before it could be offered as a layout option.
 
+Verified uniform surface enums can refine an unresolved generic clip to a stock
+surface variant, such as `concrete_clip`. Exact enums precede documented related
+stock families. Additional approximations are asphalt to concrete, ceramic to
+brick, rubber to plastic and paper to cloth; these are authoring choices, not
+recovered enum equivalences or authored textures. This keeps the source contents bits
+unresolved and records added collision flags; it does not equate implicit solid
+behavior across engines. Mixed, default, unknown and unjoined surfaces retain
+the generic fallback. Stock availability and named-property matches are separate
+from compiler or gameplay equivalence.
+
 Unresolved map names use `cw_map_<hash>` filenames. Data association uses the
 verified map hash, not filenames or a previous map's export.
 
@@ -70,12 +144,34 @@ Progress JSON is best-effort telemetry. Windows file-sharing conflicts are
 retried and never abort geometry conversion; the native reader permits
 delete-sharing. `export_report.json` remains the completion authority.
 
+Individual model-local collision maps use a fresh map folder for each export:
+`collmaps/black_ops_cw/<map>`, then `<map>_2`, `<map>_3`, and so on. Existing
+files and manifests are retained even if collision materials or geometry have
+changed. The brush export report's `model_collmaps.folder` identifies the folder
+for that run.
+
+Model-local runs use the same source behavior gate. Root model-named `.map`
+files contain collision; `references/<model>.map` holds excluded pieces using
+`nodraw_notsolid` on the same no-compile reference layer, still at the model-local origin. Physics-only shapes no
+longer become player clips: the proposed stock clip is recorded but not applied.
+Mixed models are split per brush, preserving all supported geometry across both
+roles. Neither `noDraw` nor `nonSolid` alone proves absence of collision queries.
+
 ## Automatic selection and current limits
 
 Greyhound captures the active map's filter table and named flag definitions with
 the brush payloads, then verifies the readbacks. A filter table can supply surface
 names only when pointers and per-brush contents unions agree. Null-pointer shapes
 retain their raw indices without borrowing another map's surface labels.
+Each pointer-backed brush is validated independently. A mismatched contents union
+or out-of-range index on one brush does not discard the other brushes' matching
+surface evidence. Per-brush validation results are retained in assignments v5.
+
+Selection preserves omitted queries, added non-item queries, and slick/nonSolid
+behavior first. Within those constraints, exact and related surfaces precede
+generic tools. An extra itemClip property is explicitly recorded but no longer
+erases an otherwise compatible surface match. Unknown and mixed side data stay
+unresolved; a category vote is not a brush-to-render UV association.
 
 The bundled catalogue contains stock material definitions from BO3's clip and
 tool GDTs, including their full properties and source hashes. Candidate comparisons
@@ -164,8 +260,17 @@ entity definitions. This is a developer maintenance
 step, never a user export requirement. `package_runtime.py` bundles the converter,
 catalogue and isolated Python/NumPy/SciPy runtime and writes integrity hashes.
 
-The current material catalogue includes 233 installed definitions, resolving
-inherited clip/tool materials across both GDTs with source provenance. Related
+The primary material catalogue includes 233 installed definitions, resolving
+inherited clip/tool materials across both GDTs with source provenance. The full
+installed GDT scan additionally retains tool/invisible definitions and an inventory
+of every remaining render material. Each captured semantic profile compares every
+primary and supplemental tool, including slick and special-role materials which
+need more source evidence before automatic application. No candidates are hidden
+by the five-result preview. All six caulk variants participate in property ranking;
+ordinary caulk ties retain caulk_shadow, while captured shadow/occlusion flags can
+select a specialized variant. Caulk is emitted in the other-brushes prefab.
+Every export embeds STOCK_MATERIALS.md, CAPTURED_BRUSH_MATERIALS.md and
+BO3_RENDER_MATERIALS.md with the JSON evidence and integrity hashes. Related
 stock surface families can be selected when an exact type is unavailable;
 assignment metadata records the approximation. See
 [collision documentation](../../../docs/cw-collision.md) for the workflow and remaining gaps.

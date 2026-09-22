@@ -25,6 +25,8 @@ stay outside that folder. Use the report's `prefabs` entries to locate outputs.
 | --- | --- |
 | `<map>_brush_collision.map` | Assigned collision/clip families |
 | `<map>_other_brushes.map` | Other tools, including supported traversal brushes |
+| `<map>_nonblocking_reference.map` | Excluded shapes on the visible no-compile reference layer |
+| `<map>_render_surfaces.map` | Verified supplied material/UV surfaces, when available |
 | `<map>_volumes.map` | Captured volume entities, when enabled |
 | `<map>_triggers.map` | Supported trigger geometry, when enabled |
 | `metadata/collision_metadata.json` | Source identities, instances, transforms and geometry checks |
@@ -47,8 +49,10 @@ The capture saves filter tables and named contents, surface and traversal
 declarations. A surface label is accepted only when its pointer association
 and per-brush contents union agree. Unjoined indices remain unresolved.
 
-Material selection prioritizes omitted collision properties, then added
-properties, then surface differences. Mixed source surfaces use their most
+Material selection prioritizes omitted collision properties, added non-item
+queries, and slick/nonSolid behavior. Within these constraints it prefers exact
+surface enums, then documented related families, before a generic tool. Added
+itemClip is explicitly recorded. Mixed source surfaces use their most
 frequent named type with a deterministic tie break. The selected tool and
 every approximation remain in the assignment report.
 
@@ -88,15 +92,25 @@ component uses the 208-byte brush header at its own measured offset.
 
 ## Physics policy
 
-Model-local physics-only assignments use ordinary `clip`, or a supported
-surface-specific clip when the source information is known. This intentionally
-adds player blocking and is a fallback for authoring, not verified CW physics.
+Model-local physics-only shapes remain in the nonblocking reference output.
+The proposed clip material is recorded, but it is not applied as player collision.
 
 The manifest records source materials, substitutions and
 `physics_conversion_verified=false`. Original assignments remain in
 `diagnostics/radiant_work/physics_research/`. Mass, inertia, constraints,
 dynamics and compact-triangle reconstruction are outside this policy.
 World-brush assignments are separate.
+
+## Texture transfer
+
+The direct exporter can consume independently verified material/UV associations
+from `verified_render_surfaces.jsonl` beside a capture, or the converter CLI's
+`--surfaces` option. It emits nonColliding render patches separately from brush
+collision and preserves the supplied material, UV and optional color data.
+`metadata/render_transfer.json` records availability on every export. The saved
+collision-only captures do not contain those associations; surface categories
+and render-model ownership are not sufficient to reconstruct original textures.
+See the [runtime contract](../tools/shared/runtime/README.md#verified-texture-transfer).
 
 ## Other collision and navigation
 

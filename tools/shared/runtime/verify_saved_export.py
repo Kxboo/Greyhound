@@ -36,8 +36,26 @@ def verify(report_path):
     prefabs = report.get('prefabs', {})
     if not prefabs:
         raise ValueError('Report contains no prefab inventory')
+    embedded = report.get('embedded_data', {})
+    if schema in ('greyhound-cw-radiant-v7','greyhound-cw-radiant-v8','greyhound-cw-radiant-v9','greyhound-cw-radiant-v10','greyhound-cw-radiant-v11'):
+        required = {'bo3_stock_reference.json', 'material_assignments.json', 'stock_material_audit.json'}
+        if schema in ('greyhound-cw-radiant-v8','greyhound-cw-radiant-v9','greyhound-cw-radiant-v10','greyhound-cw-radiant-v11'):
+            required.update({'STOCK_MATERIALS.md','CAPTURED_BRUSH_MATERIALS.md','BO3_RENDER_MATERIALS.md'})
+        if schema in ('greyhound-cw-radiant-v9','greyhound-cw-radiant-v10','greyhound-cw-radiant-v11'):
+            required.update({'brush_faces.jsonl','brush_face_audit.json','collision_metadata.json'})
+        if schema == 'greyhound-cw-radiant-v11':
+            required.add('render_transfer.json')
+            transfer=report.get('texture_transfer',{})
+            if transfer.get('status') not in ('verified_surfaces_exported','render_material_uv_associations_unavailable'):
+                raise ValueError('Export omits texture transfer status')
+            if transfer['status']=='verified_surfaces_exported':
+                required.add('verified_render_surfaces.jsonl')
+                if 'render_surfaces' not in prefabs:
+                    raise ValueError('Export omits declared render surface prefab')
+        if not required.issubset(embedded):
+            raise ValueError('Export omits required embedded stock material data')
     checks = []
-    for key, entry in prefabs.items():
+    for key, entry in [*prefabs.items(), *embedded.items()]:
         name = entry.get('file', key)
         item = dict(file=name, passed=False)
         try:
@@ -49,7 +67,7 @@ def verify(report_path):
                 raise ValueError('Published report has no valid SHA-256 for this prefab; integrity cannot be verified')
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             if digest != expected:
-                raise ValueError('Prefab hash differs from the published inventory')
+                raise ValueError('File hash differs from the published inventory')
             item.update(passed=True, sha256=digest, bytes=path.stat().st_size)
         except (OSError, KeyError, ValueError) as error:
             item['error'] = str(error)

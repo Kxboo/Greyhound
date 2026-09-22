@@ -25,7 +25,7 @@ class BasicToolsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.reference=json.loads((TOOLS_ROOT / 'black_ops_3/reference/bo3_reference.json').read_text())
 
-    def decision(self, contents, surface, joined=True, traversal=False, surface_types=()):
+    def decision(self, contents, surface, joined=True, traversal=False, surface_types=(), bad_sibling=None):
         flags=[dict(name=n,field_12=hex(s),field_16=hex(c)) for n,s,c in
                [('mount',0x4000000,0x400000),('playerClip',0,0x10000),
                 ('missileClip',0,0x80),('sky',4,0x800),('portal',0x80000000,0),
@@ -44,8 +44,14 @@ class BasicToolsTests(unittest.TestCase):
             (root/'brush_type_capture.json').write_text(json.dumps(dict(readback_unchanged=True,map_hash='0x123',named_flags=flags,traversal_flags=enums,
                 surface_types=list(surface_types),filter_entries=[dict(surface_raw=hex(surface),contents_raw=hex(contents))])))
             decoded=dict(pointer_layout_verified=joined,side_contents_union_mismatches=[],brushes=[dict(brush_index=0,contents=hex(contents),sides=[dict(filter_index=0)]*6)])
+            if bad_sibling:
+                sibling=dict(brush_index=1,contents=hex(contents ^ 4),sides=[dict(filter_index=0)]*6)
+                if bad_sibling=='out_of_range':sibling['sides'][0]['filter_index']=1023
+                decoded['brushes'].append(sibling)
+                decoded['side_contents_union_mismatches']=[1]
             with patch.object(types,'decode',return_value=decoded):
-                return types.build_assignments(root,root,self.reference)['brushes']['0:0']['decision']
+                self.last_report=types.build_assignments(root,root,self.reference)
+                return self.last_report['brushes']['0:0']['decision']
 
     def test_mount_contents_survive_missing_surface_join(self):
         result=self.decision(0x400000,0,False)
@@ -108,10 +114,97 @@ class BasicToolsTests(unittest.TestCase):
         self.assertNotEqual(result['material'],'skip')
         self.assertNotIn('playerClip',result['omitted_contents'])
 
+    def test_every_tool_is_compared_even_when_not_automatically_applied(self):
+        decision=self.decision(1,0x10a0)
+        profile=self.last_report['candidate_profiles'][decision['candidate_profile']]
+        candidates={r['material']:r for r in profile['candidates']}
+        expected={m['name'] for m in [*self.reference['materials'],*self.reference.get('supplemental_materials',[])]}
+        self.assertEqual(set(candidates),expected)
+        self.assertEqual(decision['candidates_examined'],len(expected))
+        self.assertEqual(profile['brush_keys'],['0:0'])
+        caulks={n for n in expected if n.startswith('caulk')}
+        self.assertEqual(len(caulks),6)
+        self.assertTrue(all(candidates[n]['automatic_selection_eligible'] for n in caulks))
+        self.assertFalse(candidates['clip_slick']['automatic_selection_eligible'])
+        self.assertIn('slick_requires_verified_uniform_sides',candidates['clip_slick']['not_automatically_applied_reasons'])
+        self.assertEqual(decision['material'],'caulk_shadow')
+        self.assertFalse(decision['exact_known_properties'])
+
+    def test_caulk_transparent_is_available_when_no_cast_shadow_is_captured(self):
+        result=self.decision(1,0x410a0)
+        self.assertEqual(result['material'],'caulk_transparent')
+
     def test_unjoined_surface_cannot_invent_tool_names(self):
         result=self.decision(0,0x80004080,False)
         self.assertEqual(result['status'],'REVIEW_EXISTING_FALLBACK')
         self.assertNotEqual(result['material'],'portal')
+
+    def test_bad_sibling_does_not_erase_other_brush_surface_families(self):
+        enums=[dict(name='concrete',field_12='0x500000',field_16='0'),
+               dict(name='metal',field_12='0xd00000',field_16='0'),
+               dict(name='rock',field_12='0x1100000',field_16='0')]
+        for bad in ('contents_mismatch','out_of_range'):
+            for code,name in ((0x500000,'concrete_clip_nosight'),(0xd00000,'metal_clip_nosight'),
+                              (0x1100000,'rock_clip_nosight')):
+                with self.subTest(bad=bad,material=name):
+                    result=self.decision(0x131640,code|0x440a0,surface_types=enums,bad_sibling=bad)
+                    self.assertEqual(result['material'],name)
+                    valid=self.last_report['brushes']['0:0'];invalid=self.last_report['brushes']['0:1']
+                    self.assertEqual(valid['filter_association'],'pointer_backed_union_verified')
+                    self.assertTrue(valid['filter_validation']['union_matches_brush'])
+                    self.assertEqual(invalid['filter_association'],'unresolved_global_filter_association')
+                    self.assertIsNone(invalid['common_surface_flags'])
+                    self.assertEqual(invalid['surface_types']['counts'],{})
+                    self.assertEqual(self.last_report['summary']['filter_associations'],
+                        dict(pointer_backed_union_verified=1,unresolved_global_filter_association=1))
+
+    def test_unresolved_contents_retain_independently_verified_stock_surface(self):
+        enums=[dict(name='concrete',field_12='0x500000',field_16='0')]
+        result=self.decision(1,0x500000,surface_types=enums)
+        self.assertEqual(result['material'],'concrete_clip')
+        self.assertEqual(result['status'],'REVIEW_STOCK_SURFACE_FALLBACK')
+        self.assertTrue(result['surface_type_retained'])
+        self.assertFalse(result['exact_known_properties'])
+        self.assertIn('itemClip',result['added_contents'])
+        unjoined=self.decision(1,0x500000,joined=False,surface_types=enums)
+        self.assertEqual(unjoined['material'],'clip')
+        self.assertEqual(unjoined['status'],'REVIEW_EXISTING_FALLBACK')
+
+    def test_unknown_surface_cannot_refine_unresolved_contents(self):
+        enums=[dict(name='concrete',field_12='0x500000',field_16='0')]
+        result=self.decision(1,0x600000,surface_types=enums)
+        self.assertEqual(result['material'],'clip')
+        self.assertFalse(result['surface_type_retained'])
+
+    def test_related_surface_families_precede_unresolved_generic_clip(self):
+        for source,target in [('asphalt','concrete'),('ceramic','brick'),('rubber','plastic'),
+                              ('paper','cloth')]:
+            with self.subTest(source=source):
+                result=self.decision(1,0x500000,surface_types=[dict(name=source,field_12='0x500000',field_16='0')])
+                self.assertEqual(result['bo3_surface_type'],target)
+                self.assertEqual(result['surface_type_match'],'related_stock_family')
+                self.assertFalse(result['surface_type_retained'])
+                self.assertFalse(result['exact_known_properties'])
+                self.assertEqual(result['status'],'REVIEW_STOCK_SURFACE_FALLBACK')
+
+    def test_exact_stock_surface_precedes_related_family(self):
+        result=self.decision(1,0x500000,surface_types=[dict(name='metalcatwalk',field_12='0x500000',field_16='0')])
+        self.assertEqual(result['bo3_surface_type'],'metalcatwalk')
+        self.assertEqual(result['surface_type_match'],'exact_named_enum')
+
+    def test_surface_preference_does_not_override_player_or_projectile_queries(self):
+        # An item-only addition is an explicit stock approximation; new actor
+        # or projectile blocking remains ahead of surface preference.
+        generic=types.material_score(set(),set(),set(),set(),2)
+        exact_item=types.material_score(set(),{'itemClip'},set(),set(),0)
+        self.assertLess(exact_item,generic)
+        for query in ('playerClip','bulletClip','missileClip','aiClip'):
+            self.assertGreater(types.material_score(set(),{query},set(),set(),0),generic)
+
+    def test_nodraw_notsolid_uses_material_name_not_image_alias(self):
+        result=self.decision(0,0x440b0)
+        self.assertEqual(result['material'],'nodraw_notsolid')
+        self.assertNotEqual(result['material'],'nodraw_nonsolid')
 
     def test_approximate_mount_retains_omitted_query_metadata(self):
         result=self.decision(0x410000,0x4080)

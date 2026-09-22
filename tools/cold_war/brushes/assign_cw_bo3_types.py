@@ -28,7 +28,20 @@ RELATED_SURFACE_TYPES = {
     'metalthin':'metal', 'paintedmetal':'metal', 'glasscar':'glass',
     'glassbulletproof':'glass', 'watershallow':'water', 'tallgrass':'grass',
     'bark':'wood',
+    # Authoring approximations where BO3 has no stock invisible tool for the
+    # captured enum. These are response families, not decoded enum aliases.
+    'asphalt':'concrete', 'ceramic':'brick', 'rubber':'plastic', 'paper':'cloth',
 }
+
+
+def material_score(missing, added, surface, actual_surface, distance):
+    # Preserve query behavior before appearance. Within that constraint, a
+    # surface-specific stock tool may add itemClip rather than erase a known
+    # surface enum. The additional item response stays explicit in the audit.
+    return (len(missing), len(added-{'itemClip'}),
+            len((actual_surface^surface)&{'slick','nonSolid'}) if surface is not None else 0,
+            distance, len(added),
+            len(actual_surface^surface) if surface is not None else 0)
 
 
 def surface_distance(source, target):
@@ -54,12 +67,11 @@ def basic_tool_family(contents, surface, traversal=None):
     if 'portal' in names:return {'portal'}
     if 'sky' in names:return {'sky'}
     if 'caulk' in names:
-        if 'onlyCastSunShadow' in names:return {'caulk_sun_shadow'}
-        if 'outdoorOccluder' in names:return {'caulk_outdoor_occluder'}
-        return {'caulk_shadow'}
+        return {'caulk','caulk_shadow','caulk_shadow_primary','caulk_transparent',
+                'caulk_sun_shadow','caulk_outdoor_occluder'}
     # Non-solid without collision-query contents is closer to skip than a solid
     # player clip. This does not identify the original volume's authored purpose.
-    if 'nonSolid' in names and contents <= {'nonColliding'}:return {'skip'}
+    if 'nonSolid' in names and contents <= {'nonColliding'}:return {'skip','nodraw_notsolid'}
     return set()
 
 
@@ -94,14 +106,20 @@ def build_assignments(normalized, native, reference):
         name=material['name'];props=material['properties']
         candidates.append((material,{n for n in cb if props.get(n)=='1'},{n for n in sb if props.get(n)=='1'}))
     if not candidates:raise ValueError('Bundled BO3 catalogue has no clip tools')
+    primary_names={m['name'] for m,_,_ in candidates}
+    comparison_candidates=list(candidates)
+    for material in reference.get('supplemental_materials',[]):
+        props=material['properties']
+        comparison_candidates.append((material,{n for n in cb if props.get(n)=='1'},
+                                      {n for n in sb if props.get(n)=='1'}))
     filters=[(int(f['surface_raw'],16),int(f['contents_raw'],16)) for f in types['filter_entries']]
-    choices={};join_counts=Counter();cache={};slick=[]
+    choices={};join_counts=Counter();cache={};slick=[];candidate_profiles={}
     def choose(contents,surface,unknown_c,unknown_s,uniform,traversal,surface_counts):
         preferred=min(surface_counts,key=lambda n:(-surface_counts[n],n)) if surface_counts else None
         key=(tuple(sorted(contents)),None if surface is None else tuple(sorted(surface)),unknown_c,unknown_s,uniform,traversal,tuple(sorted(surface_counts.items())))
         if key in cache:return cache[key]
         ranked=[];family=basic_tool_family(contents,surface,traversal)
-        for m,c,s in candidates:
+        for m,c,s in comparison_candidates:
             c=set(c)
             # BO3 uses a climb enum; CW's enum table also supplies contents
             # contributed by that climb type, separately from named booleans.
@@ -113,24 +131,35 @@ def build_assignments(normalized, native, reference):
                 if sr['name']==props.get('surfaceType'):
                     c.update(unpack(int(sr['field_16'],16),cb)[0])
             allowed_surfaces=set(surface_counts)|{RELATED_SURFACE_TYPES[n] for n in surface_counts if n in RELATED_SURFACE_TYPES}|{'<none>'}
-            eligible=m['name'] in family if family else ('clip' in m['name'].split('_') or m['name']=='nosight_noclip') and props.get('noDraw')=='1' and props.get('surfaceType') in allowed_surfaces
+            reasons=[]
+            if m['name'] not in primary_names:reasons.append('supplemental_engine_or_render_tool_requires_role_evidence')
+            if family:
+                if m['name'] not in family:reasons.append('different_named_tool_family')
+            else:
+                if not ('clip' in m['name'].split('_') or m['name']=='nosight_noclip'):
+                    reasons.append('different_editor_role_requires_evidence')
+                if props.get('noDraw')!='1':reasons.append('visible_material_for_collision_capture')
+                if props.get('surfaceType') not in allowed_surfaces:reasons.append('different_surface_family')
             # Positive slick evidence on every side is needed to make a whole
             # output brush slippery. This also protects null-pointer shapes.
-            if ('slick' in s) and (surface is None or 'slick' not in surface or not uniform):continue
+            if ('slick' in s) and (surface is None or 'slick' not in surface or not uniform):
+                reasons.append('slick_requires_verified_uniform_sides')
+            eligible=not reasons
             extra_c=c-contents;missing_c=contents-c
             extra_s=s-surface if surface is not None else set()
             missing_s=surface-s if surface is not None else set()
             surface_match=preferred is not None and props.get('surfaceType')==preferred
-            score=(len(missing_c),len(extra_c),len((s^surface)&{'slick','nonSolid'}) if surface is not None else 0,
-                   surface_distance(preferred,props.get('surfaceType')),len(extra_s)+len(missing_s))
+            score=material_score(missing_c,extra_c,surface,s,
+                                 surface_distance(preferred,props.get('surfaceType')))
             # Prefer generic shipped tools when named fields cannot distinguish
             # campaign-specific aliases. Keep all ties in the audit.
-            tie=(0 if m['name'] in {'clip','clip_player','clip_ai','clip_full','clip_nosight','clip_slick','clip_slick_player','clip_physics','clip_missile','nosight_noclip'} else 1,len(m['name']),m['name'])
+            tie=(0 if m['name'] in {'clip','clip_player','clip_ai','clip_full','clip_nosight','clip_slick','clip_slick_player','clip_physics','clip_missile','nosight_noclip','caulk_shadow'} else 1,len(m['name']),m['name'])
             exact=not(extra_c or missing_c or extra_s or missing_s or unknown_c or unknown_s) and surface is not None and uniform and (preferred is None or surface_match) and len(surface_counts)<=1
             ranked.append((score,tie,dict(material=m['name'],source=m['source'],source_line=m['line'],
                 added_contents=sorted(extra_c),omitted_contents=sorted(missing_c),
                 added_surface_flags=sorted(extra_s),omitted_surface_flags=sorted(missing_s),
                 exact_known_properties=exact,automatic_selection_eligible=eligible,
+                not_automatically_applied_reasons=reasons,ranking_score=list(score),
                 bo3_surface_type=props.get('surfaceType'),bo3_climb_type=props.get('surfaceClimbType'),
                 bo3_no_draw=props.get('noDraw'),bo3_non_solid=props.get('nonSolid'),
                 preferred_source_surface=preferred,source_surface_counts=dict(surface_counts),
@@ -138,6 +167,19 @@ def build_assignments(normalized, native, reference):
                 surface_type_match='exact_named_enum' if surface_match else 'related_stock_family' if surface_distance(preferred,props.get('surfaceType'))==1 else 'generic_or_different',
                 comparison_scope='Named fields only; compiled contents, surface/climb enums and tool-specific behavior are not proven')))
         ranked.sort(key=lambda x:(x[0],x[1]))
+        # Keep every comparison once per semantic profile, rather than copying
+        # hundreds of candidates into every placed brush. Side-by-side source
+        # words and counts remain on the brush itself; no candidates are hidden.
+        profile_source=dict(named_contents=sorted(contents),
+            common_surface_flags=sorted(surface) if surface is not None else None,
+            unknown_contents=hex(unknown_c),unknown_surface_bits=hex(unknown_s) if unknown_s is not None else None,
+            uniform_surface_flags=uniform,traversal=traversal,
+            surface_types=sorted(surface_counts),preferred_source_surface=preferred)
+        profile_id=hashlib.sha256(json.dumps(profile_source,sort_keys=True).encode()).hexdigest()[:16]
+        if profile_id not in candidate_profiles:
+            candidate_profiles[profile_id]=dict(source=profile_source,
+                candidates=[dict(rank=i+1,**{k:v for k,v in r[2].items() if k!='source_surface_counts'})
+                            for i,r in enumerate(ranked)])
         # Explicit named tool behavior takes precedence over generic clips.
         # Other editor-volume and traversal variants still require their own evidence.
         eligible=[r for r in ranked if r[2]['automatic_selection_eligible']]
@@ -151,6 +193,7 @@ def build_assignments(normalized, native, reference):
         elif surface is None and not best['added_contents'] and not best['omitted_contents'] and not unknown_c:status='CONTENTS_MATCH_SURFACE_UNKNOWN'
         else:status='APPROXIMATE_BO3_TOOL' if family else 'CLOSEST_BO3_APPLIED'
         result=dict(**best,status=status,candidates_examined=len(ranked),automatic_candidates_examined=len(eligible),
+            candidate_profile=profile_id,
             selection_policy='basic_named_tool' if family else 'closest_named_collision_properties',
             reason='Basic BO3 tool selected from named CW behavior; property differences remain in JSON.' if family else 'Closest supported BO3 collision properties are applied; approximation is recorded.',
             closest_candidates=[x[2] for x in ranked[:5]])
@@ -160,15 +203,19 @@ def build_assignments(normalized, native, reference):
         raw=(normalized/model['payload']['file']).read_bytes()
         if sha(normalized/model['payload']['file'])!=model['payload']['sha256']:raise ValueError('Payload hash changed')
         sides=decode(raw,model)
-        # Raw indices are retained even if the global table cannot be joined.
-        in_range=all(s['filter_index']<len(filters) for b in sides['brushes'] for s in b['sides'])
-        checked=decode(raw,model,filters) if in_range else None
-        joined=bool(sides['pointer_layout_verified'] and checked is not None and not checked['side_contents_union_mismatches'])
-        join='pointer_backed_union_verified' if joined else 'unresolved_global_filter_association'
-        join_counts[join]+=len(sides['brushes'])
         for b in sides['brushes']:
             mask=int(b['contents'],16);contents,unknown_c=unpack(mask,cb)
             ids=[s['filter_index'] for s in b['sides']];surface=None;unknown_s=None;uniform=False
+            # The array layout belongs to the asset, but a contents union belongs
+            # to one brush. A bad sibling must not erase independently matching
+            # source evidence across an otherwise pointer-verified asset.
+            in_range=bool(ids) and all(0<=i<len(filters) for i in ids)
+            side_union=0
+            if in_range:
+                for i in ids:side_union|=filters[i][1]
+            joined=bool(sides['pointer_layout_verified'] and in_range and side_union==mask)
+            join='pointer_backed_union_verified' if joined else 'unresolved_global_filter_association'
+            join_counts[join]+=1
             traversal=None;traversal_codes=None;traversal_status='unjoined_surface_table'
             surface_counts=Counter();surface_codes=[]
             if joined:
@@ -200,6 +247,27 @@ def build_assignments(normalized, native, reference):
                 from export_cw_radiant_brushes import CHOICES
                 fallback=CHOICES.get(mask,'clip')
                 actual,actual_c,actual_s=next(x for x in candidates if x[0]['name']==fallback)
+                # An unresolved contents bit does not invalidate a separately
+                # verified, uniform surface enum. Preserve that response using
+                # the closest stock variant of the existing clip fallback.
+                # Do not infer base-solid compiler behavior or pick a majority
+                # surface for mixed/default/unknown sides.
+                surface_fallback=False
+                if (joined and surface_codes and len(set(surface_codes))==1
+                        and surface_codes[0] in surface_values):
+                    source_surface=surface_values[surface_codes[0]]
+                    variants=[(m,c,s) for m,c,s in candidates
+                        if surface_distance(source_surface,m['properties'].get('surfaceType'))<=1
+                        and m['properties'].get('usage')=='clip'
+                        and m['properties'].get('noDraw')=='1'
+                        and actual_c <= c and ('slick' not in s or (uniform and 'slick' in surface))
+                        and m['properties'].get('surfaceClimbType','<none>')=='<none>']
+                    if variants:
+                        actual,actual_c,actual_s=min(variants,key=lambda x:(
+                            len((x[1]-actual_c)-{'itemClip'}),
+                            surface_distance(source_surface,x[0]['properties'].get('surfaceType')),
+                            len(x[1]-actual_c),len(x[2]^actual_s),len(x[0]['name']),x[0]['name']))
+                        fallback=actual['name'];surface_fallback=True
                 decision.update(material=fallback,
                     source=actual['source'],source_line=actual['line'],exact_known_properties=False,
                     bo3_surface_type=actual['properties'].get('surfaceType'),
@@ -208,21 +276,39 @@ def build_assignments(normalized, native, reference):
                     added_contents=sorted(actual_c-contents),omitted_contents=sorted(contents-actual_c),
                     added_surface_flags=sorted(actual_s-surface) if surface is not None else [],
                     omitted_surface_flags=sorted(surface-actual_s) if surface is not None else [],
-                    status='REVIEW_EXISTING_FALLBACK',
-                    reason='No identified tool behavior or collision-query contents; retained unresolved fallback.')
+                    surface_type_retained=bool(surface_counts) and actual['properties'].get('surfaceType') in surface_counts,
+                    surface_type_match=('exact_named_enum' if actual['properties'].get('surfaceType')==source_surface
+                        else 'related_stock_family') if surface_fallback else 'generic_or_different',
+                    status='REVIEW_STOCK_SURFACE_FALLBACK' if surface_fallback else 'REVIEW_EXISTING_FALLBACK',
+                    selection_policy='stock_surface_variant_of_unresolved_clip' if surface_fallback else decision['selection_policy'],
+                    reason=('Verified uniform surface matched to an exact or explicitly related stock variant of the existing clip fallback. '
+                            'Unresolved contents and added query properties still require review.' if surface_fallback else
+                            'No identified tool behavior or collision-query contents; retained unresolved fallback.'))
             key=f"{model['index']}:{b['brush_index']}"
             choices[key]=dict(asset_index=model['index'],collision_hash=model['name_hash'],brush_index=b['brush_index'],
                 contents_raw=hex(mask),named_contents=sorted(contents),unknown_contents=hex(unknown_c),
                 common_surface_flags=sorted(surface) if surface is not None else None,
                 unknown_surface_bits=hex(unknown_s) if unknown_s is not None else None,
                 uniform_surface_flags=uniform,filter_association=join,side_filter_indices=ids,decision=decision)
+            choices[key]['filter_validation']=dict(scope='source_brush',
+                pointer_layout_verified=bool(sides['pointer_layout_verified']),
+                indices_in_range=in_range,side_contents_union=hex(side_union) if in_range else None,
+                source_contents=hex(mask),union_matches_brush=in_range and side_union==mask)
             choices[key]['traversal']=dict(status=traversal_status,name=traversal,
                 side_values=[hex(v) for v in traversal_codes] if traversal_codes is not None else None)
             choices[key]['surface_types']=dict(counts=dict(surface_counts),side_values=[hex(v) for v in surface_codes],
                 unknown_values=sorted({hex(v) for v in surface_codes if v and v not in surface_values}))
             if decision['material']=='clip_slick':slick.append(key)
-    return dict(schema='greyhound-bo3-material-assignments-v2',map=capture['map'],map_hash=capture['map_hash'],
+    for profile_id,profile in candidate_profiles.items():
+        keys=[key for key,b in choices.items() if b['decision']['candidate_profile']==profile_id]
+        profile['brush_keys']=keys
+        profile['chosen_material_counts']=dict(Counter(choices[key]['decision']['material'] for key in keys))
+    return dict(schema='greyhound-bo3-material-assignments-v5',map=capture['map'],map_hash=capture['map_hash'],
+        related_surface_families=RELATED_SURFACE_TYPES,
+        material_preference_policy='Preserve omitted query flags, added non-item queries and slick/nonSolid first; then prefer exact surface, documented related family, generic. An extra itemClip flag is recorded but does not erase an otherwise compatible surface match. Related families are authoring approximations, not recovered texture identities.',
         catalogue_materials=len(reference['materials']),catalogue_sources=reference['sources'],
+        compared_materials=len(comparison_candidates),candidate_profiles=candidate_profiles,
+        candidate_comparison_scope='Every primary and supplemental tool is listed for every source profile, including candidates not automatically applied. No top-N truncation; closest_candidates is a convenience preview only.',
         type_capture_sha256=sha(native/'brush_type_capture.json'),filter_entries=types['filter_entries'],
         named_flag_evidence=types['named_flags'],brushes=choices,
         traversal_enum_evidence=traversal_rows,
@@ -236,6 +322,8 @@ def build_assignments(normalized, native, reference):
         limitations=['Named-property matches are not proof of identical BO3/CW gameplay.',
             'Basic named tools and closest supported collision matches are applied; differences and approximations are recorded.',
             'Null-pointer shapes do not inherit global-table surface names. Mixed sides need future side-to-polygon mapping.',
+            'Pointer-backed filter indices and contents unions are checked per brush; a mismatched sibling does not invalidate other brushes.',
+            'A verified uniform surface may refine an unresolved clip fallback, but does not decode base-solid contents or prove matching collision behavior.',
             'Uniform traversal enums select ladder, mantle and climbing tools; mixed or unjoined sides retain unresolved metadata.',
             'Categories and traversal encodings are preserved in raw filter words; no original authored texture claim.'])
 

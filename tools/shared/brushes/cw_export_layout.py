@@ -26,6 +26,21 @@ def map_name(key, supplied=''):
     return f'cw_map_{key:016x}'
 
 
+def reserve_export_directory(destination):
+    """Reserve a fresh run, matching native ExportRun's name, name_2, ... layout."""
+    destination = Path(destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1000):
+        candidate = destination if attempt == 0 else destination.with_name(
+            f'{destination.name}_{attempt + 1}')
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate
+    raise FileExistsError(f'Could not reserve a new export folder: {destination}')
+
+
 def publish(staged, destination):
     destination.mkdir(parents=True, exist_ok=True)
     files = list(staged.iterdir())
@@ -40,13 +55,21 @@ def publish(staged, destination):
     report = json.loads((destination / 'metadata/export_report.json').read_text())
     lines = [f"Cold War Radiant export: {report['map']}", '',
              'PREFABS - import only the categories you need:']
-    descriptions = {'brushes_clips': 'Clip families, including nosight_noclip, missile/physics/AI and unresolved clip fallbacks',
-                    'other_brushes': 'Traversal and other non-clip tools; review before including',
-                    'volumes': 'Named volumes', 'triggers': 'Trigger entities'}
+    descriptions = {'brushes_clips': 'Collision clips after source-behavior exclusions; unknown contents still require review',
+                    'other_brushes': 'Caulk, traversal and other non-clip tools; review before including',
+                    'reference_brushes': 'Optional editor references on the visible CW_Reference no-compile layer; nodraw/non-solid, including unverified fallbacks',
+                    'volumes': 'Named volumes', 'triggers': 'Trigger entities',
+                    'render_surfaces': 'Verified render polygons with explicit material/UV/color data; nonColliding; requires the referenced material assets'}
     for category, prefab in report['prefabs'].items():
         lines.append(f"  {prefab['file']} - {descriptions.get(category, category)}")
     lines += ['', 'All prefabs use world coordinates. Insert at 0 0 0, rotation 0 0 0, scale 1.',
               'metadata/ - export report, source properties, type assignments and entity data.',
+              'metadata/brush_face_audit.json and brush_faces.jsonl - reconstructed face geometry and final MAP readback.',
+              'metadata/collision_metadata.json - per-brush role reasons and original collision candidate materials.',
+              'CW_Reference uses the ignore layer flag: keep it excluded from compilation when using reference prefabs.',
+              'metadata/STOCK_MATERIALS.md - all tool candidates, caulk variants and captured profiles.',
+              'metadata/CAPTURED_BRUSH_MATERIALS.md - every source brush key and selected material.',
+              'metadata/render_transfer.json - texture-transfer availability and exported render surface counts.',
               'diagnostics/ - captured source data, conversion logs and intermediate geometry.',
               'This export does not compile a BO3 map or port gameplay scripts.']
     (destination / 'README.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8')

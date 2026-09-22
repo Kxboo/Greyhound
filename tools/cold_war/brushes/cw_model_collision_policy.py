@@ -8,16 +8,25 @@ _tool_sys.path.insert(0, str(TOOLS_ROOT))
 import tool_bootstrap as _tool_bootstrap
 _tool_bootstrap.activate(__file__)
 REPO_ROOT = TOOLS_ROOT.parent
-POLICY = 'ordinary_model_clips_physics_unverified_v1'
+from cw_collision_role_policy import REFERENCE_MATERIAL, reference_reason, reference_properties
+
+POLICY = 'source_gated_model_collision_v3'
 
 def apply(assignment, reference):
     source = assignment['decision']
     materials = {m['name']: m['properties'] for m in reference['materials']}
     old = materials[source['material']]
     physics = source['material'] == 'clip_physics' or old.get('physicsGeom') == '1'
+    clip = source['material'] == 'nosight_noclip' or 'clip' in source['material'].split('_')
+    reason = reference_reason(assignment, old if clip else {})
+    if reason:
+        reference_properties(reference)
+        return dict(material=REFERENCE_MATERIAL, source_material=source['material'],
+                    status='nonblocking_source_reference', prefab_role='reference_brushes',
+                    physics_fallback=False, policy=POLICY, reason=reason)
     if not physics:
         return dict(material=source['material'],status='existing_model_clip_assignment',
-                    physics_fallback=False,policy=POLICY)
+                    prefab_role='model_collision', physics_fallback=False,policy=POLICY)
     surface = source.get('preferred_source_surface')
     candidate = str(surface) + '_clip'
     props = materials.get(candidate, {})
@@ -25,8 +34,10 @@ def apply(assignment, reference):
             props.get('playerClip') == '1' and props.get('noDraw') == '1'):
         candidate = 'clip';props = materials[candidate]
     assert props.get('playerClip') == '1' and props.get('noDraw') == '1'
-    return dict(material=candidate,source_material=source['material'],
-                source_surface=surface,bo3_surface_type=props.get('surfaceType'),
+    reference_properties(reference)
+    return dict(material=REFERENCE_MATERIAL,source_material=source['material'],
+                collision_candidate_material=candidate, prefab_role='reference_brushes',
+                source_surface=surface,collision_candidate_surface_type=props.get('surfaceType'),
                 physics_fallback=True,physics_conversion_verified=False,
-                status='ordinary_player_clip_fallback',policy=POLICY,
-                reason='User-selected static model collision fallback. Source physics behavior is not reconstructed; player blocking is intentionally added.')
+                status='unverified_physics_nonblocking_reference',policy=POLICY,
+                reason='Physics behavior is not reconstructed. The proposed player clip is recorded but excluded from model collision.')

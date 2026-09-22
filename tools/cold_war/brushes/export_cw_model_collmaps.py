@@ -21,6 +21,9 @@ from export_cross_map_cw_geometry import decode_brushes
 from cw_exact_vertex_hull import exact_hull
 from cw_model_collision_policy import apply as model_clip_policy, POLICY
 from export_cw_radiant_brushes import pieces
+from cw_export_layout import reserve_export_directory
+from stock_material_metadata import write_stock_metadata
+from cw_collision_role_policy import REFERENCE_LAYER
 
 
 def export(normalized, native, geometry, assignments, destination,reference):
@@ -70,45 +73,61 @@ def export(normalized, native, geometry, assignments, destination,reference):
         if name.casefold() in filenames and filenames[name.casefold()]!=identity:raise ValueError('Model filename identity conflict')
         filenames[name.casefold()]=identity
         planned.append((owner,model,name+'.map'))
-    destination.mkdir(parents=True,exist_ok=True)
+    # Model collmaps share a map-named root across brush captures. Reserve a
+    # separate run so older materials/geometry cannot abort this brush export,
+    # and earlier files and their ownership manifest always stay together.
+    destination=reserve_export_directory(destination)
     # All geometry comes from the verified LOCAL hull cache. Instance transforms
     # never enter this exporter; the cache records its bounded cleanup policy.
     for owner,model,filename in planned:
-        layers={'000_Global'};body=[];brushes=0;plane_error=0.;outside=0.;bounds=[];certificates=[];model_assignments=[]
+        buckets={}
         for bi in range(model['brush_count']):
             cached=json.loads((geometry/'hull-cache'/f"{model['index']}_{bi}.json").read_text())
             if cached['payload_sha256']!=model['payload']['sha256']:raise ValueError('Local geometry cache identity mismatch')
             source_assignment=assignments['brushes'][f"{model['index']}:{bi}"]
             decision=model_clip_policy(source_assignment,reference)
-            model_assignments.append(dict(source_brush=bi,**decision))
-            material=decision['material'];layer='000_Global/'+material;layers.add(layer)
-            certificates.append(cached['certificate'])
+            role=decision.get('prefab_role','model_collision')
+            bucket=buckets.setdefault(role,dict(layers={'000_Global'},body=[],bounds=[],certificates=[],assignments=[],plane_error=0.,outside=0.))
+            bucket['assignments'].append(dict(source_brush=bi,**decision))
+            material=decision['material']
+            layer=REFERENCE_LAYER if role=='reference_brushes' else '000_Global/'+material
+            bucket['layers'].add(layer)
+            bucket['certificates'].append(cached['certificate'])
             for vertices,equations in cached['parts']:
                 pts=np.asarray(vertices);eq=np.asarray(equations)
                 lines=writer.lines(eq,pts.mean(axis=0),material)
                 parsed=np.array(read_map_planes('\n'.join(lines)))
                 err=float(np.abs(parsed-eq).max());out=float((pts@parsed[:,:3].T-parsed[:,3]).max())
                 if not np.isfinite(parsed).all() or err>1e-6 or out>1e-6:raise ValueError('Local collision serialization drift')
-                plane_error=max(plane_error,err);outside=max(outside,out);bounds.extend((pts.min(axis=0),pts.max(axis=0)))
-                body.append(f'// brush {brushes}\n{{\nlayer "{layer}"\n'+'\n'.join(lines)+'\n}')
-                brushes+=1
-        text='iwmap 4\n'+''.join(f'"{l}" flags'+(' active' if l=='000_Global' else '')+'\n' for l in sorted(layers))+'// entity 0\n{\n"classname" "worldspawn"\n'+'\n'.join(body)+'\n}\n'
-        data=text.replace('\n','\r\n').encode();target=destination/filename
-        if target.exists() and target.read_bytes()!=data:raise ValueError('Existing collmap differs; retained: '+str(target))
-        if not target.exists():target.write_bytes(data)
-        results.append(dict(**owner,file=filename,collision_asset_index=model['index'],source_brushes=model['brush_count'],
-            output_brushes=brushes,sha256=hashlib.sha256(data).hexdigest(),local_mins=np.min(bounds,axis=0).tolist(),
-            local_maxs=np.max(bounds,axis=0).tolist(),max_plane_error=plane_error,max_vertex_outside=outside,
-            bounded_cleanup=certificates,model_collision_assignments=model_assignments))
-        results[-1]['compact_triangle_surfaces_not_exported']=model['component_source']['compact_triangle_surfaces_not_exported']
-        results[-1]['component_source']=model['component_source']
-    report=dict(schema='greyhound-cw-local-model-collmaps-v1',map=capture['map'],game='black_ops_cw',
+                bucket['plane_error']=max(bucket['plane_error'],err);bucket['outside']=max(bucket['outside'],out)
+                bucket['bounds'].extend((pts.min(axis=0),pts.max(axis=0)))
+                bucket['body'].append(f'// brush {len(bucket["body"])}\n{{\nlayer "{layer}"\n'+'\n'.join(lines)+'\n}')
+        for role,bucket in buckets.items():
+            text='iwmap 4\n'+''.join(f'"{l}" flags'+(' active' if l=='000_Global' else ' ignore' if l==REFERENCE_LAYER else '')+'\n' for l in sorted(bucket['layers']))+'// entity 0\n{\n"classname" "worldspawn"\n'+'\n'.join(bucket['body'])+'\n}\n'
+            relative=filename if role=='model_collision' else 'references/'+filename
+            data=text.replace('\n','\r\n').encode();target=destination/relative
+            target.parent.mkdir(parents=True,exist_ok=True)
+            with target.open('xb') as output:output.write(data)
+            results.append(dict(**owner,file=relative,prefab_role=role,collision_asset_index=model['index'],
+                compile_excluded=role=='reference_brushes',
+                source_brushes=len(bucket['assignments']),total_model_source_brushes=model['brush_count'],
+                output_brushes=len(bucket['body']),sha256=hashlib.sha256(data).hexdigest(),local_mins=np.min(bucket['bounds'],axis=0).tolist(),
+                local_maxs=np.max(bucket['bounds'],axis=0).tolist(),max_plane_error=bucket['plane_error'],max_vertex_outside=bucket['outside'],
+                bounded_cleanup=bucket['certificates'],model_collision_assignments=bucket['assignments'],
+                compact_triangle_surfaces_not_exported=model['component_source']['compact_triangle_surfaces_not_exported'],
+                component_source=model['component_source']))
+    report=dict(schema='greyhound-cw-local-model-collmaps-v2',map=capture['map'],game='black_ops_cw',
         model_collision_policy=POLICY,physics_conversion_verified=False,physics_research=str(research),
         coordinates='model_local',instance_transforms_applied=False,ownership='loaded XModel.XCollisionPtr exact address join',
-        model_count=len(results),files=results,unresolved=unresolved,compiled=False,
+        model_count=len(planned),file_count=len(results),files=results,unresolved=unresolved,compiled=False,
         complete_model_collision=False,unrelated_loaded_models=unrelated_loaded_models,
         limitation='Convex brush components only. Compact triangle components are not yet verified and are omitted, including alongside exported brushes. No bounding-box substitute.',
-        source_capture=str(native),ownership_sha256=hashlib.sha256((native/'model_collision_owners.json').read_bytes()).hexdigest())
+        source_capture=str(native),local_capture=str(local_root),ownership_sha256=hashlib.sha256((native/'model_collision_owners.json').read_bytes()).hexdigest())
+    if results:
+        report['embedded_data']=write_stock_metadata(destination,reference,assignments)
+        report['stock_materials_only']=True
+        for record in results:
+            record['sha256']=hashlib.sha256((destination/record['file']).read_bytes()).hexdigest()
     (destination/'manifest.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     (destination/'README.txt').write_text(
         'Cold War local model collision: '+capture['map']+'\n\n'
@@ -116,9 +135,14 @@ def export(normalized, native, geometry, assignments, destination,reference):
         'Coordinates stay relative to the source model origin; no instance transform or recentering.\n'
         'Use each file with its matching model. Do not insert every file at world origin.\n\n'
         'Coverage is incomplete: compact triangle components are omitted, including alongside exported brushes.\n'
-        'Model collision only. Physics-only assignments use normal player clips (surface-specific when supported).\n'
-        'Physics behavior is not reconstructed; substitutions are recorded in manifest.json.\n'
+        'Root .map files contain model collision. references/ contains optional nonblocking shapes.\n'
+        'Reference shapes use the visible CW_Reference layer, excluded from compilation (ignore flag).\n'
+        'Source non-colliding shapes and unsupported player-clip fallbacks never enter model collision.\n'
+        'Physics-only shapes remain in references/; proposed clips are recorded but not applied.\n'
         'See manifest.json for ownership, geometry checks, missing components, and unresolved models.\n'
         'No BO3 compilation or gameplay validation has been performed.\n',encoding='utf-8')
-    return dict(folder=str(destination),models=len(results),brushes=sum(r['output_brushes'] for r in results),unresolved=len(unresolved),coordinates='model_local',complete_model_collision=False,
+    return dict(folder=str(destination),models=len(planned),brushes=sum(r['output_brushes'] for r in results),
+        collision_brushes=sum(r['output_brushes'] for r in results if r['prefab_role']=='model_collision'),
+        reference_brushes=sum(r['output_brushes'] for r in results if r['prefab_role']=='reference_brushes'),
+        unresolved=len(unresolved),coordinates='model_local',complete_model_collision=False,
         limitation=report['limitation'])

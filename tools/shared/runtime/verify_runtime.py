@@ -33,7 +33,11 @@ def verify(bundle):
         files = manifest['files']
         required = {'shared/runtime/export_brushes.py', 'shared/runtime/verify_runtime.py', 'shared/runtime/verify_saved_export.py', 'black_ops_3/reference/bo3_reference.json',
                     'black_ops_4/brushes/bo4_brush_export.py', 'cold_war/brushes/export_cw_radiant_brushes.py',
-                    'cold_war/brushes/export_cw_model_collmaps.py'}
+                    'cold_war/brushes/export_cw_model_collmaps.py',
+                    'cold_war/brushes/cw_brush_reconstruction.py',
+                    'cold_war/brushes/cw_collision_role_policy.py',
+                    'cold_war/brushes/export_cw_render_surfaces.py', 'shared/brushes/render_surface_patches.py',
+                    'shared/brushes/stock_material_metadata.py', 'shared/brushes/material_comparison_report.py'}
         if not required.issubset(files):
             raise ValueError('Manifest omits required tools: ' + ', '.join(sorted(required - files.keys())))
         for name, digest in files.items():
@@ -45,7 +49,7 @@ def verify(bundle):
     check('converter_integrity', integrity)
     for name in ('numpy', 'scipy'):
         check(name, lambda name=name: importlib.import_module(name).__version__)
-    for name in ('export_cw_radiant_brushes', 'export_cw_model_collmaps',
+    for name in ('cw_brush_reconstruction', 'cw_collision_role_policy', 'stock_material_metadata', 'export_cw_render_surfaces', 'export_cw_radiant_brushes', 'export_cw_model_collmaps',
                  'export_cw_bo3_trigger_entities', 'export_cw_bo3_navigation', 'export_cw_navigation_tools', 'export_cw_volume_connections', 'bo4_brush_export',
                  'decode_cw_float_collision_triangles', 'decode_bo4_model_collision'):
         check(name, lambda name=name: str(importlib.import_module(name).__file__))
@@ -53,7 +57,7 @@ def verify(bundle):
     def catalogue():
         data = json.loads((TOOLS_ROOT / 'black_ops_3/reference/bo3_reference.json').read_text())
         names = {material['name'] for material in data['materials']}
-        required = {'clip', 'mantle_on', 'mantle_over', 'ladder', 'mount', 'volume'}
+        required = {'clip', 'mantle_on', 'mantle_over', 'ladder', 'mount', 'volume', 'nodraw_notsolid'}
         if not required.issubset(names):
             raise ValueError('BO3 catalogue missing: ' + ', '.join(sorted(required - names)))
         return dict(materials=len(names))
