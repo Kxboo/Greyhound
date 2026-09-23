@@ -60,7 +60,13 @@ private:
     void OnCWCaptureOptions();
     void UpdateCWExportHint();
     void OnAssetSortMethod();
-    void OnBO4NameDatabase();
+    void OnSalukiFolder();
+    void OnSalukiDownload();
+    void OnSalukiLink();
+    void OnSalukiAuto();
+    void OnSalukiDisable();
+    void UpdateSalukiHint();
+    void RunSalukiImport(const std::string& Folder, bool Download);
 
 
 protected:

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "GameModernWarfare5.h"
@@ -1584,6 +1585,8 @@ void GameModernWarfare5::PerformInitialSetup()
     const auto OurPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "oo2core_8_win64.dll");
 
     // Load Caches
+    CoDAssets::AssetNameCache.NameDatabase.clear();
+    CoDAssets::StringCache.NameDatabase.clear();
     CoDAssets::StringCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_string.wni"));
     CoDAssets::StringCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_bones.wni"));
     CoDAssets::AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xsounds_unverified.wni"));
@@ -1598,6 +1601,8 @@ void GameModernWarfare5::PerformInitialSetup()
     CoDAssets::AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "pkg_test\\fnv1a_ximages.wni"));
     CoDAssets::AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "pkg_test\\fnv1a_xmaterials.wni"));
     CoDAssets::AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "pkg_test\\fnv1a_xsounds.wni"));
+    SalukiNameDatabase::ApplyAssets(CoDAssets::AssetNameCache);
+    SalukiNameDatabase::ApplyStrings(CoDAssets::StringCache, false);
 
     // Copy if not exists
     if (!FileSystems::FileExists(OurPath))

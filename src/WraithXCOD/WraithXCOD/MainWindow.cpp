@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 #include "CWRadiantExport.h"
 
 // The class we are implementing
@@ -572,6 +573,13 @@ void MainWindow::GetListViewInfo(LV_ITEM* ListItem, CWnd* Owner)
 
 void MainWindow::OnLoadGame()
 {
+    StartAssetLoad("");
+}
+
+void MainWindow::StartAssetLoad(const std::string& File)
+{
+    GetDlgItem(IDC_MORE)->EnableWindow(false);
+    GetDlgItemText(IDC_SEARCHTEXT, SearchAfterLoad);
     // Disable control states
     GetDlgItem(IDC_LOADGAME)->EnableWindow(false);
     GetDlgItem(IDC_LOADFILE)->EnableWindow(false);
@@ -594,10 +602,10 @@ void MainWindow::OnLoadGame()
     SetDlgItemText(IDC_ASSETCOUNT, AssetCountFmt);
 
     // Load in async
-    std::thread LoadAsync([this]
+    std::thread LoadAsync([this, File]
     {
-        // Run it
-        this->LoadGameAsync();
+        if (File.empty()) this->LoadGameAsync();
+        else this->LoadGameFileAsync(File);
     });
 
     // Detatch
@@ -606,8 +614,15 @@ void MainWindow::OnLoadGame()
 
 void MainWindow::LoadGameAsync()
 {
+    LastLoadedFile.clear();
+    // Rebuild name caches as well as the list when the selected database changes.
+    CoDAssets::CleanUpGame();
+    SalukiNameDatabase::AutoUpdate();
     // Prepare to load the game, and report back if need be
-    auto LoadGameResult = CoDAssets::BeginGameMode();
+    auto LoadGameResult = FindGameResult::FailedToLocateInfo;
+    try { LoadGameResult = CoDAssets::BeginGameMode(); }
+    catch (const std::exception& E)
+    { MessageBoxA(GetSafeHwnd(), E.what(), "Loading names / assets", MB_OK | MB_ICONWARNING); }
 
     // Check if we had success
     if (LoadGameResult == FindGameResult::Success)
@@ -638,6 +653,7 @@ void MainWindow::LoadGameAsync()
 
         // Load icon in sync
         this->SendMessage(UPDATE_CUBE_ICON, 0, 0);
+        FinishNameRefresh();
     }
     else if (LoadGameResult == FindGameResult::NoGamesRunning)
     {
@@ -667,6 +683,8 @@ void MainWindow::LoadGameAsync()
         // Notify the user about the issue
         MessageBoxA(this->GetSafeHwnd(), "This game is supported, but the current update is not. Please wait for an upcoming patch for support.", "Greyhound", MB_OK | MB_ICONWARNING);
     }
+    if (LoadGameResult != FindGameResult::Success) { ActionAfterLoad = 0; SearchAfterLoad.Empty(); }
+    GetDlgItem(IDC_MORE)->EnableWindow(true);
 }
 
 void MainWindow::OnClearAll()
@@ -714,13 +732,34 @@ void MainWindow::ClearAllAsync()
 
 void MainWindow::OnSettings()
 {
+    const auto Before = SettingsManager::GetSetting("salukinamefolder", "") + SettingsManager::GetSetting("salukirevision", "");
     // Show the settings dialog
     SettingsWindow SettingsDialog(this);
     // Show it
     const auto Action = SettingsDialog.DoModal();
+    const auto After = SettingsManager::GetSetting("salukinamefolder", "") + SettingsManager::GetSetting("salukirevision", "");
+    const bool ExportAction = Action == IDC_EXPORT_PLACEMENTS || Action == IDC_EXPORT_JSON_MODELS || Action == IDC_EXPORT_SPLINE_MODELS || Action == IDC_EXPORT_BRUSHES ||
+        Action == IDC_DEV_BO4_RUN || Action == IDC_DEV_VERIFY_RUNTIME || Action == IDC_DEV_VERIFY_EXPORT;
+    if (Before != After && CoDAssets::GameAssets)
+    {
+        ActionAfterLoad = ExportAction ? static_cast<int>(Action) : 0;
+        StartAssetLoad(LastLoadedFile);
+        return;
+    }
     if (Action == IDC_EXPORT_PLACEMENTS || Action == IDC_EXPORT_JSON_MODELS || Action == IDC_EXPORT_SPLINE_MODELS || Action == IDC_EXPORT_BRUSHES ||
         Action == IDC_DEV_BO4_RUN || Action == IDC_DEV_VERIFY_RUNTIME || Action == IDC_DEV_VERIFY_EXPORT)
         PostMessage(WM_COMMAND, Action);
+}
+
+void MainWindow::FinishNameRefresh()
+{
+    if (!SearchAfterLoad.IsEmpty())
+    {
+        SetDlgItemText(IDC_SEARCHTEXT, SearchAfterLoad);
+        SearchAfterLoad.Empty();
+        SendMessage(WM_COMMAND, IDC_SEARCH);
+    }
+    if (ActionAfterLoad) { PostMessage(WM_COMMAND, ActionAfterLoad); ActionAfterLoad = 0; }
 }
 
 void MainWindow::OnExportAll()
@@ -919,12 +958,18 @@ void MainWindow::OnLoadFile()
 
 void MainWindow::LoadGameFileAsync(const std::string& FilePath)
 {
+    GetDlgItem(IDC_MORE)->EnableWindow(false);
+    SalukiNameDatabase::AutoUpdate();
     // Prepare to load the file, and report back if need be
-    auto LoadFileResult = CoDAssets::BeginGameFileMode(FilePath);
+    auto LoadFileResult = LoadGameFileResult::UnknownError;
+    try { LoadFileResult = CoDAssets::BeginGameFileMode(FilePath); }
+    catch (const std::exception& E)
+    { MessageBoxA(GetSafeHwnd(), E.what(), "Loading names / assets", MB_OK | MB_ICONWARNING); }
 
     // Check if we had success
     if (LoadFileResult == LoadGameFileResult::Success)
     {
+        LastLoadedFile = FilePath;
         // Setup the controls for game loaded, setup game cube
         GetDlgItem(IDC_LOADGAME)->EnableWindow(false);
         GetDlgItem(IDC_LOADFILE)->EnableWindow(false);
@@ -977,6 +1022,9 @@ void MainWindow::LoadGameFileAsync(const std::string& FilePath)
         // Notify the user about the issue
         MessageBoxA(this->GetSafeHwnd(), "An unknown error has occured while loading the file.", "Greyhound", MB_OK | MB_ICONWARNING);
     }
+    if (LoadFileResult == LoadGameFileResult::Success) FinishNameRefresh();
+    else { ActionAfterLoad = 0; SearchAfterLoad.Empty(); }
+    GetDlgItem(IDC_MORE)->EnableWindow(true);
 }
 
 LRESULT MainWindow::UpdateCubeIcon(WPARAM wParam, LPARAM lParam)
@@ -1420,7 +1468,8 @@ void MainWindow::OnExportJsonModels()
     json DeferredPlacementRows = json::array();
     ModelExportNaming::SourceLookup Lookup;
     for (const auto* Asset : CoDAssets::GameAssets->LoadedAssets)
-        if (Asset->AssetType == WraithAssetType::Model) Lookup.Add(Asset->AssetName);
+        if (Asset->AssetType == WraithAssetType::Model)
+            Lookup.Add(Asset->AssetName, Strings::Format("xmodel_%llx", CoDAssets::GameInstance->Read<uint64_t>(Asset->AssetPointer) & 0xFFFFFFFFFFFFFFF));
     try
     {
         std::ifstream Input(File); json Doc; Input>>Doc;

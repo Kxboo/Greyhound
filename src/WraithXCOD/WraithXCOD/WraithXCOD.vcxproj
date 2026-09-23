@@ -106,6 +106,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AssetCli.cpp" />
+    <ClCompile Include="SalukiNameDatabase.cpp" />
     <ClCompile Include="AnimSettings.cpp" />
     <ClCompile Include="CascFileSystem.cpp" />
     <ClCompile Include="CoDAssets.cpp" />
@@ -180,6 +181,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AssetCli.h" />
+    <ClInclude Include="SalukiNameDatabase.h" />
+    <ClInclude Include="SalukiNameIndex.h" />
     <ClInclude Include="AboutWindow.h" />
     <ClInclude Include="AnimSettings.h" />
     <ClInclude Include="CascFileSystem.h" />

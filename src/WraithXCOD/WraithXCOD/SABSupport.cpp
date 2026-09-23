@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "SABSupport.h"
@@ -117,6 +118,9 @@ bool SABSupport::ParseSAB(const std::string& FilePath)
         if (Header.Version == 0xF) { SABNames.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\bo3_sab.wni")); }
     }
 
+    if (!HasNames && Header.Version == 0xE) SalukiNameDatabase::Apply(SABNames, {"bo2_sab"});
+    if (!HasNames && Header.Version == 0xF) SalukiNameDatabase::Apply(SABNames, {"bo3_sab"});
+
     // If we have names, read them, but pre-allocate the names first
     if (HasNames)
     {
@@ -149,6 +153,7 @@ bool SABSupport::ParseSAB(const std::string& FilePath)
                 // https://github.com/Scobalula/Greyhound/pull/49/commits
                 // SABNames.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\bo4_sab.wni"));
                 SABNames.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xsounds.wni"));
+                SalukiNameDatabase::Apply(SABNames, {"fnv1a_xsounds"}, 0xFFFFFFFFFFFFFFF);
 
                 // Loop and read
                 for (uint32_t i = 0; i < Header.EntriesCount; i++)

@@ -57,13 +57,17 @@ namespace ModelExportNaming
     {
         std::set<std::string> Original;
         std::map<std::string, std::set<std::string>> Clean;
-        void Add(const std::string& Name) { Original.insert(Name); Clean[FileStem(Name)].insert(Name); }
+        void Add(const std::string& Name, const std::string& HashAlias = "")
+        {
+            Original.insert(Name); Clean[FileStem(Name)].insert(Name);
+            if (!HashAlias.empty()) Clean[HashAlias].insert(Name);
+        }
         std::string Resolve(const std::string& Name, const std::string& Source) const
         {
-            if (!Source.empty()) return Source;
-            if (Original.count(Name)) return Name;
-            const auto Found = Clean.find(Name);
-            if (Found == Clean.end()) return Name;
+            const auto& Requested = Source.empty() ? Name : Source;
+            if (Original.count(Requested)) return Requested;
+            const auto Found = Clean.find(Requested);
+            if (Found == Clean.end()) return Requested;
             if (Found->second.size() != 1)
                 throw std::runtime_error("Several runtime models share the name '" + Name + "'. Use placement JSON containing SourceName.");
             return *Found->second.begin();

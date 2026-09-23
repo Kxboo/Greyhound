@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "GameVanguard.h"
@@ -1345,8 +1346,12 @@ std::string GameVanguard::LoadStringEntry(uint64_t Index)
 void GameVanguard::PerformInitialSetup()
 {
     // Load Caches
+    AssetNameCache.NameDatabase.clear();
+    StringCache.NameDatabase.clear();
     StringCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_string.wni"));
     AssetNameCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\fnv1a_xsounds_unverified.wni"));
+    SalukiNameDatabase::ApplyAssets(AssetNameCache);
+    SalukiNameDatabase::ApplyStrings(StringCache, true);
     // Prepare to copy the oodle dll
     auto OurPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "oo2core_8_win64.dll");
     // Copy if not exists

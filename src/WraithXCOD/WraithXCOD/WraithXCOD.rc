@@ -116,9 +116,13 @@ BEGIN
     LTEXT           "Source data only. No map conversion is performed.",IDC_NOTICE,17,247,326,9
     COMBOBOX        IDC_ASSET_SORT_METHOD,73,151,87,30,CBS_DROPDOWNLIST | CBS_SORT | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Sort assets by:",IDC_STATICFORMAT2,19,153,50,8
-    LTEXT           "BO4 / CW name database:",IDC_BO4_NAME_DB_LABEL,17,175,150,9
-    COMBOBOX        IDC_BO4_NAME_DATABASE,17,187,240,55,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Choose a database, then click Load Game again.",IDC_BO4_NAME_DB_HINT,17,211,310,12
+    LTEXT           "Saluki names (unresolved hashes only)",IDC_BO4_NAME_DB_LABEL,17,171,310,9
+    PUSHBUTTON      "Download / update",IDC_SALUKI_DOWNLOAD,17,183,97,16
+    PUSHBUTTON      "Choose folder...",IDC_SALUKI_FOLDER,118,183,81,16
+    PUSHBUTTON      "GitHub",IDC_SALUKI_LINK,203,183,49,16
+    PUSHBUTTON      "Disable",IDC_SALUKI_DISABLE,256,183,57,16
+    CONTROL         "Update automatically when loading assets (daily)",IDC_SALUKI_AUTO,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,202,310,11
+    LTEXT           "Optional: download names or choose your cod-name-db folder.",IDC_BO4_NAME_DB_HINT,17,216,310,12
     CONTROL "Create a Radiant brush .map when exporting CW collision",IDC_CW_RADIANT_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,40,310,14
     PUSHBUTTON "Export brushes now",IDC_EXPORT_BRUSHES,17,66,155,20
     PUSHBUTTON "Export Model Placements JSON",IDC_EXPORT_PLACEMENTS,17,48,220,24

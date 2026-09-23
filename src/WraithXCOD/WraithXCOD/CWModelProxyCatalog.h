@@ -77,7 +77,8 @@ namespace CWModelProxyCatalog
 
         ModelExportNaming::SourceLookup Lookup;
         for (const auto* Asset : CoDAssets::GameAssets->LoadedAssets)
-            if (Asset->AssetType == WraithAssetType::Model) Lookup.Add(Asset->AssetName);
+            if (Asset->AssetType == WraithAssetType::Model)
+                Lookup.Add(Asset->AssetName, Strings::Format("xmodel_%llx", CoDAssets::GameInstance->Read<uint64_t>(Asset->AssetPointer) & 0xFFFFFFFFFFFFFFF));
 
         std::set<std::string> Names;
         for (const auto& Row : Rows)

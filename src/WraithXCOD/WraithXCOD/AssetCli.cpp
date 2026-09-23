@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "AssetCli.h"
+#include "SalukiNameDatabase.h"
 
 #include <algorithm>
 #include <chrono>
@@ -61,6 +62,8 @@ namespace
         bool CWFloatTriangles = false;
         bool CWModelTriangles = false;
         std::string BO4NameDatabase = "bundled";
+        std::string NameDbFolder;
+        bool UpdateNames = false;
         // Which capture a Black Ops 4 terrain export runs; "0" is the terrain probe.
         std::string BO4CaptureMode = "0";
         uint32_t Limit = 0;
@@ -356,6 +359,12 @@ namespace
             else if (Argument == "--cw-proxy-filter") Options.CWProxyFilter = true;
             else if (Argument == "--cw-float-triangles") Options.CWFloatTriangles = true;
             else if (Argument == "--cw-model-triangles") Options.CWModelTriangles = true;
+            else if (Argument == "--name-db-folder")
+            {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.NameDbFolder = Value;
+            }
+            else if (Argument == "--update-names") Options.UpdateNames = true;
             else if (Argument == "--bo4-name-database")
             {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
@@ -639,6 +648,8 @@ namespace
             "  --cw-verify-placements (audit the finished run against its captured bytes;\r\n"
             "      implies non-static; a discrepancy is reported, the export is kept)\r\n"
             "  --bo4-name-database bundled|echo000\r\n"
+            "  --name-db-folder PATH    Supplement unresolved names using Saluki CDB / CSV\r\n"
+            "  --update-names           Download / update Saluki names directly from GitHub\r\n"
             "  --bo4-capture-mode 0-7 (BO4 terrain Export: 0 terrain probe, 1 world pools,\r\n"
             "      2 model collision, 3 model physics, 4 placements, 5 Radiant brushes,\r\n"
             "      6 collision handlers, 7 surface-flag declarations)\r\n"
@@ -669,6 +680,7 @@ namespace
             {"cw_float_triangles", Options.CWFloatTriangles},
             {"cw_model_triangles", Options.CWModelTriangles},
             {"bo4_name_database", Options.BO4NameDatabase},
+            {"name_db_folder", Options.NameDbFolder}, {"update_names", Options.UpdateNames},
             {"bo4_capture_mode", Options.BO4CaptureMode},
             {"limit", Options.Limit == 0 ? json(nullptr) : json(Options.Limit)},
             {"model_formats", Options.ModelFormats},
@@ -1002,6 +1014,15 @@ int AssetCli::Run(int argc, char** argv)
     SetBool("cwmodeltriangles", Options.CWModelTriangles);
     SettingsManager::SetSetting("bo4namedatabase", Options.BO4NameDatabase);
     SettingsManager::SetSetting("bo4capturemode", Options.BO4CaptureMode);
+    try
+    {
+        if (Options.UpdateNames && !Options.NameDbFolder.empty())
+            return EmitError(Options, "Choose --update-names or --name-db-folder, not both", 1);
+        if (Options.UpdateNames) Options.NameDbFolder = SalukiNameDatabase::Update(true, Diagnostic);
+        else if (!Options.NameDbFolder.empty()) SalukiNameDatabase::Validate(Options.NameDbFolder);
+        SettingsManager::SetSetting("salukinamefolder", Options.NameDbFolder);
+    }
+    catch (const std::exception& E) { return EmitError(Options, E.what(), 1); }
 
     Diagnostic("attaching to a supported game");
     const auto Found = CoDAssets::BeginGameMode();

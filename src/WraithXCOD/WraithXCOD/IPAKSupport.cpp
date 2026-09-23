@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "IPAKSupport.h"
@@ -31,6 +32,7 @@ bool IPAKSupport::ParseIPAK(const std::string& FilePath)
     {
         // We have a valid file, load the bo2_ipak name database
         WraithNameIndex IPAKNames(FileSystems::CombinePath(FileSystems::GetApplicationPath(), "package_index\\bo2_ipak.wni"));
+        SalukiNameDatabase::Apply(IPAKNames, {"bo2_ipak"});
         
         // Prepare to read segments
         auto IPAKEntriesSegment = BO2IPakSegment();

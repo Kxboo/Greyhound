@@ -82,6 +82,11 @@ protected:
     DECLARE_MESSAGE_MAP()
 
 private:
+    std::string LastLoadedFile;
+    CString SearchAfterLoad;
+    int ActionAfterLoad = 0;
+    void StartAssetLoad(const std::string& File);
+    void FinishNameRefresh();
 
     // For loading list info
     static void GetListViewInfo(LV_ITEM* ListItem, CWnd* Owner);

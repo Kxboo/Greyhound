@@ -39,5 +39,9 @@ int main()
     try { Lookup.Resolve("stairs", ""); } catch (const std::runtime_error&) { Ambiguous = true; }
     assert(Ambiguous);
     assert(Lookup.Resolve("missing", "") == "missing");
+    Lookup.Add("splm/decoded_track", "xmodel_123abc");
+    assert(Lookup.Resolve("xmodel_123abc", "") == "splm/decoded_track");
+    assert(Lookup.Resolve("xmodel_123abc", "xmodel_123abc") == "splm/decoded_track");
+    assert(Lookup.Resolve("unused", "splm/decoded_track") == "splm/decoded_track");
     std::cout << "model export naming tests passed\n";
 }

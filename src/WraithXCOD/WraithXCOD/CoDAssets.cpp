@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 #include "spdlog/spdlog.h"
 
 // The class we are implementing
@@ -1921,7 +1922,8 @@ bool CoDAssets::ExportSplineModels(const std::string& Placements,const std::stri
     }
     if(Selected.empty()) throw std::runtime_error("No spline placements in this JSON");
     ModelExportNaming::SourceLookup Lookup;
-    for(const auto* Asset:GameAssets->LoadedAssets) if(Asset->AssetType==WraithAssetType::Model) Lookup.Add(Asset->AssetName);
+    for(const auto* Asset:GameAssets->LoadedAssets) if(Asset->AssetType==WraithAssetType::Model)
+        Lookup.Add(Asset->AssetName, Strings::Format("xmodel_%llx", GameInstance->Read<uint64_t>(Asset->AssetPointer) & 0xFFFFFFFFFFFFFFF));
     if(GamePackageCache) GamePackageCache->WaitForPackageCacheLoad();
     FileSystems::CreateDirectory(Root);LatestExportPath=Root;
     json Results=json::array(),BakedRows=json::array();size_t Failed=0,Done=0;
@@ -6312,7 +6314,8 @@ void CoDAssets::ExportMaterialImageNames(const XMaterial_t& Material, const std:
             }
             else
             {
-                Info << Strings::Format("unk_semantic_0x%X", Image.SemanticHash) << "," << Image.ImageName << "\n";
+                Info << SalukiNameDatabase::ResolveMetadata("cod_semantics", Image.SemanticHash,
+                    Strings::Format("unk_semantic_0x%X", Image.SemanticHash)) << "," << Image.ImageName << "\n";
             }
         }
 

@@ -6,7 +6,9 @@
 // We need the Wraith theme and settings classes
 #include "WraithTheme.h"
 #include "SettingsManager.h"
-#include "BO4NameDatabase.h"
+#include "SalukiNameDatabase.h"
+#include "WraithProgressDialog.h"
+#include <afxdlgs.h>
 #include "BO4CaptureModes.h"
 #include "CoDAssets.h"
 
@@ -53,7 +55,11 @@ BEGIN_MESSAGE_MAP(GeneralSettings, WraithWindow)
     ON_COMMAND(IDC_CW_CODE_PROBE, OnCWCaptureOptions)
     ON_CBN_SELENDOK(IDC_CW_EXPORT_MODE, OnCWExportMode)
     ON_CBN_SELENDOK(IDC_ASSET_SORT_METHOD, OnAssetSortMethod)
-    ON_CBN_SELENDOK(IDC_BO4_NAME_DATABASE, OnBO4NameDatabase)
+    ON_COMMAND(IDC_SALUKI_FOLDER, OnSalukiFolder)
+    ON_COMMAND(IDC_SALUKI_DOWNLOAD, OnSalukiDownload)
+    ON_COMMAND(IDC_SALUKI_LINK, OnSalukiLink)
+    ON_COMMAND(IDC_SALUKI_AUTO, OnSalukiAuto)
+    ON_COMMAND(IDC_SALUKI_DISABLE, OnSalukiDisable)
 END_MESSAGE_MAP()
 
 void GeneralSettings::OnBeforeLoad()
@@ -116,16 +122,13 @@ void GeneralSettings::OnBeforeLoad()
     ((CButton*)GetDlgItem(IDC_CW_RADIANT_ENABLE))->SetCheck(SettingsManager::GetSetting("cwradiantbrushes", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_RADIANT_TYPES))->SetCheck(SettingsManager::GetSetting("cwradianttypes", "true")=="true");
     ((CButton*)GetDlgItem(IDC_CW_RADIANT_VOLUMES))->SetCheck(SettingsManager::GetSetting("cwradiantvolumes", "true")=="true");
-    auto Names=(CComboBox*)GetDlgItem(IDC_BO4_NAME_DATABASE);
+    UpdateSalukiHint();
     ((CButton*)GetDlgItem(IDC_CW_NONSTATIC_PLACEMENTS))->SetCheck(SettingsManager::GetSetting("cwnonstaticplacements", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_PROXY_FILTER))->SetCheck(SettingsManager::GetSetting("cwproxyfilter", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_ORGANIZE_PLACEMENTS))->SetCheck(SettingsManager::GetSetting("cworganizeplacements", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_VERIFY_PLACEMENTS))->SetCheck(SettingsManager::GetSetting("cwverifyplacements", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_FLOAT_TRIANGLES))->SetCheck(SettingsManager::GetSetting("cwfloattriangles", "false")=="true");
     ((CButton*)GetDlgItem(IDC_CW_MODEL_TRIANGLES))->SetCheck(SettingsManager::GetSetting("cwmodeltriangles", "false")=="true");
-    Names->AddString(L"Bundled Greyhound database");
-    Names->AddString(L"echo000 / cod-name-db");
-    Names->SetCurSel(SettingsManager::GetSetting("bo4namedatabase","bundled")=="echo000" ? 1 : 0);
     auto Sections=(CComboBox*)GetDlgItem(IDC_DEV_SECTION);
     for(const auto* Label:{L"Cold War: asset pool groups", L"Cold War: capture options",
                           L"Black Ops 4: diagnostic captures", L"Export workflows and checks"})
@@ -158,7 +161,8 @@ void GeneralSettings::ConfigurePage()
 {
     const int Standard[] = {IDC_SHOWXMODEL, IDC_SHOWXANIM, IDC_SHOWXIMAGE, IDC_SHOWXRAW,
         IDC_SHOWXSOUNDS, IDC_SHOWXMTL, IDC_ASSET_SORT_METHOD, IDC_STATICFORMAT2,
-        IDC_BO4_NAME_DATABASE, IDC_BO4_NAME_DB_LABEL, IDC_BO4_NAME_DB_HINT};
+        IDC_SALUKI_FOLDER, IDC_SALUKI_DOWNLOAD, IDC_SALUKI_LINK, IDC_SALUKI_AUTO, IDC_SALUKI_DISABLE,
+        IDC_BO4_NAME_DB_LABEL, IDC_BO4_NAME_DB_HINT};
     const int ColdWar[] = {IDC_CW_CLIP, IDC_CW_WORLD, IDC_CW_NAV, IDC_CW_FX,
         IDC_CW_ENTITY, IDC_CW_TRIGGER, IDC_CW_AI, IDC_CW_EXPORT_LABEL,
         IDC_CW_EXPORT_MODE, IDC_CW_EXPORT_HINT, IDC_CW_CAPTURE_ENTITIES,
@@ -180,7 +184,7 @@ void GeneralSettings::ConfigurePage()
     if (Page==0)
     {
         GetDlgItem(IDC_NOTICE)->SetWindowText(L"Model placement JSON and batch exports: Map & Model Export. Diagnostics: Dev Tools.");
-        GetDlgItem(IDC_TIP)->SetWindowText(L"Asset group and name database changes require Load Game.");
+        GetDlgItem(IDC_TIP)->SetWindowText(L"Asset group changes require Load Game. Name changes refresh on closing Settings.");
         return;
     }
     if(Page==1)
@@ -474,16 +478,69 @@ void GeneralSettings::OnCollisionCoverage()
 }
 void GeneralSettings::OnExportJsonModels() { if(GetParent()) GetParent()->PostMessage(WM_COMMAND,IDC_EXPORT_JSON_MODELS); }
 
-void GeneralSettings::OnBO4NameDatabase()
+void GeneralSettings::UpdateSalukiHint()
 {
-    auto Combo=(CComboBox*)GetDlgItem(IDC_BO4_NAME_DATABASE);
-    const std::string Selected=Combo->GetCurSel()==1 ? "echo000" : "bundled";
-    if (Selected=="echo000" && !BO4NameDatabase::Ready(Selected)) {
-        MessageBoxA(GetSafeHwnd(),"The echo000 BO4/CW databases are not installed beside this Greyhound executable. Import them with tools/shared/name_db/import_echo_bo4.py first.","BO4 / CW name database",MB_OK|MB_ICONINFORMATION);
-        Combo->SetCurSel(SettingsManager::GetSetting("bo4namedatabase","bundled")=="echo000" ? 1 : 0);
+    const bool Auto = SettingsManager::GetSetting("salukiautoupdate", "false") == "true";
+    ((CButton*)GetDlgItem(IDC_SALUKI_AUTO))->SetCheck(Auto ? BST_CHECKED : BST_UNCHECKED);
+    const auto Folder = SettingsManager::GetSetting("salukinamefolder", "");
+    const auto Hint = Folder.empty() ? "Optional: download names or choose your cod-name-db folder." :
+        Auto ? "Downloaded names enabled. Existing decoded names are preserved." : "Local folder enabled. Existing decoded names are preserved.";
+    ::SetDlgItemTextA(GetSafeHwnd(), IDC_BO4_NAME_DB_HINT, Hint);
+}
+
+void GeneralSettings::RunSalukiImport(const std::string& Folder, bool Download)
+{
+    WraithProgressDialog Dialog(IDD_PROGRESSDIALOG, this);
+    Dialog.SetupDialog("Greyhound | Saluki names", "Reading name database...", false, false);
+    Dialog.UpdateWindowClose(false);
+    std::string Selected, Error;
+    std::thread Worker([&]
+    {
+        Dialog.WaitTillReady();
+        Dialog.UpdateWindowClose(false);
+        try
+        {
+            Selected = Download ? SalukiNameDatabase::Update(true, [&](const std::string& Text) { Dialog.UpdateStatus(Text); }) : Folder;
+            if (!Download) SalukiNameDatabase::Validate(Selected);
+        }
+        catch (const std::exception& E) { Error = E.what(); }
+        Dialog.UpdateWindowClose(true);
+        Dialog.CloseProgress();
+    });
+    Dialog.DoModal();
+    Worker.join();
+    if (!Error.empty())
+    {
+        Error += "\n\nYour previous name database is still selected. Use GitHub to get the files manually.";
+        MessageBoxA(GetSafeHwnd(), Error.c_str(), "Saluki names", MB_OK | MB_ICONWARNING);
         return;
     }
-    SettingsManager::SetSetting("bo4namedatabase",Selected);
+    SettingsManager::SetSetting("salukinamefolder", Selected);
+    SettingsManager::SetSetting("salukiautoupdate", Download ? "true" : "false");
+    SettingsManager::SetSetting("salukirevision", std::to_string(GetTickCount64()));
+    UpdateSalukiHint();
+}
+
+void GeneralSettings::OnSalukiFolder()
+{
+    const auto Initial = Strings::ToUnicodeString(SettingsManager::GetSetting("salukinamefolder", ""));
+    CFolderPickerDialog Picker(Initial.empty() ? nullptr : Initial.c_str(), OFN_PATHMUSTEXIST, this);
+    Picker.m_ofn.lpstrTitle = L"Choose cod-name-db (CSV) or Saluki names (CDB) folder";
+    if (Picker.DoModal() == IDOK) RunSalukiImport(Strings::ToNormalString(std::wstring(Picker.GetPathName())), false);
+}
+void GeneralSettings::OnSalukiDownload() { RunSalukiImport("", true); }
+void GeneralSettings::OnSalukiLink() { ShellExecuteA(GetSafeHwnd(), "open", SalukiNameDatabase::ProjectUrl, nullptr, nullptr, SW_SHOWNORMAL); }
+void GeneralSettings::OnSalukiAuto()
+{
+    if (((CButton*)GetDlgItem(IDC_SALUKI_AUTO))->GetCheck() == BST_CHECKED) RunSalukiImport("", true);
+    else SettingsManager::SetSetting("salukiautoupdate", "false");
+    UpdateSalukiHint();
+}
+void GeneralSettings::OnSalukiDisable()
+{
+    SettingsManager::SetSetting("salukinamefolder", "");
+    SettingsManager::SetSetting("salukiautoupdate", "false");
+    UpdateSalukiHint();
 }
 
 void GeneralSettings::OnDevSection()

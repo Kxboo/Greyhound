@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "GameBlackOps4.h"
@@ -5720,6 +5721,7 @@ void GameBlackOps4::PerformInitialSetup()
         throw std::runtime_error("The echo000 BO4 name database is not installed. Select Bundled or import the local CSV checkout.");
     for (const auto* File:BO4NameDatabase::Files)
         AssetNameCache.LoadIndex(FileSystems::CombinePath(BO4NameDatabase::Root(Provider),File));
+    SalukiNameDatabase::ApplyAssets(AssetNameCache);
     ActiveNameDatabase=Provider;
 
     // Prepare to copy the oodle dll

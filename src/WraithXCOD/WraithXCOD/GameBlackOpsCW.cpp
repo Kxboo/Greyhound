@@ -2,6 +2,7 @@
 #include <set>
 #include <vector>
 #include "stdafx.h"
+#include "SalukiNameDatabase.h"
 
 // The class we are implementing
 #include "GameBlackOpsCW.h"
@@ -1990,7 +1991,9 @@ const XMaterial_t GameBlackOpsCW::ReadXMaterial(uint64_t MaterialPointer)
     // Clean the name, then apply it
     Result.MaterialName = Strings::Format("xmaterial_%llx", MaterialData.NamePtr);
     // Clean the tech name, then apply it
-    Result.TechsetName = Strings::Format("xtechset_%llx", CoDAssets::GameInstance->Read<uint64_t>(MaterialData.TechsetPtr));
+    const auto TechsetHash = CoDAssets::GameInstance->Read<uint64_t>(MaterialData.TechsetPtr);
+    Result.TechsetName = SalukiNameDatabase::ResolveMetadata("cod_techsets", TechsetHash,
+        Strings::Format("xtechset_%llx", TechsetHash));
 
     // Check for an override in the name DB
     if (AssetNameCache.NameDatabase.find(MaterialData.NamePtr) != AssetNameCache.NameDatabase.end())
@@ -2566,8 +2569,10 @@ void GameBlackOpsCW::PerformInitialSetup()
         throw std::runtime_error("The echo000 BO4/CW name database is not installed. Select Bundled or import the local CSV checkout.");
     for (const auto* File : BO4NameDatabase::Files)
         AssetNameCache.LoadIndex(FileSystems::CombinePath(BO4NameDatabase::Root(Provider), File));
+    SalukiNameDatabase::ApplyAssets(AssetNameCache);
     ActiveNameDatabase = Provider;
     StringCache.LoadIndex(FileSystems::CombinePath(FileSystems::GetApplicationPath(),       "package_index\\fnv1a_string.wni"));
+    SalukiNameDatabase::ApplyStrings(StringCache, true);
     // Prepare to copy the oodle dll
     auto OurPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), "oo2core_8_win64.dll");
     // Copy if not exists
