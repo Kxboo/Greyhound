@@ -228,6 +228,7 @@ BEGIN_MESSAGE_MAP(MainWindow, WraithWindow)
     ON_COMMAND(IDC_CLEARALL, OnClearAll)
     ON_COMMAND(IDC_EXPORTALL, OnExportAll)
     ON_COMMAND(IDC_EXPORT_JSON_MODELS, OnExportJsonModels)
+    ON_COMMAND(IDC_EXPORT_SPLINE_MODELS, OnExportSplineModels)
     ON_COMMAND(IDC_EXPORT_PLACEMENTS, OnExportPlacements)
     ON_COMMAND(IDC_EXPORT_BRUSHES, OnExportBrushes)
     ON_COMMAND(IDC_DEV_BO4_RUN, OnRunBO4Diagnostic)
@@ -717,7 +718,7 @@ void MainWindow::OnSettings()
     SettingsWindow SettingsDialog(this);
     // Show it
     const auto Action = SettingsDialog.DoModal();
-    if (Action == IDC_EXPORT_PLACEMENTS || Action == IDC_EXPORT_JSON_MODELS || Action == IDC_EXPORT_BRUSHES ||
+    if (Action == IDC_EXPORT_PLACEMENTS || Action == IDC_EXPORT_JSON_MODELS || Action == IDC_EXPORT_SPLINE_MODELS || Action == IDC_EXPORT_BRUSHES ||
         Action == IDC_DEV_BO4_RUN || Action == IDC_DEV_VERIFY_RUNTIME || Action == IDC_DEV_VERIFY_EXPORT)
         PostMessage(WM_COMMAND, Action);
 }
@@ -1736,6 +1737,31 @@ void MainWindow::OnVerifyExport()
             if(!Directory.empty())CoDAssets::LatestExportPath=Directory;
             Status=(Okay?"Saved file integrity passed. Report: ":"Saved export check failed. Report: ")+Directory;
         } catch(const std::exception& E) {Status=std::string("Saved export check failed: ")+E.what();}
+        ProgressDialog->UpdateStatus(Status.c_str());ProgressDialog->UpdateWindowClose(true);ProgressDialog->UpdateButtons(true,false);
+    });
+    Worker.detach();ProgressDialog->DoModal();
+}
+
+void MainWindow::OnExportSplineModels()
+{
+    if(CoDAssets::GameID!=SupportedGames::BlackOpsCW || !CoDAssets::GameAssets)
+    { MessageBoxA(GetSafeHwnd(),"Load the matching Cold War map with XModels enabled first.","Spline models",MB_OK);return; }
+    const auto Placements=WraithFileDialogs::OpenFileDialog("Select the matching spline/static model placements JSON", "", "JSON (*.json)|*.json;",GetSafeHwnd());
+    if(Placements.empty())return;
+    const auto Controls=WraithFileDialogs::OpenFileDialog("Select splined_models.json captured from this map/session", "", "JSON (*.json)|*.json;",GetSafeHwnd());
+    if(Controls.empty())return;
+    ProgressDialog=std::make_unique<WraithProgressDialog>(IDD_PROGRESSDIALOG,this);
+    ProgressDialog->SetupDialog("Greyhound | Spline models","Baking spline models in your selected export formats...",true,false);
+    ProgressDialog->OnOkClick=FinishProgress;
+    std::thread Worker([this,Placements,Controls] {
+        ProgressDialog->WaitTillReady();ProgressDialog->UpdateWindowClose(false);ProgressDialog->UpdateButtons(false,false);
+        const auto Root=ExportRun::Reserve("spline_models","run");std::string Status;
+        try {
+            if(Root.empty())throw std::runtime_error("Could not create spline export folder");
+            const auto Notify=[this](uint32_t P,const std::string& Stage){ProgressDialog->UpdateProgress(P);ProgressDialog->UpdateStatus(Stage.c_str());};
+            const bool Okay=CoDAssets::ExportSplineModels(Placements,Controls,Root,Notify);
+            Status=(Okay?"Spline models exported: ":"Spline export incomplete; check spline_export_report.json: ")+Root;
+        } catch(const std::exception& E) {Status=std::string("Spline export failed: ")+E.what();}
         ProgressDialog->UpdateStatus(Status.c_str());ProgressDialog->UpdateWindowClose(true);ProgressDialog->UpdateButtons(true,false);
     });
     Worker.detach();ProgressDialog->DoModal();

@@ -4,6 +4,9 @@
 // The class we are implementing
 #include "CoDAssets.h"
 #include "ModelBatchResume.h"
+#include "ModelBatchSelection.h"
+#include "CWStaticPlacementFilter.h"
+#include "CWSplineModel.h"
 
 #include <cstring>
 #include <fstream>
@@ -1896,7 +1899,87 @@ ExportGameResult CoDAssets::ExportJsonBatchModel(const CoDModel_t* Model, const 
         "." + Strings::ToLower(SettingsManager::GetSetting("exportimg", "PNG")), Root);
 }
 
-ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot)
+bool CoDAssets::ExportSplineModels(const std::string& Placements,const std::string& ControlFile,
+    const std::string& Root,const std::function<void(uint32_t,const std::string&)>& Progress)
+{
+    using json=nlohmann::json;
+    if(GameID!=SupportedGames::BlackOpsCW || !GameAssets) throw std::runtime_error("Load Cold War with XModels enabled first");
+    std::vector<std::string> Formats;
+    for(const auto* key:{"export_castmdl","export_xmexport","export_xmbin","export_smd","export_obj","export_ma","export_xna","export_gltf","export_glb","export_semodel"})
+        if(SettingsManager::GetSetting(key)=="true") Formats.push_back(key);
+    if(Formats.empty()) throw std::runtime_error("Select at least one model export format in Model Settings");
+    json Source,Controls;std::ifstream P(Placements),C(ControlFile);P>>Source;C>>Controls;
+    if(Source.is_object() && Source.contains("complete") && Source["complete"]==false) throw std::runtime_error("Incomplete placement capture");
+    CWSplineBake::Controls Spline(Controls);
+    const auto& Rows=Source.is_array()?Source:Source.at("StaticModels");
+    if(!Rows.is_array()) throw std::runtime_error("Expected a placement array or StaticModels document");
+    json Selected=json::array();std::set<std::pair<uint32_t,uint32_t>> Keys;
+    for(const auto& Row:Rows) if(CWStaticPlacementFilter::RequiresSpline(Row)) {
+        const auto Key=std::make_pair(Row.at("District").get<uint32_t>(),Row.at("ReferenceIndex").get<uint32_t>());
+        if(!Keys.insert(Key).second) throw std::runtime_error("Duplicate spline district/reference identity");
+        Spline.instances.at(Row.at("SplineInstanceIndex").get<uint32_t>());Selected.push_back(Row);
+    }
+    if(Selected.empty()) throw std::runtime_error("No spline placements in this JSON");
+    ModelExportNaming::SourceLookup Lookup;
+    for(const auto* Asset:GameAssets->LoadedAssets) if(Asset->AssetType==WraithAssetType::Model) Lookup.Add(Asset->AssetName);
+    if(GamePackageCache) GamePackageCache->WaitForPackageCacheLoad();
+    FileSystems::CreateDirectory(Root);LatestExportPath=Root;
+    json Results=json::array(),BakedRows=json::array();size_t Failed=0,Done=0;
+    struct ConversionThread {ConversionThread(){Image::SetupConversionThread();} ~ConversionThread(){Image::DisableConversionThread();}} Conversion;
+    for(const auto& Row:Selected) {
+        const auto Index=Row.at("SplineInstanceIndex").get<uint32_t>();
+        json Result={{"district",Row["District"]},{"reference",Row["ReferenceIndex"]},{"index",Index},{"status","failed"}};
+        try {
+            const auto SourceName=Lookup.Resolve(Row.at("Name").get<std::string>(),Row.value("SourceName",std::string()));
+            Result["source_model"]=SourceName;
+            std::vector<const CoDModel_t*> Matches;std::vector<ModelBatchSelection::Candidate> Candidates;
+            for(const auto* Asset:GameAssets->LoadedAssets) if(Asset->AssetType==WraithAssetType::Model && Asset->AssetName==SourceName) {
+                const auto State=Asset->AssetStatus;
+                Candidates.push_back({Asset->AssetPointer,Matches.size(),State!=WraithAssetStatus::Placeholder && State!=WraithAssetStatus::NotLoaded && State!=WraithAssetStatus::Processing,
+                    State==WraithAssetStatus::Exported,State==WraithAssetStatus::Loaded});
+                Matches.push_back(static_cast<const CoDModel_t*>(Asset));
+            }
+            const auto Choice=ModelBatchSelection::Select(Candidates);
+            if(Choice>=Matches.size()) throw std::runtime_error("Source XModel is missing or unavailable: "+SourceName);
+            uint64_t Hash=0xcbf29ce484222325ull;
+            for(unsigned char v:Controls.dump()+SourceName) Hash=(Hash^v)*0x100000001b3ull;
+            const auto Name=Strings::Format("cwsp_%016llx_d%u_r%u_s%u",Hash,Row.at("District").get<uint32_t>(),Row.at("ReferenceIndex").get<uint32_t>(),Index);
+            const auto Folder=FileSystems::CombinePath(Root,Name);
+            if(!CreateDirectoryA(Folder.c_str(),nullptr)) throw std::runtime_error("Spline model folder already exists or cannot be created: "+Folder);
+            const auto Images=FileSystems::CombinePath(Folder,"_images");
+            FileSystems::CreateDirectory(Images);FileSystems::CreateDirectory(FileSystems::CombinePath(Folder,"_mat_info"));
+            CWSplineBake::V Origin{};bool HasOrigin=false;json Lods=json::array();
+            const auto Transform=[&](WraithModel& Model) {
+                const auto Stem=ModelExportNaming::Stem(SourceName);
+                const auto Suffix=Model.AssetName.substr(Stem.size());
+                std::vector<size_t> Fallbacks;CWSplineBake::BakeModel(Model,Spline,Index,Origin,HasOrigin,Fallbacks);
+                Model.AssetName=Name+Suffix;
+                Lods.push_back({{"name",Model.AssetName},{"vertices",Model.VertexCount()},{"triangles",Model.FaceCount()},
+                    {"normal_fallback_meshes",Fallbacks}});
+            };
+            if(ExportModelAsset(Matches[Choice],Folder,Images,"_images/","."+Strings::ToLower(SettingsManager::GetSetting("exportimg","PNG")),Root,Transform)!=ExportGameResult::Success || !HasOrigin)
+                throw std::runtime_error("Spline model export failed");
+            Result["name"]=Name;Result["directory"]=Folder;Result["status"]="exported";Result["lods"]=Lods;Result["origin"]=Origin;
+            BakedRows.push_back({{"Name",Name},{"Position",{{"X",Origin[0]},{"Y",Origin[1]},{"Z",Origin[2]}}},
+                {"RotationDegrees",{{"X",0},{"Y",0},{"Z",0}}},{"ModelScale",{{"X",1},{"Y",1},{"Z",1}}},
+                {"RequiresSplineDeformation",false},{"SourceModel",SourceName},{"SourceSplineInstanceIndex",Index},
+                {"District",Row["District"]},{"ReferenceIndex",Row["ReferenceIndex"]}});
+        } catch(const std::exception& E) {++Failed;Result["error"]=E.what();}
+        Results.push_back(Result);++Done;
+        if(Progress) Progress(uint32_t(100*Done/Selected.size()),"Baked "+std::to_string(Done)+" / "+std::to_string(Selected.size())+" spline models; failed "+std::to_string(Failed));
+    }
+    std::ofstream Report(FileSystems::CombinePath(Root,"spline_export_report.json"));
+    Report<<json({{"schema","greyhound-spline-models-v1"},{"complete",Failed==0},{"requested",Selected.size()},
+        {"exported",BakedRows.size()},{"failed",Failed},{"source_placements",Placements},{"source_controls",ControlFile},
+        {"layout","per_model_images_mat_info"},{"model_format_settings",Formats},{"records",Results},
+        {"limits",{"Static model splines only; no decal splines, wind, animated materials or collision generation.",
+            "Geometric normals use topology fallback at folds; review shading.","Use controls and placements from the loaded map/session."}}}).dump(2);
+    Report.close();std::ofstream Placed(FileSystems::CombinePath(Root,"placements.json"));Placed<<BakedRows.dump(2);Placed.close();
+    if(!Report || !Placed) throw std::runtime_error("Could not save spline export reports");
+    return Failed==0;
+}
+
+ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot, const std::function<void(WraithModel&)>& Transform)
 {
     // Reserve the shortened directory with its original identity. This also
     // prevents a later map's variant from being mistaken for an existing export.
@@ -1904,7 +1987,7 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
     {
         static std::mutex IdentityMutex;
         std::lock_guard<std::mutex> Lock(IdentityMutex);
-        if (!BatchRoot.empty())
+        if (!Transform && !BatchRoot.empty())
         {
             const auto Path = FileSystems::CombinePath(BatchRoot, "model_identities.json");
             nlohmann::json Identities = nlohmann::json::object();
@@ -1923,7 +2006,7 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
                 if (!Output) throw std::runtime_error("Could not save batch model identities");
             }
         }
-        else
+        else if (!Transform)
         {
         const auto IdentityPath = FileSystems::CombinePath(ExportPath, "model_identity.json");
         std::ifstream Existing(IdentityPath);
@@ -2078,7 +2161,8 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
                     {
                         Result->AssetName = ModelExportNaming::Stem(Model->AssetName) + Strings::Format("_LOD%d", i);
                         // Send off to exporter
-                        ExportWraithModel(Result, ExportPath, !BatchRoot.empty());
+                        if (Transform) Transform(*Result);
+                        ExportWraithModel(Result, ExportPath, !Transform && !BatchRoot.empty());
                     }
                     else
                     {
@@ -2109,7 +2193,8 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
                     {
                         Result->AssetName = ModelExportNaming::Stem(Model->AssetName) + LodIndexSuffix;
                         // Send off to exporter
-                        ExportWraithModel(Result, ExportPath, !BatchRoot.empty());
+                        if (Transform) Transform(*Result);
+                        ExportWraithModel(Result, ExportPath, !Transform && !BatchRoot.empty());
                     }
                     else
                     {
@@ -2126,7 +2211,7 @@ ExportGameResult CoDAssets::ExportModelAsset(const CoDModel_t* Model, const std:
         }
 
         // Check whether or not to export the hitbox model
-        if (SettingsManager::GetSetting("exporthitbox") == "true")
+        if (!Transform && SettingsManager::GetSetting("exporthitbox") == "true")
         {
             // The hitbox result, if any
             std::unique_ptr<WraithModel> Result = nullptr;

@@ -30,6 +30,7 @@ private:
     void OnVerifyExport();
     void OnExportPlacements();
     void OnExportJsonModels();
+    void OnExportSplineModels();
     void OnExportBrushes();
     void OnModelsPage();
     void OnAnimsPage();

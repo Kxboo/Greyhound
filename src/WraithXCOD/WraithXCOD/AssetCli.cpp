@@ -33,6 +33,7 @@ namespace
     {
         std::string Action;
         std::string ModelBatchRoot;
+        std::string SplinePlacements, SplineControls, SplineOutput;
         OutputMode Output = OutputMode::Human;
         bool JsonRequested = false;
         bool JsonLinesRequested = false;
@@ -293,7 +294,7 @@ namespace
             return true;
         }
         if (Options.Action != "capabilities" && Options.Action != "list" &&
-            Options.Action != "export")
+            Options.Action != "export" && Options.Action != "export-splines")
         {
             Error = "unknown assets action '" + Options.Action + "'";
             return false;
@@ -306,6 +307,13 @@ namespace
             if (Argument == "--json") { Options.Output = OutputMode::Json; Options.JsonRequested = true; }
             else if (Argument == "--jsonl") { Options.Output = OutputMode::JsonLines; Options.JsonLinesRequested = true; }
             else if (Argument == "--help" || Argument == "-h") Options.Action = "help";
+            else if (Argument == "--placements" || Argument == "--spline-controls" || Argument == "--output")
+            {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                if (Argument == "--placements") Options.SplinePlacements = Value;
+                else if (Argument == "--spline-controls") Options.SplineControls = Value;
+                else Options.SplineOutput = Value;
+            }
             else if (Argument == "--type")
             {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
@@ -433,6 +441,18 @@ namespace
 
     bool Validate(AssetOptions& Options, std::string& Error)
     {
+        if (Options.Action == "export-splines")
+        {
+            if (Options.SplinePlacements.empty() || Options.SplineControls.empty() || Options.SplineOutput.empty())
+            { Error = "export-splines requires --placements JSON --spline-controls splined_models.json --output NEW_FOLDER"; return false; }
+            if (!Options.Names.empty() || !Options.Globs.empty() || Options.All || Options.DryRun || Options.Limit || !Options.ModelBatchRoot.empty() ||
+                (!Options.Types.empty() && Options.Types != std::set<std::string>{"model"}))
+            { Error = "export-splines uses spline placement rows instead of asset selectors or --model-batch-root"; return false; }
+            Options.Types = {"model"};
+            if (Options.ModelFormats.empty()) Options.ModelFormats = {"cast"};
+        }
+        else if (!Options.SplinePlacements.empty() || !Options.SplineControls.empty() || !Options.SplineOutput.empty())
+        { Error = "--placements, --spline-controls and --output require export-splines"; return false; }
         if (Options.JsonRequested && Options.JsonLinesRequested)
         {
             Error = "--json and --jsonl are mutually exclusive";
@@ -517,7 +537,7 @@ namespace
     {
         return {
             {"schema", "greyhound-cli-capabilities-v1"},
-            {"commands", {"assets capabilities", "assets list", "assets export", "superterrain", "placements"}},
+            {"commands", {"assets capabilities", "assets list", "assets export", "assets export-splines", "superterrain", "placements"}},
             {"placement_command", {
                 {"syntax", "placements [--name-db bundled|echo000] [--non-static|--static-only] [--verify] [--organize]"},
                 {"games", {"black_ops_cw", "black_ops_4"}},
@@ -591,6 +611,8 @@ namespace
             "  Greyhound-cli.exe assets capabilities [--json|--jsonl]\r\n"
             "  Greyhound-cli.exe assets list [--type TYPE] [--name EXACT] [--glob PATTERN] [--limit N] [--json|--jsonl]\r\n"
             "  Greyhound-cli.exe assets export --type TYPE (--name EXACT|--glob PATTERN|--all) [options]\r\n\r\n"
+            "  Greyhound-cli.exe assets export-splines --placements JSON --spline-controls splined_models.json --output NEW_FOLDER [--model-format FORMAT ...]\r\n"
+            "      CW only; default CAST. Per-instance folders include _images and _mat_info. No GDT.\r\n\r\n"
             "  Greyhound-cli.exe placements [--name-db bundled|echo000]\r\n"
             "      CW options: --non-static | --static-only; --verify; --organize\r\n"
             "      --verify and --organize enable non-static capture. Organization is in place.\r\n"
@@ -957,7 +979,7 @@ int AssetCli::Run(int argc, char** argv)
             Stdout(Result.dump() + "\r\n");
         return 0;
     }
-    if (Options.Action == "export" && !ApplyExportSettings(Options, Error))
+    if ((Options.Action == "export" || Options.Action == "export-splines") && !ApplyExportSettings(Options, Error))
         return EmitError(Options, Error, 1);
 
     EnableAllAssetDiscovery();
@@ -985,6 +1007,19 @@ int AssetCli::Run(int argc, char** argv)
     const auto Found = CoDAssets::BeginGameMode();
     if (Found != FindGameResult::Success)
         return EmitError(Options, "could not attach to a supported running game", 2);
+    if (Options.Action == "export-splines")
+    {
+        bool Okay = false;
+        try {
+            if (FileSystems::DirectoryExists(Options.SplineOutput)) throw std::runtime_error("Spline output must be a new directory");
+            Okay = CoDAssets::ExportSplineModels(Options.SplinePlacements, Options.SplineControls, Options.SplineOutput,
+                [](uint32_t, const std::string& Stage) { Diagnostic(Stage); });
+        } catch (const std::exception& E) { CoDAssets::CleanUpGame(); return EmitError(Options, E.what(), 4); }
+        CoDAssets::CleanUpGame();
+        Stdout(json({{"command","assets export-splines"},{"complete",Okay},{"output_directory",Options.SplineOutput},
+            {"report",FileSystems::CombinePath(Options.SplineOutput,"spline_export_report.json")}}).dump(2)+"\r\n");
+        return Okay ? 0 : 4;
+    }
 
     const std::string Id = RunId();
     json Result = {

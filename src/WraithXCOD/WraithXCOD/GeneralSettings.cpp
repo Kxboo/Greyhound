@@ -38,6 +38,7 @@ BEGIN_MESSAGE_MAP(GeneralSettings, WraithWindow)
     ON_COMMAND(IDC_CW_FLOAT_TRIANGLES, OnCollisionCoverage)
     ON_COMMAND(IDC_CW_MODEL_TRIANGLES, OnCollisionCoverage)
     ON_COMMAND(IDC_EXPORT_JSON_MODELS, OnExportJsonModels)
+    ON_COMMAND(IDC_EXPORT_SPLINE_MODELS, OnExportSplineModels)
     ON_COMMAND(IDC_CW_CLIP, OnCWCLIP)
     ON_COMMAND(IDC_CW_WORLD, OnCWWORLD)
     ON_COMMAND(IDC_CW_NAV, OnCWNAV)
@@ -163,7 +164,7 @@ void GeneralSettings::ConfigurePage()
         IDC_CW_EXPORT_MODE, IDC_CW_EXPORT_HINT, IDC_CW_CAPTURE_ENTITIES,
         IDC_CW_CAPTURE_PLACEMENTS, IDC_CW_CAPTURE_COLLISION, IDC_CW_CAPTURE_SPLINES};
     for (int Id : {IDC_CW_RADIANT_ENABLE, IDC_EXPORT_BRUSHES, IDC_CW_RADIANT_INFO, IDC_CW_RADIANT_TYPES, IDC_CW_RADIANT_VOLUMES, IDC_CW_FLOAT_TRIANGLES, IDC_CW_MODEL_TRIANGLES}) GetDlgItem(Id)->ShowWindow(SW_HIDE);
-    for (int Id : {IDC_EXPORT_PLACEMENTS,IDC_EXPORT_JSON_MODELS,IDC_CW_PLACEMENT_INFO,IDC_CW_MODELS_INFO,IDC_CW_NONSTATIC_PLACEMENTS,IDC_CW_PROXY_FILTER,IDC_CW_ORGANIZE_PLACEMENTS,IDC_CW_VERIFY_PLACEMENTS}) GetDlgItem(Id)->ShowWindow(SW_HIDE);
+    for (int Id : {IDC_EXPORT_PLACEMENTS,IDC_EXPORT_JSON_MODELS,IDC_EXPORT_SPLINE_MODELS,IDC_CW_PLACEMENT_INFO,IDC_CW_MODELS_INFO,IDC_CW_NONSTATIC_PLACEMENTS,IDC_CW_PROXY_FILTER,IDC_CW_ORGANIZE_PLACEMENTS,IDC_CW_VERIFY_PLACEMENTS}) GetDlgItem(Id)->ShowWindow(SW_HIDE);
     GetDlgItem(IDC_CW_CODE_PROBE)->ShowWindow(SW_HIDE);
     for(int Id:{IDC_DEV_SECTION,IDC_DEV_HEADING,IDC_DEV_DESCRIPTION,IDC_BO4_CAPTURE_MODE,
                 IDC_DEV_BO4_RUN,IDC_DEV_VERIFY_RUNTIME,IDC_DEV_VERIFY_EXPORT,IDC_DEV_TERRAIN_SETTINGS})GetDlgItem(Id)->ShowWindow(SW_HIDE);
@@ -193,8 +194,9 @@ void GeneralSettings::ConfigurePage()
         Place(IDC_CW_PLACEMENT_INFO,17,124,310,34);
         GetDlgItem(IDC_CW_PLACEMENT_INFO)->SetWindowText(L"BO4 / CW: static_models.json. CW can also include entity classes, lights, probes and effects. Optional sorting creates a copy; verification checks captured bytes. Excluded proxies are recorded.");
         Place(IDC_EXPORT_JSON_MODELS,17,161,220,24);
-        Place(IDC_CW_MODELS_INFO,17,190,310,44);
-        GetDlgItem(IDC_CW_MODELS_INFO)->SetWindowText(L"Export unique models as CAST with images, material info and selected LODs.\r\n\r\nResume using the JSON in an existing batch folder. Completed models are kept.");
+        Place(IDC_EXPORT_SPLINE_MODELS,17,188,220,24);
+        Place(IDC_CW_MODELS_INFO,17,215,310,16);
+        GetDlgItem(IDC_CW_MODELS_INFO)->SetWindowText(L"Models from JSON: CAST. CW splines: selected model formats, with images and material info in each folder.");
         GetDlgItem(IDC_TIP)->SetWindowText(L"Load the matching map and Load Game first. Model and image settings apply to batch export.");
         GetDlgItem(IDC_NOTICE)->SetWindowText(L"Export all available LODs is respected. Brush prefabs are in Radiant Brushes.");
         return;
@@ -392,7 +394,7 @@ void GeneralSettings::UpdateCWExportHint()
     // evidence in every mode, headers-only included. It is not mode-dependent.
     const wchar_t* Hints[]={
         L"Exports CW pool headers for research. Referenced geometry and entity properties are not collected.",
-        L"Enable matching pools, Load Game, then export their cw_pool rows. Splines export source data; deformed meshes are not exported.",
+        L"Enable matching pools, Load Game, then export their cw_pool rows. Spline capture saves controls. Bake meshes with Spline models from JSON in Map & Model Export.",
         L"Exports headers and small samples of referenced memory. Samples are incomplete and may include adjacent data. Results remain research evidence.",
         L"Advanced: bounded reference probes plus selected map sections. Probes may include adjacent data regardless of section choices. Collision topology and ownership remain experimental."
     };
@@ -500,3 +502,5 @@ void GeneralSettings::OnVerifyRuntime() { if(GetParent())GetParent()->PostMessag
 void GeneralSettings::OnTerrainSettings() { if(GetParent())GetParent()->PostMessage(WM_COMMAND,IDC_TERRAINPANEL); }
 
 void GeneralSettings::OnVerifyExport() { if(GetParent())GetParent()->PostMessage(WM_COMMAND,IDC_DEV_VERIFY_EXPORT); }
+
+void GeneralSettings::OnExportSplineModels() { if(GetParent()) GetParent()->PostMessage(WM_COMMAND,IDC_EXPORT_SPLINE_MODELS); }

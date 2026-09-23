@@ -36,6 +36,7 @@ tools/
 | Organize CW placements | [organize_cw_placements.py](cold_war/capture/organize_cw_placements.py) |
 | Decode saved CW entities | [decode_cw_entitylist.py](cold_war/capture/decode_cw_entitylist.py) |
 | Audit CW placement counts | [audit_cw_placement_counts.py](cold_war/placements/audit_cw_placement_counts.py) |
+| Offline CW spline bake with per-model images and material info | [bake_cw_splines.py](cold_war/placements/bake_cw_splines.py) |
 | Audit BO4 placements | [audit_bo4_placements.py](black_ops_4/placements/audit_bo4_placements.py) |
 | Package BO4 terrain evidence | [package_bo4_terrain.py](black_ops_4/capture/package_bo4_terrain.py) |
 | Regenerate the BO3 reference | [build_reference.py](black_ops_3/reference/build_reference.py) |

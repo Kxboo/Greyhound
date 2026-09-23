@@ -36,9 +36,10 @@ adds separate entity, FX, light, reflection-probe, sun-volume and source-evidenc
 JSONs. See [effects and entities](cw-effects-entities.md).
 `static_models.json` retains the rigid district scope described below.
 
-Normal exports now contain **rigid static placements only**. Rows marked
+Normal placement exports contain **rigid static placements only**. Rows marked
 `RequiresSplineDeformation`, or carrying a valid `SplineInstanceIndex`, are
-excluded until spline controls/deformation are supported. The complete capture
+excluded from that rigid workflow. The separate [offline spline bake](#offline-static-spline-bake)
+uses captured controls and exported source meshes. The complete capture
 remains in `diagnostics/static_models.json`; `placement_report.json` records
 captured, published and deferred counts. The completion dialog reports the
 published count rather than the unfiltered capture count.
@@ -93,7 +94,7 @@ export, not silent omission. Package reads share the scene package budget.
 - `ReferenceFlagsRaw`: source flags; packaged and runtime values may differ.
 - `SplineInstanceIndex` / `RequiresSplineDeformation`: retained in diagnostic
   capture evidence; dependent rows are excluded from normal static placement
-  publication because spline controls and deformation are not supplied.
+  publication. Capture their controls separately before baking a static mesh.
 
 The report includes recovered and unresolved district counts, per-district live
 failure reasons, package path/key/offset, validation results and range coverage.
@@ -112,6 +113,106 @@ permutations, finite transforms, bounds, range coverage and rigid/spline filteri
 Start with [cw_district_payload_test.cpp](../tests/cw_district_payload_test.cpp)
 and the [native runner](../tests/run-native-tests.ps1). Saved map comparisons
 must join by district/reference identity rather than physical array order.
+
+## Static spline model export
+
+**Beta:** validated on the captured Silver map; other maps/builds and folded-surface shading still need review.
+
+BO3 and DCC tools can use the final bent mesh as an ordinary static model.
+Each CW placement gets a unique model identity and a self-contained folder.
+
+In Greyhound, select the model formats and LOD options under **Model Settings**,
+then open **Map & Model Export > Spline models from JSON (CW)**. Load the matching
+Cold War map with XModels enabled first. Select its placement JSON, followed by
+`splined_models.json` captured from the same map/session. The action resolves
+source models in the loaded asset pool, bakes each placement, and uses the same
+format writers as ordinary model exports. It does not force XMODEL_BIN or CAST.
+Multiple selected formats are supported. No GDT is generated.
+
+Outputs go to `exported_files/black_ops_cw/spline_models/run_XX/`:
+
+```text
+cwsp_<unique-identity>/
+    cwsp_<unique-identity>.cast       # only when CAST is selected
+    ...other selected model formats...
+    _mat_info/
+    _images/<material-name>/...
+placements.json
+spline_export_report.json
+```
+
+The name incorporates the controls, source model and district/reference/instance
+identity. Selected LODs share a common origin. The placement JSON contains the
+new model names and origins in game inches; do not apply the original spline or
+rigid transform again. Normal exporters retain their usual units (CAST in
+centimeters; XMODEL in game inches). Material metadata and image format settings
+follow the ordinary exporter. Each spline folder owns its dependencies.
+
+For repeatable CLI exports with a matching running CW map:
+
+```powershell
+Greyhound-cli.exe assets export-splines `
+  --placements $districtPlacements --spline-controls $splinedModelsJson `
+  --output $newOutput --model-format cast --vertex-colors
+```
+
+Repeat `--model-format` for additional formats; the CLI defaults to CAST.
+`--all-lods` follows the usual model-export behavior. Input controls must have
+passed the spline capture's unchanged readback. Failed models remain explicit
+in the report; partial output is not reported as complete. Static hitbox export,
+spline decals, wind and animated material deformation are outside this action.
+
+To capture the inputs, export the exact current `cw_pool_01B_gfx_map_headers`
+and `cw_pool_0AB_districts_headers` rawfile names with
+`--cw-map-data --cw-splines --cw-skip-entities --cw-skip-collision`. The gfx capture
+contains `splined_models.json`; the district document provides `StaticModels`.
+The normal **Models from JSON** action continues to defer spline placements.
+
+An offline CAST helper also supports saved source models, without a running game:
+
+```powershell
+python tools/cold_war/placements/bake_cw_splines.py `
+  --capture $gfxCapture --placements $districtPlacements `
+  --models $sourceModelBatch --output $newOutput
+```
+
+The helper defaults to CAST and requires source model folders containing
+`<name>.cast`, `_mat_info`, and `_images`. Export those with
+`assets export --type model --model-format cast --model-batch-root` and exact
+source model names. Its output has the same per-model dependency layout and
+includes `bake_report.json` plus a review prefab. Explicit `--xmodel-bin` remains
+an optional offline conversion using scale 0.3937007874. Adding `--bo3-root` and
+`--install-dir` copies complete model folders and placements into `_custom`,
+verifies checksums, protects user edits, and archives superseded owned files.
+It does not write a GDT or compile game assets.
+
+The helper reads 100-byte instance and 192-byte segment records, including
+packed evidence spans. It follows the shader's prefab transform, six spline
+axes, exclusive segment range, cubic evaluation, banking, near-vertical frame,
+and linear continuation after the final segment. It rejects invalid input and
+unsupported skeletons, and returns a nonzero exit code for a partial bake.
+
+On the 2026-09-22 Silver capture, 91 instances from 10 source models produced
+382,398 vertices and 517,853 triangles. Every baked vertex was compared with
+the original captured position DXIL executed on a separate D3D12 WARP device:
+maximum coordinate error was 0.000601 game units. This validates the static
+position path on that capture, not every game build or a live rendered frame.
+Position shader SHA-256:
+`53c9cbfdebf42665a85241ba2106d831f1dbe47a82c2e753830533fef783b5b1`.
+
+Captured bounds are not an exact mesh oracle: the original shader also differed
+from the stored bounds by up to 14.633 units on that capture. Do not fit the
+geometry to those bounds. The spline buffers and their resource headers passed
+rereads; the broader gfx header changed, so the overall gfx capture returned
+exit 4. A validated spline subsection does not establish a stable whole map.
+
+Normals use the geometric deformation Jacobian. Folded/singular cases fall
+back to normals from original triangle connectivity and are listed for review
+(three instances in the measured capture). This does not reproduce CW material
+shader shading. BO3 material setup, asset compilation, collision, additional
+LODs, wind/animation, and spline decals remain separate work. Supply controls
+and placements from the same map/session; matching integer indices alone do
+not prove that relationship. Native rigid placement filtering is unchanged.
 
 ## Cold War placement catalog and BO3 references
 
@@ -329,11 +430,11 @@ be collapsed to the influence box center.
 Use `docs_modtools/` inside your own Black Ops III installation. Relevant
 shipped documents include:
 
-- `Lighting_Parameters.pdf`, pages 1–3 and 8–11: light types, intensity stops,
+- `Lighting_Parameters.pdf`, pages 1Ã¢â‚¬â€œ3 and 8Ã¢â‚¬â€œ11: light types, intensity stops,
   shaping, cookie parameters, states and shadows.
-- `FX_Lights.pdf`, pages 1–2: dynamic light asset setup, animation and instance limits.
-- `Lighting_Probe_Workflow.pdf`, pages 1–3: global probes, sun volumes and target origins.
-- `Probe/Reflection_Probes.pdf`, pages 1–6: independent origin, size/blend bounds,
+- `FX_Lights.pdf`, pages 1Ã¢â‚¬â€œ2: dynamic light asset setup, animation and instance limits.
+- `Lighting_Probe_Workflow.pdf`, pages 1Ã¢â‚¬â€œ3: global probes, sun volumes and target origins.
+- `Probe/Reflection_Probes.pdf`, pages 1Ã¢â‚¬â€œ6: independent origin, size/blend bounds,
   reflection planes and GI grids.
 - `Probe/Probe_Editing_Handles.pdf`: independent capture-center and box edits.
 - `Probe/Multiface_Probes.pdf`: convex planes, up to 24 authoring faces, child
@@ -364,6 +465,6 @@ world plane conversion, gimbal-lock angles, invalid sizes/axes/counts and
 ownership gaps/overlaps. Add synthetic coverage for new layouts and report
 live-map tests separately.
 
-Useful next work includes spline controls, dynamic-model instance relationships,
+Useful next work includes dynamic-model instance relationships,
 light appearance conversion, probe face/blend mapping and validation on other
 maps/builds. Preserve original bytes and unresolved values while investigating.

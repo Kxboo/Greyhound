@@ -105,6 +105,7 @@ private:
     void OnSettings();
     void OnExportAll();
     void OnExportJsonModels();
+    void OnExportSplineModels();
     void OnExportPlacements();
     void OnExportBrushes();
     void OnRunBO4Diagnostic();

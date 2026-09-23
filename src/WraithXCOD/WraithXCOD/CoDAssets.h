@@ -250,6 +250,9 @@ public:
 
     // Explicit per-call layout for Models from JSON; never changes saved settings.
     static ExportGameResult ExportJsonBatchModel(const CoDModel_t* Model, const std::string& Root);
+    // Bake each saved CW spline placement and use the user's normal model formats.
+    static bool ExportSplineModels(const std::string& Placements, const std::string& Controls,
+        const std::string& Root, const std::function<void(uint32_t,const std::string&)>& Progress = {});
 
     // Gets a model asset for previewing
     static std::unique_ptr<WraithModel> GetModelForPreview(const CoDModel_t* Model);
@@ -287,7 +290,7 @@ private:
     // Exports a game animation asset
     static ExportGameResult ExportAnimationAsset(const CoDAnim_t* Animation, const std::string& ExportPath);
     // Exports a game model asset
-    static ExportGameResult ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot = std::string());
+    static ExportGameResult ExportModelAsset(const CoDModel_t* Model, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension, const std::string& BatchRoot = std::string(), const std::function<void(WraithModel&)>& Transform = {});
     // Exports a game image asset
     static ExportGameResult ExportImageAsset(const CoDImage_t* Image, const std::string& ExportPath, const std::string& ImageExtension);
     // Exports a game sound asset

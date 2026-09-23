@@ -41,6 +41,7 @@ private:
     void UpdatePlacementOptions();
     void OnCollisionCoverage();
     void OnExportJsonModels();
+    void OnExportSplineModels();
     void OnXModels();
     void OnXAnims();
     void OnXImages();
