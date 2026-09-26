@@ -89,15 +89,19 @@ void Cast::ExportCastModel(const WraithModel& Model, const std::string& FileName
 
 		MaterialHashes.push_back(CastMaterial->Hash);
 
-		auto CastDiffuse = CastMaterial->AddNode(CastNodeId::File, Hashing::HashXXHashString(Material.DiffuseMapName));
-		CastDiffuse->SetProperty("p", Material.DiffuseMapName);
-		CastMaterial->SetProperty("albedo", CastPropertyId::Integer64, CastDiffuse->Hash);
-		auto CastNormal = CastMaterial->AddNode(CastNodeId::File, Hashing::HashXXHashString(Material.NormalMapName));
-		CastNormal->SetProperty("p", Material.NormalMapName);
-		CastMaterial->SetProperty("normal", CastPropertyId::Integer64, CastNormal->Hash);
-		auto CastSpec = CastMaterial->AddNode(CastNodeId::File, Hashing::HashXXHashString(Material.SpecularMapName));
-		CastSpec->SetProperty("p", Material.SpecularMapName);
-		CastMaterial->SetProperty("specular", CastPropertyId::Integer64, CastSpec->Hash);
+		const auto AddTexture = [&](const char* Slot, const std::string& Path)
+		{
+			// An absent optional map must not become a missing-image node on import.
+			if (Path.empty()) return;
+			auto File = CastMaterial->AddNode(CastNodeId::File, Hashing::HashXXHashString(Path));
+			File->SetProperty("p", Path);
+			CastMaterial->SetProperty(Slot, CastPropertyId::Integer64, File->Hash);
+		};
+		AddTexture("albedo", Material.DiffuseMapName);
+		AddTexture("normal", Material.NormalMapName);
+		AddTexture("specular", Material.SpecularMapName);
+		AddTexture("gloss", Material.GlossMapName);
+		AddTexture("ao", Material.AOMapName);
 	}
 
 	int MeshIndex = 0;

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import struct
+from urllib.parse import unquote
 import sys
 
 import numpy as np
@@ -200,6 +201,11 @@ def read_span(root, logical):
     return data
 
 
+def spline_name(source, index):
+    """splm_<model>_<spline instance>; the instance keeps each deformed mesh unique within a map."""
+    return 'splm_'+re.sub(r'[^a-z0-9_]','_',source.rsplit('/',1)[-1].lower())+f'_{index}'
+
+
 def triangle_normals(positions, faces, original_normals):
     """Fallback at folds: smooth only across the original shared vertex indices."""
     faces=np.asarray(faces).reshape(-1,3)
@@ -244,7 +250,7 @@ def bake(capture, placements_path, models, output, xmodel_bin=False):
     for row in rows:
         try:
             name=row['Name'];index=row['SplineInstanceIndex']
-            if not re.fullmatch(r'[A-Za-z0-9_.-]+',name) or name in ('.','..'):
+            if not re.fullmatch(r'[A-Za-z0-9_.%-]+',name) or name in ('.','..'):
                 raise ValueError('Unsafe model identity')
             source=models/name/(name+'.cast')
             original=source.read_bytes();roots=read_cast(original)
@@ -279,9 +285,7 @@ def bake(capture, placements_path, models, output, xmodel_bin=False):
             for mesh,p,n in zip(meshes,positions,normals):
                 mesh.set_array('vp',(p-origin)*CAST_SCALE);mesh.set_array('vn',n)
             # Each placement owns its dependencies, just like a normal model export.
-            # Include control/model content so another map cannot reuse a different shape.
-            identity=hashlib.sha256(original+raw_instances[index*100:(index+1)*100]+raw_segments).hexdigest()[:20]
-            baked_name=f'cwsp_{identity}_d{row["District"]}_r{row["ReferenceIndex"]}_s{index}'
+            baked_name=spline_name(row.get('SourceName') or unquote(name),index)
             if not re.fullmatch(r'[a-z0-9_]+',baked_name): raise ValueError('Invalid spline placement identity')
             dest=output/baked_name
             dest.mkdir()

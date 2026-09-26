@@ -14,11 +14,11 @@ BO4 diagnostics, and export workflows/checks. Enable the pools you need, then
 
 | Workflow | Route | Output and limits |
 | --- | --- | --- |
-| CW terrain | Terrain settings and terrain asset export | Source data with a sealed inventory; terrain reconstruction is external. |
+| CW terrain source | Dev Tools > Terrain source capture and checks | Raw source data with a sealed inventory. Main terrain Export creates baked model packages. |
 | CW placements | Map & Model Export | Rigid placements and optional entities, FX, lights and probes; [Spline models from JSON](cw-placements.md#static-spline-model-export) bakes each instance in the selected model formats, with per-model images and material info. |
 | CW brushes | Radiant Brushes | Supported collision hulls and trigger/volume prefabs; unresolved material/layout decisions remain in reports. |
 | CW pool diagnostics | Dev Tools, then export `cw_pool_` RawFile rows | Headers, bounded prefixes or supported counted arrays, depending on mode. |
-| BO4 terrain | Terrain settings | Measurement probe, separate from the sealed CW capture contract. |
+| BO4 terrain | Dev Tools > Capture raw terrain source | Measurement probe, separate from the sealed CW capture contract. |
 | BO4 diagnostics | Dev Tools, Run | World pools, model collision, physics, placements, handlers or surface declarations. |
 | Runtime checks | Dev Tools, Check runtime | Packaged hashes, imports, catalogue and helper startup. |
 | Saved-export checks | Dev Tools, Check saved export | Published prefab hashes or sealed terrain inventory. |

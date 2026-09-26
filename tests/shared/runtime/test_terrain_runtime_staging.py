@@ -27,6 +27,9 @@ def test_staged_runtime_finalizes_multiple_capture_sessions(tmp_path, build_only
     repo = tmp_path / "repo"
     repo.mkdir()
     shutil.copytree(ROOT / "tools", repo / "tools")
+    header = repo / "src/WraithX/WraithX/json.hpp"
+    header.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "src/WraithX/WraithX/json.hpp", header)
     runtime = repo / "src/WraithXCOD/x64/Release"
     runtime.mkdir(parents=True)
     (runtime / "Greyhound.exe").write_bytes(b"test executable")

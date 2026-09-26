@@ -1,510 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
-    </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
-    </Filter>
-    <Filter Include="Header Files\Games">
-      <UniqueIdentifier>{10ad97ca-acc7-4cb9-a3b8-67eee834296a}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Games">
-      <UniqueIdentifier>{e3a9625f-b342-442b-8573-28a4172471f1}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Packages">
-      <UniqueIdentifier>{17b18d8f-f35e-4ce4-9d05-5925d8dfd0a1}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Packages">
-      <UniqueIdentifier>{a3e9d4e3-bbc8-4e83-b306-70b7338ba454}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Dialogs">
-      <UniqueIdentifier>{ff39dfbd-686f-418b-a6b9-7647b1f284f6}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Dialogs">
-      <UniqueIdentifier>{55d89196-1db1-4642-b81c-847962a5a124}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Helpers">
-      <UniqueIdentifier>{7f5101ca-60c0-4cd8-b05a-424a846b5483}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Helpers">
-      <UniqueIdentifier>{bfb8855c-8003-454b-b481-475a7d7f186e}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\CDNDownloaders">
-      <UniqueIdentifier>{1807d4b8-9287-4705-bd22-96e163435f4a}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\CDNDownloaders">
-      <UniqueIdentifier>{59deb4e3-2469-4236-a8c3-142a394a2be6}</UniqueIdentifier>
-    </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="AssetCli.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDAssets.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDAssetType.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GameBlackOps.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="DBGameAssets.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GameBlackOps2.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare2.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare3.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameWorldAtWar.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameGhosts.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameAdvancedWarfare.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfareRM.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameInfiniteWarfare.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameBlackOps3.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXAnimTranslator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXModelTranslator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDPackageCache.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="IWDCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDIWITranslator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="IPAKCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="PAKSupport.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="PAKCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDRawImageTranslator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="XPAKCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="MainWindow.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="SettingsWindow.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="GeneralSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="ModelSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="AnimSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="ImageSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="SoundSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="TerrainSettings.cpp">
-      <Filter>Source Files\Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="XPAKSupport.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="IPAKSupport.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="IWDSupport.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="SABSupport.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="SABCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="GameWorldWar2.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="XPTOCCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDRawfileTranslator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GameBlackOps4.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="Siren.cpp">
-      <Filter>Source Files\Helpers</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare4.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameQuantumSolace.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare2RM.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameBlackOpsCW.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="XSUBCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="GameVanguard.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="XSUBCacheV2.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="VGXPAKCache.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="Parasyte.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare5Structures.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare5.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDFileHandle.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDFileSystem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="WinFileSystem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CascFileSystem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="XSUBCacheV3.cpp">
-      <Filter>Source Files\Packages</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXAnimReader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDCDNCache.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDQTangent.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare6Structures.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="GameModernWarfare6.cpp">
-      <Filter>Source Files\Games</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXModelHelper.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXModelBonesHelper.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDXModelMeshHelper.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDCDNDownloaderV2.cpp">
-      <Filter>Source Files\CDNDownloaders</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDCDNDownloaderV1.cpp">
-      <Filter>Source Files\CDNDownloaders</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDCDNDownloaderV0.cpp">
-      <Filter>Source Files\CDNDownloaders</Filter>
-    </ClCompile>
-    <ClCompile Include="CoDCDNDownloader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="AssetCli.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDAssets.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDAssetType.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="DBGameAssets.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="GameBlackOps.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameBlackOps2.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare2.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare3.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameWorldAtWar.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameGhosts.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameAdvancedWarfare.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfareRM.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameInfiniteWarfare.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameBlackOps3.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXAnimTranslator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXModelTranslator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDPackageCache.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="IWDCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDIWITranslator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="IPAKCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="DBGameFiles.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="PAKSupport.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="PAKCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDRawImageTranslator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XPAKCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="resource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="MainWindow.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="SettingsWindow.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="GeneralSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="ModelSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="AnimSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="ImageSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="SoundSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="TerrainSettings.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="TerrainLayout.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="TerrainResearchCapture.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="TerrainResearchPolicy.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXConverter.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XPAKSupport.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="IPAKSupport.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="IWDSupport.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="SABSupport.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="SABCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="GameWorldWar2.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="DBGameGenerics.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXPoolParser.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XPTOCCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDRawfileTranslator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="AboutWindow.h">
-      <Filter>Header Files\Dialogs</Filter>
-    </ClInclude>
-    <ClInclude Include="GameBlackOps4.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="Siren.h">
-      <Filter>Header Files\Helpers</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare4.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameQuantumSolace.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare2RM.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameBlackOpsCW.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="XSUBCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="GameVanguard.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="XSUBCacheV2.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="VGXPAKCache.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="Parasyte.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare5Structures.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare5.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDFileSystem.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDFileHandle.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="WinFileSystem.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CascFileSystem.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="XSUBCacheV3.h">
-      <Filter>Header Files\Packages</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXAnimReader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDCDNDownloader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDCDNCache.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDQTangent.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare6Structures.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="GameModernWarfare6.h">
-      <Filter>Header Files\Games</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXModelHelper.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXModelBonesHelper.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDXModelMeshHelper.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDCDNDownloaderV0.h">
-      <Filter>Header Files\CDNDownloaders</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDCDNDownloaderV1.h">
-      <Filter>Header Files\CDNDownloaders</Filter>
-    </ClInclude>
-    <ClInclude Include="CoDCDNDownloaderV2.h">
-      <Filter>Header Files\CDNDownloaders</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
     <ResourceCompile Include="WraithXCOD.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
@@ -531,5 +27,879 @@
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="WraithXCOD.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{2056307b-febf-5928-8b47-92177c8893f5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{0b17dbef-3cea-5c0e-8dcc-9068f02f2f1d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="assets">
+      <UniqueIdentifier>{b0a9c595-810d-549d-a3ea-f3c6edf966f9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="cli">
+      <UniqueIdentifier>{dbb1d5ef-710d-5f41-b63b-f047ae658b59}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="exporters">
+      <UniqueIdentifier>{6afb810c-8b66-5445-be20-51433ed5e5bd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games">
+      <UniqueIdentifier>{831309fc-9671-5e23-877d-8a6632f5c187}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\advanced_warfare">
+      <UniqueIdentifier>{680f260d-ace5-56e1-a8d1-8cc406e10bfe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\advanced_warfare\reader">
+      <UniqueIdentifier>{1ea83b69-8974-52bd-98ae-d0f916d9e39b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops">
+      <UniqueIdentifier>{f978acde-f277-5d1b-be40-183aae4fe76a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops\reader">
+      <UniqueIdentifier>{416b1e8c-64c6-5888-bac2-bfb3c290e268}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_2">
+      <UniqueIdentifier>{4b25ef6d-749a-56d8-9fab-550e3fab4ece}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_2\reader">
+      <UniqueIdentifier>{4ec573e1-c6c9-5206-b75c-7c26ed4eb0f2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_3">
+      <UniqueIdentifier>{778beb62-15d6-5756-8e16-e1745d331075}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_3\reader">
+      <UniqueIdentifier>{b3e8da33-490f-52e3-842d-4adbb19268a9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_4">
+      <UniqueIdentifier>{89f22c6c-28a3-519c-877d-742178fe7990}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_4\brushes">
+      <UniqueIdentifier>{ceb935a6-b5c6-5182-963c-b9059c813e34}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_4\capture">
+      <UniqueIdentifier>{8a47b7f6-265d-50fc-b8f2-039665dc8732}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_4\placements">
+      <UniqueIdentifier>{96c28f4a-34f1-5710-895a-1043722afb6c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\black_ops_4\reader">
+      <UniqueIdentifier>{98b11ed3-9005-512c-a731-1ea9a5b95fc7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war">
+      <UniqueIdentifier>{b5be0e9f-fff9-5d0b-8a71-4006fc35b0e5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war\brushes">
+      <UniqueIdentifier>{477377bd-c9bf-56be-b669-99a504b83228}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war\capture">
+      <UniqueIdentifier>{744a4056-4195-5f38-b155-7c71db2aa4fe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war\placements">
+      <UniqueIdentifier>{0350d2ba-4527-5122-ac8f-56046c6b3f86}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war\reader">
+      <UniqueIdentifier>{d178a0ce-f5ed-5ef8-841d-ce6d06a27088}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\cold_war\terrain">
+      <UniqueIdentifier>{11e4907b-c160-52fd-bf7c-3e18e769c047}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\ghosts">
+      <UniqueIdentifier>{c79db3c9-2f69-5d3c-bd95-66bf64939bae}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\ghosts\reader">
+      <UniqueIdentifier>{594e9169-3f15-56c8-8c28-f0f915e5f4e3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\infinite_warfare">
+      <UniqueIdentifier>{5e45a550-15cc-5cc7-b73f-e13d48dc1232}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\infinite_warfare\reader">
+      <UniqueIdentifier>{2944ef8e-0265-5c16-905b-7f9f11cf70ae}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare">
+      <UniqueIdentifier>{738fcdb7-d2f5-589d-b26d-89a8e511a2d3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare\reader">
+      <UniqueIdentifier>{eb693d46-817f-5194-a6f2-5b9c29de8c1d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_2">
+      <UniqueIdentifier>{64a605ef-9e72-542c-aea8-f69d523c04d4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_2\reader">
+      <UniqueIdentifier>{fb92a2e5-d01d-524d-b172-27e3798c4095}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_2_remastered">
+      <UniqueIdentifier>{842e0896-4340-5ba0-817e-67d66acb2076}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_2_remastered\reader">
+      <UniqueIdentifier>{ad50223e-431d-5341-bdcd-11bac5299045}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_3">
+      <UniqueIdentifier>{bec1fdec-8e44-5e5a-b194-0a078674a674}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_3\reader">
+      <UniqueIdentifier>{262ab0d8-08d3-5a69-a994-8afbb283441d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_4">
+      <UniqueIdentifier>{fe52357f-5db3-5a6b-98eb-20904c53f044}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_4\reader">
+      <UniqueIdentifier>{5ca4c0f7-8ee6-538e-8e96-0718166adc96}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_5">
+      <UniqueIdentifier>{21346257-5406-511c-8c13-fcdf0188bec9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_5\reader">
+      <UniqueIdentifier>{25ab128e-fcab-5c8b-be07-5b3a51c6ac75}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_6">
+      <UniqueIdentifier>{2b7aa4af-a083-5ac1-b3b7-c387d207d477}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_6\reader">
+      <UniqueIdentifier>{83cccc0f-8f02-51e6-94a0-f519e8d58866}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_remastered">
+      <UniqueIdentifier>{066bdd02-4a93-531e-b002-b289381d6893}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\modern_warfare_remastered\reader">
+      <UniqueIdentifier>{562121fe-1a76-54ed-87d6-5ce53e6aa38e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\quantum_solace">
+      <UniqueIdentifier>{57c11d79-ef28-5f30-9336-27a821d2749c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\quantum_solace\reader">
+      <UniqueIdentifier>{6b155be7-7540-52fb-a887-3897c84f6242}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\vanguard">
+      <UniqueIdentifier>{2f36892f-89b6-54f2-b839-cf800b66649f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\vanguard\reader">
+      <UniqueIdentifier>{6991a764-64aa-5983-9f25-ec69782ecf6a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\world_at_war">
+      <UniqueIdentifier>{1c45ab9d-fb3f-5f06-9753-768b5c90db29}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\world_at_war\reader">
+      <UniqueIdentifier>{aac83b71-abe1-5e94-966f-d9352e52edfe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\world_war_2">
+      <UniqueIdentifier>{ceb28535-326a-5d45-887c-0d42c8e74929}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="games\world_war_2\reader">
+      <UniqueIdentifier>{4273e9ee-6ecc-5141-a7fc-83ed908130eb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="packages">
+      <UniqueIdentifier>{c0231109-260d-5498-a3cd-fc778bd30f82}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="settings">
+      <UniqueIdentifier>{6672388e-1053-5423-a3c1-6b908208feb4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shared">
+      <UniqueIdentifier>{00ecbbe8-e8fd-5c1f-80b1-27bf257f89c1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui">
+      <UniqueIdentifier>{4639fa43-8271-532f-9c08-01875442b9fa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui\native">
+      <UniqueIdentifier>{01e014cc-7076-5bb6-8f98-24bb97b19434}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="cli\AssetCli.cpp">
+      <Filter>cli</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\SalukiNameDatabase.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\AnimSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CascFileSystem.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\CoDAssets.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\CoDAssetType.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDCDNCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDCDNDownloader.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDCDNDownloaderV0.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDCDNDownloaderV1.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDCDNDownloaderV2.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDIWITranslator.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDPackageCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDQTangent.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDRawfileTranslator.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDRawImageTranslator.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXAnimReader.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXAnimTranslator.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXModelBonesHelper.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXModelHelper.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXModelMeshHelper.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\CoDXModelTranslator.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\DBGameAssets.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDFileHandle.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\CoDFileSystem.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="games\advanced_warfare\reader\GameAdvancedWarfare.cpp">
+      <Filter>games\advanced_warfare\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\black_ops\reader\GameBlackOps.cpp">
+      <Filter>games\black_ops\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\black_ops_2\reader\GameBlackOps2.cpp">
+      <Filter>games\black_ops_2\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\black_ops_3\reader\GameBlackOps3.cpp">
+      <Filter>games\black_ops_3\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\black_ops_4\reader\GameBlackOps4.cpp">
+      <Filter>games\black_ops_4\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\cold_war\reader\GameBlackOpsCW.cpp">
+      <Filter>games\cold_war\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\ghosts\reader\GameGhosts.cpp">
+      <Filter>games\ghosts\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\infinite_warfare\reader\GameInfiniteWarfare.cpp">
+      <Filter>games\infinite_warfare\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare\reader\GameModernWarfare.cpp">
+      <Filter>games\modern_warfare\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_2\reader\GameModernWarfare2.cpp">
+      <Filter>games\modern_warfare_2\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_2_remastered\reader\GameModernWarfare2RM.cpp">
+      <Filter>games\modern_warfare_2_remastered\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_3\reader\GameModernWarfare3.cpp">
+      <Filter>games\modern_warfare_3\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_5\reader\GameModernWarfare5.cpp">
+      <Filter>games\modern_warfare_5\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_5\reader\GameModernWarfare5Structures.cpp">
+      <Filter>games\modern_warfare_5\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_6\reader\GameModernWarfare6.cpp">
+      <Filter>games\modern_warfare_6\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_6\reader\GameModernWarfare6Structures.cpp">
+      <Filter>games\modern_warfare_6\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_remastered\reader\GameModernWarfareRM.cpp">
+      <Filter>games\modern_warfare_remastered\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\quantum_solace\reader\GameQuantumSolace.cpp">
+      <Filter>games\quantum_solace\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\vanguard\reader\GameVanguard.cpp">
+      <Filter>games\vanguard\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\world_at_war\reader\GameWorldAtWar.cpp">
+      <Filter>games\world_at_war\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="games\world_war_2\reader\GameWorldWar2.cpp">
+      <Filter>games\world_war_2\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\GeneralSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\ImageSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\IPAKCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\IPAKSupport.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\IWDCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\IWDSupport.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\native\Main.cpp">
+      <Filter>ui\native</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\native\MainWindow.cpp">
+      <Filter>ui\native</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\AssetSearch.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="exporters\ExportJobs.cpp">
+      <Filter>exporters</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\native\UiHost.cpp">
+      <Filter>ui\native</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\native\UiBridge.cpp">
+      <Filter>ui\native</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\preview\PreviewData.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\preview\PreviewImage.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\ModelSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="games\modern_warfare_4\reader\GameModernWarfare4.cpp">
+      <Filter>games\modern_warfare_4\reader</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\PAKCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\PAKSupport.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\Parasyte.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\SABCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\SABSupport.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\SettingsWindow.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="assets\Siren.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\SoundSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="settings\TerrainSettings.cpp">
+      <Filter>settings</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\VGXPAKCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XSUBCacheV2.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\WinFileSystem.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XPAKCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XPAKSupport.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XPTOCCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XSUBCache.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClCompile Include="packages\XSUBCacheV3.cpp">
+      <Filter>packages</Filter>
+    </ClCompile>
+    <ClInclude Include="cli\AssetCli.h">
+      <Filter>cli</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\SalukiNameDatabase.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\SalukiNameIndex.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\native\AboutWindow.h">
+      <Filter>ui\native</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\AnimSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CascFileSystem.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\CoDAssets.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\CoDAssetType.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDCDNCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDCDNDownloader.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDCDNDownloaderV0.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDCDNDownloaderV1.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDCDNDownloaderV2.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDIWITranslator.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDPackageCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDQTangent.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDRawfileTranslator.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDRawImageTranslator.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXAnimReader.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXAnimTranslator.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXConverter.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXModelBonesHelper.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXModelHelper.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXModelMeshHelper.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\CoDXModelTranslator.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\CoDXPoolParser.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="DBGameAssets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DBGameFiles.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\DBGameGenerics.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDFileHandle.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\CoDFileSystem.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="games\advanced_warfare\reader\GameAdvancedWarfare.h">
+      <Filter>games\advanced_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops\reader\GameBlackOps.h">
+      <Filter>games\black_ops\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2.h">
+      <Filter>games\black_ops_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3.h">
+      <Filter>games\black_ops_3\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\reader\GameBlackOps4.h">
+      <Filter>games\black_ops_4\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\reader\GameBlackOpsCW.h">
+      <Filter>games\cold_war\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\ghosts\reader\GameGhosts.h">
+      <Filter>games\ghosts\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\infinite_warfare\reader\GameInfiniteWarfare.h">
+      <Filter>games\infinite_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare\reader\GameModernWarfare.h">
+      <Filter>games\modern_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_2\reader\GameModernWarfare2.h">
+      <Filter>games\modern_warfare_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_2_remastered\reader\GameModernWarfare2RM.h">
+      <Filter>games\modern_warfare_2_remastered\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_3\reader\GameModernWarfare3.h">
+      <Filter>games\modern_warfare_3\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_5\reader\GameModernWarfare5.h">
+      <Filter>games\modern_warfare_5\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_5\reader\GameModernWarfare5Structures.h">
+      <Filter>games\modern_warfare_5\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_6\reader\GameModernWarfare6.h">
+      <Filter>games\modern_warfare_6\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_6\reader\GameModernWarfare6Structures.h">
+      <Filter>games\modern_warfare_6\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_remastered\reader\GameModernWarfareRM.h">
+      <Filter>games\modern_warfare_remastered\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\quantum_solace\reader\GameQuantumSolace.h">
+      <Filter>games\quantum_solace\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\vanguard\reader\GameVanguard.h">
+      <Filter>games\vanguard\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\world_at_war\reader\GameWorldAtWar.h">
+      <Filter>games\world_at_war\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2.h">
+      <Filter>games\world_war_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\GeneralSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\ImageSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\IPAKCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\IPAKSupport.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\IWDCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\IWDSupport.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\native\MainWindow.h">
+      <Filter>ui\native</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\AssetSearch.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\ExportJobs.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\native\UiHost.h">
+      <Filter>ui\native</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\native\UiBridge.h">
+      <Filter>ui\native</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\native\PreviewService.h">
+      <Filter>ui\native</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\preview\PreviewData.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\preview\PreviewImage.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\preview\PreviewPolicy.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\ModelSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_4\reader\GameModernWarfare4.h">
+      <Filter>games\modern_warfare_4\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\PAKCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\PAKSupport.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\Parasyte.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\SABCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\SABSupport.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\SettingsWindow.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\Siren.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\SoundSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="settings\TerrainSettings.h">
+      <Filter>settings</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\terrain\CWTerrainBake.h">
+      <Filter>games\cold_war\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\TerrainLayout.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\TerrainResearchCapture.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="assets\TerrainResearchPolicy.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\VGXPAKCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XSUBCacheV2.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\WinFileSystem.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XPAKCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XPAKSupport.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XPTOCCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XSUBCache.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XSUBCacheV3.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\capture\BO4CaptureModes.h">
+      <Filter>games\black_ops_4\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\brushes\BO4CollisionHandlerProbe.h">
+      <Filter>games\black_ops_4\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\brushes\BO4ModelCollisionProbe.h">
+      <Filter>games\black_ops_4\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\placements\BO4ModelPlacementCapture.h">
+      <Filter>games\black_ops_4\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="shared\BO4NameDatabase.h">
+      <Filter>shared</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\capture\BO4WorldPoolProbe.h">
+      <Filter>games\black_ops_4\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\brushes\CWBrushTypeCapture.h">
+      <Filter>games\cold_war\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\brushes\CWClipMapCapture.h">
+      <Filter>games\cold_war\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\brushes\CWClipModelExport.h">
+      <Filter>games\cold_war\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\brushes\CWCollisionWorldCapture.h">
+      <Filter>games\cold_war\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWDistrictPayload.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWFXAnimationPlacements.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWLightPlacements.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWLightSettings.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWMapCandidateCapture.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWMapCandidateLayout.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWMapEntityExport.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWMapWorldCapture.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="shared\CWModelLodSelection.h">
+      <Filter>shared</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWModelProxyCatalog.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWModelProxyFilter.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWNonStaticCapture.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWNonStaticPlacements.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWPlacementOrganize.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWPlacementRotation.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWPlacementVerify.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWPoolProbe.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\capture\CWProbeBounds.h">
+      <Filter>games\cold_war\capture</Filter>
+    </ClInclude>
+    <ClInclude Include="shared\CWRadiantExport.h">
+      <Filter>shared</Filter>
+    </ClInclude>
+    <ClInclude Include="shared\RadiantExportResult.h">
+      <Filter>shared</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\brushes\BO4BrushVisualCapture.h">
+      <Filter>games\black_ops_4\brushes</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\terrain\CWShaderContainer.h">
+      <Filter>games\cold_war\terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWSplineBake.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWSplineCapture.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWSplineModel.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\placements\CWStaticPlacementFilter.h">
+      <Filter>games\cold_war\placements</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\ExportRun.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\FlatMaterialExport.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\ModelBatchResume.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\ModelBatchSelection.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="exporters\ModelExportNaming.h">
+      <Filter>exporters</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\XSUBObjectLayout.h">
+      <Filter>packages</Filter>
+    </ClInclude>
+    <ClInclude Include="games\advanced_warfare\reader\GameAdvancedWarfareAssetLayouts.h">
+      <Filter>games\advanced_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops\reader\GameBlackOpsAssetLayouts.h">
+      <Filter>games\black_ops\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2AssetLayouts.h">
+      <Filter>games\black_ops_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2FileLayouts.h">
+      <Filter>games\black_ops_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3AssetLayouts.h">
+      <Filter>games\black_ops_3\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3FileLayouts.h">
+      <Filter>games\black_ops_3\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\black_ops_4\reader\GameBlackOps4AssetLayouts.h">
+      <Filter>games\black_ops_4\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\cold_war\reader\GameBlackOpsCWAssetLayouts.h">
+      <Filter>games\cold_war\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\ghosts\reader\GameGhostsAssetLayouts.h">
+      <Filter>games\ghosts\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\infinite_warfare\reader\GameInfiniteWarfareAssetLayouts.h">
+      <Filter>games\infinite_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare\reader\GameModernWarfareAssetLayouts.h">
+      <Filter>games\modern_warfare\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_2\reader\GameModernWarfare2AssetLayouts.h">
+      <Filter>games\modern_warfare_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_3\reader\GameModernWarfare3AssetLayouts.h">
+      <Filter>games\modern_warfare_3\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_4\reader\GameModernWarfare4AssetLayouts.h">
+      <Filter>games\modern_warfare_4\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\modern_warfare_remastered\reader\GameModernWarfareRMAssetLayouts.h">
+      <Filter>games\modern_warfare_remastered\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\quantum_solace\reader\GameQuantumSolaceAssetLayouts.h">
+      <Filter>games\quantum_solace\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\vanguard\reader\GameVanguardAssetLayouts.h">
+      <Filter>games\vanguard\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\world_at_war\reader\GameWorldAtWarAssetLayouts.h">
+      <Filter>games\world_at_war\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2AssetLayouts.h">
+      <Filter>games\world_war_2\reader</Filter>
+    </ClInclude>
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2FileLayouts.h">
+      <Filter>games\world_war_2\reader</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

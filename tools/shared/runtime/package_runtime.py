@@ -17,7 +17,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--destination',required=True,type=Path);a=p.parse_args()
     # Fail before touching the installed bundle if the developer interpreter
     # lacks the dependencies needed to package a complete matching runtime.
-    modules={name:importlib.import_module(name) for name in ('numpy','scipy')}
+    modules={name:importlib.import_module(name) for name in ('numpy','scipy','PIL')}
     source=TOOLS_ROOT;dest=a.destination.resolve()
     if dest==source or dest.is_relative_to(source) or source.is_relative_to(dest):
         raise ValueError('Runtime destination must be separate from the source tools tree')
@@ -26,7 +26,7 @@ def main():
     for name in ('cold_war','black_ops_4','black_ops_3','shared','tool_bootstrap.py'):
         entry=source/name
         for s in ([entry] if entry.is_file() else sorted(entry.rglob('*'))):
-            if not s.is_file() or '__pycache__' in s.parts or s.suffix in ('.pyc','.cpp'):continue
+            if not s.is_file() or '__pycache__' in s.parts or s.suffix in ('.pyc','.cpp','.obj','.ps1'):continue
             relative=s.relative_to(source);d=dest/relative;d.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(s,d);installed.append(relative.as_posix())
     runtime=dest/'runtime'
@@ -42,10 +42,11 @@ def main():
     shutil.copytree(base/'Lib',runtime/'Lib',dirs_exist_ok=True,ignore=shutil.ignore_patterns('site-packages','__pycache__','test','tests','idlelib','tkinter','turtledemo','ensurepip'))
     packages=runtime/'Lib/site-packages';packages.mkdir(parents=True,exist_ok=True)
     versions={}
-    for name in ('numpy','scipy'):
+    for name in ('numpy','scipy','PIL'):
         module=modules[name];root=Path(module.__file__).resolve().parent.parent;versions[name]=module.__version__
         for child in root.iterdir():
-            if child.name==name or child.name==name+'.libs' or (child.name.startswith(name+'-') and child.name.endswith('.dist-info')):
+            package_name = 'pillow' if name == 'PIL' else name
+            if child.name==name or child.name==package_name+'.libs' or (child.name.startswith(package_name+'-') and child.name.endswith('.dist-info')):
                 shutil.copytree(child,packages/child.name,dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','tests'))
     # Isolate the runtime from the user's Python installation and environment.
     (runtime/f'python{sys.version_info.major}{sys.version_info.minor}._pth').write_text('.\nDLLs\nLib\nLib/site-packages\n',encoding='utf-8')

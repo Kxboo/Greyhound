@@ -21,7 +21,7 @@ from export_cross_map_cw_geometry import decode_brushes
 from cw_exact_vertex_hull import exact_hull
 from cw_model_collision_policy import apply as model_clip_policy, POLICY
 from export_cw_radiant_brushes import pieces
-from cw_export_layout import reserve_export_directory
+from cw_export_layout_impl import reserve_export_directory
 from stock_material_metadata import write_stock_metadata
 from cw_collision_role_policy import REFERENCE_LAYER
 

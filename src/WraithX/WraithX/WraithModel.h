@@ -194,6 +194,9 @@ public:
     std::string NormalMapName;
     // The file name of the specular map for this material
     std::string SpecularMapName;
+    // Optional conventional PBR channels (terrain bakes).
+    std::string GlossMapName;
+    std::string AOMapName;
 
     // The default material, when none exists
     static const WraithMaterial DefaultMaterial;

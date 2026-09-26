@@ -68,7 +68,9 @@ enum class ImageFormat
     DDS_Standard_D16_UNORM,
     DDS_Standard_A8_UNORM,
     DDS_Standard_R8_UNORM,
-    DDS_Standard_R8_UINT
+    DDS_Standard_R8_UINT,
+    DDS_Standard_R16_UNORM,
+    DDS_Standard_R32_UINT
 };
 
 // A list of supported image patch functions, applied on export

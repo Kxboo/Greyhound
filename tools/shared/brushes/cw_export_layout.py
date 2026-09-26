@@ -1,4 +1,4 @@
-"""Publish user-facing prefabs separately from metadata and capture diagnostics."""
+"""Compatibility imports for the Cold War cw_export_layout helper."""
 
 # Support direct execution and the isolated packaged Python runtime.
 import sys as _tool_sys
@@ -8,68 +8,4 @@ _tool_sys.path.insert(0, str(TOOLS_ROOT))
 import tool_bootstrap as _tool_bootstrap
 _tool_bootstrap.activate(__file__)
 REPO_ROOT = TOOLS_ROOT.parent
-import json
-import shutil
-from pathlib import Path
-from cw_collision_names import hash63
-
-
-# Fallback for standalone runs. Greyhound passes --map-name instead, computed by
-# CWRadiantExport::MapStem, which mirrors this candidate list - keep both in step.
-def map_name(key, supplied=''):
-    candidates = [supplied.replace('\\', '/')] + [
-        f'maps/zm/{name}.d3dbsp' for name in
-        ('zm_platinum', 'zm_silver', 'zm_gold', 'zm_tungsten')]
-    for candidate in candidates:
-        if candidate.endswith('.d3dbsp') and hash63(candidate) == key:
-            return Path(candidate).stem
-    return f'cw_map_{key:016x}'
-
-
-def reserve_export_directory(destination):
-    """Reserve a fresh run, matching native ExportRun's name, name_2, ... layout."""
-    destination = Path(destination).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    for attempt in range(1000):
-        candidate = destination if attempt == 0 else destination.with_name(
-            f'{destination.name}_{attempt + 1}')
-        try:
-            candidate.mkdir()
-        except FileExistsError:
-            continue
-        return candidate
-    raise FileExistsError(f'Could not reserve a new export folder: {destination}')
-
-
-def publish(staged, destination):
-    destination.mkdir(parents=True, exist_ok=True)
-    files = list(staged.iterdir())
-    # Preflight every target before moving anything; never overwrite an export.
-    targets = [(f, destination / f.name if f.suffix == '.map' else
-                destination / 'metadata' / f.name) for f in files]
-    if (destination / 'README.txt').exists() or any(t.exists() for _, t in targets):
-        raise ValueError('Export destination already contains published files')
-    (destination / 'metadata').mkdir(exist_ok=True)
-    for source, target in targets:
-        shutil.move(str(source), str(target))
-    report = json.loads((destination / 'metadata/export_report.json').read_text())
-    lines = [f"Cold War Radiant export: {report['map']}", '',
-             'PREFABS - import only the categories you need:']
-    descriptions = {'brushes_clips': 'Collision clips after source-behavior exclusions; unknown contents still require review',
-                    'other_brushes': 'Caulk, traversal and other non-clip tools; review before including',
-                    'reference_brushes': 'Optional editor references on the visible CW_Reference no-compile layer; nodraw/non-solid, including unverified fallbacks',
-                    'volumes': 'Named volumes', 'triggers': 'Trigger entities',
-                    'render_surfaces': 'Verified render polygons with explicit material/UV/color data; nonColliding; requires the referenced material assets'}
-    for category, prefab in report['prefabs'].items():
-        lines.append(f"  {prefab['file']} - {descriptions.get(category, category)}")
-    lines += ['', 'All prefabs use world coordinates. Insert at 0 0 0, rotation 0 0 0, scale 1.',
-              'metadata/ - export report, source properties, type assignments and entity data.',
-              'metadata/brush_face_audit.json and brush_faces.jsonl - reconstructed face geometry and final MAP readback.',
-              'metadata/collision_metadata.json - per-brush role reasons and original collision candidate materials.',
-              'CW_Reference uses the ignore layer flag: keep it excluded from compilation when using reference prefabs.',
-              'metadata/STOCK_MATERIALS.md - all tool candidates, caulk variants and captured profiles.',
-              'metadata/CAPTURED_BRUSH_MATERIALS.md - every source brush key and selected material.',
-              'metadata/render_transfer.json - texture-transfer availability and exported render surface counts.',
-              'diagnostics/ - captured source data, conversion logs and intermediate geometry.',
-              'This export does not compile a BO3 map or port gameplay scripts.']
-    (destination / 'README.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8')
+from cw_export_layout_impl import map_name, reserve_export_directory, publish

@@ -17,6 +17,7 @@ FILES={
  'animation_model_placements.json':'animation/model_placements.json','animation_entity_references.json':'animation/entity_references.json',
  'named_animation_references.json':'animation/named_references.json','animation_assets.json':'animation/assets.json',
  'static_models.json':'models/static.json','non_static_models.json':'models/non_static.json','spline_models.json':'models/spline.json',
+ 'dynamic_models.json':'models/dynamic.json','dynamic_models_rejected.json':'models/dynamic_rejected.json',
  'dynmodel_assets.json':'models/dynamic_definitions.json','light_placement_candidates.json':'lights/placements.json','light_placements.json':'lights/decoded_placements.json',
  'reflection_probes.json':'probes/placements.json','reflection_probe_bounds.json':'probes/bounds.json','sun_volumes.json':'sun/volumes.json',
  'trigger_geometry_candidates.json':'triggers/geometry.json',
@@ -24,7 +25,7 @@ FILES={
  'fx_anm_catalog.json':'metadata/fx_anm_catalog.json','non_static_report.json':'metadata/non_static_report.json',
  'placement_report.json':'metadata/placement_report.json','fx_anm_validation.json':'metadata/fx_anm_validation.json',
 }
-PATH_KEYS={'file','SourcePlacementFile','SourceEntityFile','SourceProbeFile','BoundsFile','EffectAssetFile','bo3_mapping','capture_report','deferred_spline_evidence','report','files'}
+PATH_KEYS={'file','SourcePlacementFile','DefinitionFile','SourceEntityFile','SourceProbeFile','BoundsFile','EffectAssetFile','bo3_mapping','capture_report','deferred_spline_evidence','report','files'}
 SOURCE_PROPERTIES={'Properties','AttachedEntityProperties','MatchedReferenceProperties','properties'}
 PREFIXES={'non_static_models/':'models/by_class/','reflection_probes/':'probes/descriptors/','reflection_probe_bounds/':'probes/bounds_by_descriptor/'}
 

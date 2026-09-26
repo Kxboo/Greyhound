@@ -22,7 +22,6 @@ import numpy as np
 CLIP_NAMES = {'missileClip', 'bulletClip', 'playerClip', 'aiClip', 'vehicleClip',
               'itemClip', 'canShootClip', 'aiSightClip', 'utilityClip', 'playerVehicleClip'}
 TRAVERSAL = {'ladder', 'mantleOn', 'mantleOver', 'climbWall', 'climbPipe'}
-GREY = 't7_concrete_poured_bunker_paint_01_grey_lt'
 CLIP_TOOLS = {'clip','clip_player','clip_ai','clip_full','clip_nosight','clip_slick',
     'clip_slick_player','clip_physics','clip_missile','nosight_noclip','clip_weapon',
     'clip_vehicle','clip_novehicle','clip_player_vehicle','clip_utility',
@@ -96,11 +95,9 @@ class Types:
                                    ('noDrop', 'nodrop'), ('caulk', 'caulk_shadow')]:
                 if flag in (sn if flag == 'mount' else cn | sn) and material in self.by_name and not clips:
                     family = material; break
-        if not family and not clips:
-            for source,tool in [('glass','glass_clip'),('glasscar','glass_clip_car'),('glassbulletproof','glass_clip_bulletproof')]:
-                if source in cn and tool in self.by_name:
-                    family=tool;break
-        if not family and not clips and ('nonSolid' in sn or 'nonColliding' in cn):
+        # A glass surface type is not evidence for a glass_clip replacement.
+        # Visual geometry needs a proven render-surface/material relationship.
+        if not family and not clips and 'noDraw' in sn and ('nonSolid' in sn or 'nonColliding' in cn):
             family = 'skip'
         if family and family in self.by_name:
             candidates = [self.by_name[family]]
@@ -133,17 +130,47 @@ class Types:
             added, omitted = sorted(mc-clips), sorted(clips-mc)
             added_s, omitted_s = sorted(ms-sn), sorted(sn-ms)
         else:
-            name, added, omitted, added_s, omitted_s = GREY, [], sorted(clips), [], sorted(sn)
+            name, added, omitted, added_s, omitted_s = None, [], sorted(clips), [], sorted(sn)
         selected = [next(r for r in ranked if r[2] == name)] if ranked else []
-        # One source brush stays one output brush. When no exact stock tool
-        # exists, choose the closest single tool and retain explicit differences.
+        # Preserve a single tool where exact; compose stock categories only
+        # when no single stock tool has the requested category set.
         components = [dict(material=r[2], brush_contents=list(brush_flags),
                            collision_properties=sorted(r[3])) for r in selected]
+        if clips and (added or omitted):
+            # Stock tools may cover an exact union even when no single tool does.
+            # Each component retains the same hull; this is category composition,
+            # not a guessed geometry/material identity.
+            options=[]
+            for ranked_row in ranked:
+                properties=ranked_row[3]
+                if properties and properties <= clips:
+                    options.append((ranked_row[2],frozenset(properties)))
+            best={frozenset():()}
+            for candidate,properties in sorted(options):
+                for covered,names in list(best.items()):
+                    union=covered|properties; proposed=names+(candidate,)
+                    if union not in best or (len(proposed),proposed)<(len(best[union]),best[union]):
+                        best[union]=proposed
+            exact=best.get(frozenset(clips))
+            if exact:
+                components=[dict(material=n,brush_contents=list(brush_flags),
+                    collision_properties=sorted({k for k in CLIP_NAMES if self.by_name[n]['properties'].get(k)=='1'}|brush_collision)) for n in exact]
+                name=exact[0];added=[];omitted=[]
+        for component in components:
+            props=self.by_name[component['material']]['properties']
+            component['surface_type']=props.get('surfaceType')
+            flags={n for n in self.surface if props.get(n)=='1'}
+            component['added_surface_properties']=sorted(flags-sn)
+            component['omitted_surface_properties']=sorted(sn-flags)
+        added_s=sorted({n for c in components for n in c['added_surface_properties']})
+        omitted_s=sorted({n for c in components for n in c['omitted_surface_properties']})
         role = ('traversal' if traversal or 'mount' in sn else
                 'clips' if clips else 'non_colliding' if 'nonColliding' in cn or 'nonSolid' in sn else 'brushes')
         result = dict(material=name, role=role, brush_contents=brush_flags,
             collision_components=components,
-            representation='single_hull',
+            source_collision_properties=sorted(clips),
+            selected_stock_tools=[c['material'] for c in components],
+            representation='coincident_stock_tool_union' if len(components)>1 else 'single_hull',
             native_brush_collision_properties=sorted(brush_collision), contents_raw=hex(contents),
             contents_names=sorted(cn), surface_names_common=sorted(sn),
             surface_type_names=sorted(surface_type_names),
@@ -158,7 +185,10 @@ class Types:
             surface_type_codes=sorted({hex(s & 0x03f00000) for s in surfaces}),
             added_collision_properties=added, omitted_collision_properties=omitted,
             added_surface_properties=added_s, omitted_surface_properties=omitted_s,
-            status=('COLLISION_PROPERTIES_MATCH' if not added and not omitted else 'CLOSEST_NAMED_BO3_TOOL') if ranked else 'GREY_GEOMETRY_PLACEHOLDER',
+            visual_required=name is None,
+            fallback=bool(added or omitted),
+            fallback_reason=('No exact union of eligible stock tool categories' if added or omitted else None),
+            status=('COLLISION_PROPERTIES_MATCH' if not added and not omitted else 'CLOSEST_NAMED_BO3_TOOL') if name else 'REQUIRES_PROVEN_RENDER_MATERIAL',
             scope='Named-property mapping; BO3 compiled behavior and source surface material identity are not asserted')
         self.cache[key] = result
         return result
@@ -197,7 +227,7 @@ def build(root, reference, flag_probe=None):
         rows.append(dict(choice, brush_index=b['index'], filter_indices=ids))
     clip_rows=[r for r in rows if r['role']=='clips']
     result = dict(schema='greyhound-bo4-brush-types-v2', rows=rows,
-        mapping_policy='One output hull per source brush; native BO3 contents flags plus the closest single stock tool. Collision omissions are penalized before additions; all differences remain explicit.',
+        mapping_policy='Exact stock tool/category unions where available; remaining tool differences isolated for review. Visual brushes require proven original render materials and never use a generic fallback.',
         collision_summary=dict(source_clip_brushes=len(clip_rows),
             exact_named_properties=sum(not r['added_collision_properties'] and not r['omitted_collision_properties'] for r in clip_rows),
             with_added_properties=sum(bool(r['added_collision_properties']) for r in clip_rows),
@@ -206,7 +236,8 @@ def build(root, reference, flag_probe=None):
         filter_sha256=hashlib.sha256(raw).hexdigest(),
         source_metadata_sha256=hashlib.sha256((root/'collision_data.json').read_bytes()).hexdigest(),
         named_declarations=types.declarations,
-        material_counts=dict(Counter(r['material'] for r in rows)),
+        material_counts=dict(Counter(r['material'] for r in rows if r['material'])),
+        visual_material_required=sum(r['visual_required'] for r in rows),
         role_counts=dict(Counter(r['role'] for r in rows)),
         unresolved_contents_counts=dict(Counter(r['unknown_contents'] for r in rows)))
     if supplement is not None:

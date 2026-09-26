@@ -3,6 +3,11 @@
 Triangle vertices are reconstructed from captured plane/barycentric equations,
 not copied from a render mesh. Bone references and unverified placements stay
 explicit. No convex hull replacement of potentially concave model collision.
+
+Surface header +48 is contents and +52 is surfaceFlags, stored inline rather
+than as a global filter index. With a probe holding BO4's flag declarations
+(mode 1 world_pools_probe.json or mode 7 surface_flags_probe.json) they are
+named like triangle-collision materials.
 """
 
 # Support direct execution and the isolated packaged Python runtime.
@@ -20,9 +25,10 @@ import json
 from pathlib import Path
 import struct
 import numpy as np
+from decode_bo4_triangle_collision import describe, flag_names
 
 
-def decode(root):
+def decode(root, flags_probe=None):
     probe_path = root/'model_collision_probe.json'
     doc = json.loads(probe_path.read_text())
     if doc['schema'] != 'greyhound-bo4-model-collision-probe-v2' or not doc['readback_unchanged']:
@@ -119,6 +125,18 @@ def decode(root):
             item['placement_status'] = 'unposed_bounds_agree' if error<.01 else 'requires_pose_or_bounds_investigation'
         else: item['placement_status'] = 'no_collision_surfaces_in_model_header'
         instances.append(item)
+    materials = None
+    if flags_probe:
+        types, flags = flag_names(json.loads(Path(flags_probe).read_text()))
+        if not types: raise ValueError('Flags probe holds no BO4 surface declarations')
+        materials = {}
+        for s in surface_rows:
+            key = f"{s['flags_raw']}|{s['contents_raw']}"
+            s['material'] = key
+            if key not in materials:
+                materials[key] = {'surface_flags': s['flags_raw'], 'contents': s['contents_raw'], 'surfaces': 0,
+                                  **describe(int(s['flags_raw'], 16), int(s['contents_raw'], 16), types, flags)}
+            materials[key]['surfaces'] += 1
     summary = {'referenced_models': len(model_rows), 'named_models': sum(bool(m['name']) for m in model_rows),
         'models_with_surfaces': sum(bool(m['surface_indices']) for m in model_rows),
         'surfaces': len(surface_rows),'reconstructed_triangles': triangle_cursor,'instances': len(instances),
@@ -127,21 +145,24 @@ def decode(root):
         'max_vertex_outside_surface_bounds': max(s['vertex_outside_bounds'] for s in surface_rows),
         'surfaces_with_nonzero_bone': sum(s['bone_index_raw']!=0 for s in surface_rows),
         'placement_status': dict(Counter(i['placement_status'] for i in instances)),
-        'max_similarity_transform_error': max(i['similarity_transform_error'] for i in instances)}
+        'max_similarity_transform_error': max(i['similarity_transform_error'] for i in instances),
+        'distinct_materials': len({(s['flags_raw'], s['contents_raw']) for s in surface_rows}),
+        'materials_named': materials is not None}
     files = [probe_path,root/'model_headers.bin',root/'collision_surface_headers.bin',
              root/'model_collision_triangles.bin',root/doc['instance_file'],triangle_path]
     result = {'schema':'greyhound-bo4-model-collision-data-v2','summary':summary,
         'files':{p.name:{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files},
         'triangle_file':triangle_path.name,'triangle_format':'little-endian float64 [triangle][3 vertices][xyz]',
-        'models':model_rows,'surfaces':surface_rows,'instances':instances,
+        'models':model_rows,'surfaces':surface_rows,'instances':instances,'materials':materials,
         'limitations':['Triangle vertices are recovered from float32 equations, not original authored coordinates',
                        'Bone references retained; pose transforms not yet traced. Inverse basis corrected and surface bounds transformed individually.',
                        'Unmatched instance bounds are not corrected or exported as verified clips',
-                       'Contents and flags preserved raw; no CW interpretation']}
+                       'Contents (+48) and surfaceFlags (+52) kept raw; names only from captured BO4 declarations']}
     (root/'model_collision_data.json').write_text(json.dumps(result,separators=(',',':'))+'\n')
     print(json.dumps(summary,indent=2))
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('capture',type=Path)
-    decode(parser.parse_args().capture)
+    parser.add_argument('--flags',type=Path,help='world_pools_probe.json or surface_flags_probe.json with BO4 flag declarations')
+    args=parser.parse_args(); decode(args.capture,args.flags)

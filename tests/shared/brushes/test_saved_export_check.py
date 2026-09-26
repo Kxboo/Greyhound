@@ -69,3 +69,47 @@ def test_unrecognized_report_cannot_claim_success(tmp_path):
     source.write_text('{"schema":"unknown","status":"exported"}')
     with pytest.raises(ValueError, match='Choose metadata'):
         verify(source)
+
+
+def test_bo4_v2_requires_material_evidence_and_checks_dependency_bytes(tmp_path):
+    files = ['prefabs/surfaces.map', '_mat_info/stone.txt', '_images/stone.dds']
+    files += ['metadata/' + name for name in (
+        'collision_metadata.json', 'model_physics_metadata.json', 'material_assignments.json',
+        'bo3_material_reference.json', 'geometry_verification.json', 'material_mapping_report.json',
+        'visual_surfaces.json')]
+    entries = {}
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+        entries[name] = dict(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), bytes=path.stat().st_size)
+    prefab = entries.pop('prefabs/surfaces.map')
+    prefab['geometry_kind'] = 'explicit_uv_patch'
+    report = dict(schema='greyhound-bo4-brush-export-v2', status='exported_with_review',
+                  prefab_geometry_verified=True, visual_surfaces=dict(status='exported', geometry_verified=True,
+                      prefabs={'prefabs/surfaces.map': prefab}, embedded_data={'_images/stone.dds': entries['_images/stone.dds']}),
+                  prefabs={'prefabs/surfaces.map': prefab}, embedded_data=entries)
+    source = tmp_path / 'metadata/export_report.json'
+    save = lambda: source.write_text(json.dumps(report))
+    save()
+    assert verify(source)['status'] == 'passed'
+    report['prefab_geometry_verified'] = 'true'
+    save()
+    with pytest.raises(ValueError, match='geometry verification'):
+        verify(source)
+    report['prefab_geometry_verified'] = True
+    material = entries.pop('metadata/material_assignments.json')
+    save()
+    with pytest.raises(ValueError, match='material evidence'):
+        verify(source)
+    entries['metadata/material_assignments.json'] = material
+    image = entries.pop('_images/stone.dds')
+    save()
+    with pytest.raises(ValueError, match='untracked'):
+        verify(source)
+    entries['_images/stone.dds'] = image
+    save()
+    (tmp_path / '_images/stone.dds').write_bytes(b'broken image')
+    assert verify(source)['status'] == 'failed'
+    (tmp_path / '_images/stone.dds').unlink()
+    assert verify(source)['status'] == 'failed'

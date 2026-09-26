@@ -23,46 +23,11 @@ import time
 import numpy as np
 from cw_exact_vertex_hull import sub,cross,dot
 from build_cw_bo3_brush_prototype import materials,read_map_planes
+from exact_geometry import hull_planes
+from bo3_map_planes import face_text
 
 
 def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
-
-
-def hull_planes(mesh):
-    ratios=[[float(v).as_integer_ratio() for v in p] for p in mesh['vertices']]
-    den=max(d for row in ratios for _,d in row)
-    points=[tuple(n*(den//d) for n,d in row) for row in ratios]
-    unique={};edges=Counter();volume=0
-    for face in mesh['faces']:
-        if len(face)!=3: raise ValueError('Expected checked triangles')
-        a,b,c=(points[i] for i in face)
-        n=cross(sub(b,a),sub(c,a));d=dot(n,a)
-        if not any(n) or any(dot(n,p)>d for p in points):
-            raise ValueError('Not an exact outward support plane')
-        gcd=math.gcd(*n,d)
-        key=tuple(v//gcd for v in (*n,d))
-        unique[key]=[*(v for v in key[:3]),key[3]/den]
-        volume+=dot(sub(a,points[0]),cross(sub(b,points[0]),sub(c,points[0])))
-        edges.update((face[j],face[(j+1)%3]) for j in range(3))
-    if volume<=0 or any(v!=1 or edges[(b,a)]!=1 for (a,b),v in edges.items()):
-        raise ValueError('Unclosed or reversed source hull')
-    eq=np.array(list(unique.values()),dtype=float)
-    eq/=np.linalg.norm(eq[:,:3],axis=1)[:,None]
-    return eq
-
-
-def face_text(equations,center,material):
-    lines=[]
-    for plane in equations:
-        n=plane[:3];d=plane[3]
-        base=center+n*(d-n@center)
-        axis=np.eye(3)[np.argmin(abs(n))]
-        u=np.cross(n,axis);u*=128/np.linalg.norm(u)
-        v=np.cross(u,n);v*=128/np.linalg.norm(v)
-        text=' '.join('( '+' '.join(format(float(x),'.17g') for x in p)+' )'
-                      for p in [base,base+u,base+v])
-        lines.append(text+f' {material} 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0')
-    return lines
 
 
 def main():

@@ -11,7 +11,7 @@ from collections import Counter
 import hashlib
 import json
 import re
-from material_comparison_report import reports
+from cw_material_comparison_report import reports
 
 
 FACE = re.compile(r'^\s*(?:\([^\r\n()]+\)\s*){3}(\S+)\s+.*?\s+(\S+)\s+(?:[-+\d.eE]+\s*){6}$')

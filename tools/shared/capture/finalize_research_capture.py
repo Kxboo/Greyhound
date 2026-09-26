@@ -135,8 +135,6 @@ def walk_status(value, prefix=""):
 
 def finalize(source: Path, progress=None) -> dict:
     source = source.resolve(strict=True)
-    if not any(p.name == "exported_files" for p in source.parents):
-        raise ValueError("Research reports must stay under exported_files.")
     target = source / REPORT
     if target.exists():
         raise FileExistsError(f"Refusing to overwrite {target}; use --verify.")
@@ -220,7 +218,9 @@ def finalize(source: Path, progress=None) -> dict:
         "toolchain": {"finalizer_sha256": digest(Path(__file__))},
     }
     progress("toolchain", len(files), len(files))
-    runtime = next(p.parent for p in source.parents if p.name == "exported_files")
+    # The export folder is user-chosen, so find the runtime from this script's
+    # staged location (<runtime>/tools/shared/capture) rather than from source.
+    runtime = Path(__file__).resolve().parents[3]
     for relative in ("Greyhound.exe", "Greyhound-cli.exe"):
         p = runtime / relative
         if p.is_file():

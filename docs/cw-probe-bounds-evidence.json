@@ -5,7 +5,7 @@
   "module_base": "0x7FF73F9C0000",
   "source_export": "<historical-export-root>/black_ops_cw/placements/run_06",
   "audit": "validation.json",
-  "reader": "src/WraithXCOD/WraithXCOD/CWProbeBounds.h",
+  "reader": "src/WraithXCOD/WraithXCOD/games/cold_war/capture/CWProbeBounds.h",
   "descriptor": {
     "bytes": 88,
     "bounds_pointer": 24,

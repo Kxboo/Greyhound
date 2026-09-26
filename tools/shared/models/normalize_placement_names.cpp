@@ -1,5 +1,5 @@
 // Offline migration uses exactly the same naming code as the GUI exporter.
-#include "../../../src/WraithXCOD/WraithXCOD/ModelExportNaming.h"
+#include "../../../src/WraithXCOD/WraithXCOD/exporters/ModelExportNaming.h"
 #include "../../../src/WraithX/WraithX/json.hpp"
 #include <fstream>
 #include <iostream>

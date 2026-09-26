@@ -20,6 +20,29 @@ from pathlib import Path
 import numpy as np
 
 
+def inline_bounds_check(brush_extent, model_bounds):
+    """A model's combined bounds may include rendered geometry beyond its clip.
+
+    zm_red model 2 proves this: its render surface extends 0.724451 units past
+    the brush on X. Their union equals the captured model bounds. Ownership
+    still comes from the clip leaf graph; source points are never stretched.
+    """
+    brush = np.asarray(brush_extent, dtype=float)
+    model = np.asarray(model_bounds, dtype=float)
+    if (brush.shape != (6,) or model.shape != (6,) or
+            not np.isfinite(np.r_[brush, model]).all() or
+            np.any(brush[:3] > brush[3:]) or np.any(model[:3] > model[3:])):
+        raise ValueError('Invalid inline model bounds')
+    error = float(abs(brush-model).max())
+    outside = max(0., float((model[:3]-brush[:3]).max()), float((brush[3:]-model[3:]).max()))
+    if outside > .01:
+        raise ValueError('Inline brushes exceed captured model bounds')
+    return dict(status='equal_within_tolerance' if error <= .01 else 'contained_collision_subset',
+                brush_bounds=brush.tolist(), combined_model_bounds=model.tolist(),
+                maximum_difference=error, maximum_outside=outside, tolerance=.01,
+                geometry_changed=False, ownership_basis='Clipmodel leaf brush references')
+
+
 def decode(root):
     doc = json.loads((root / 'world_pools_probe.json').read_text())
     if doc['schema'] not in tuple(f'greyhound-bo4-world-pool-probe-v{i}' for i in range(2,9)):
@@ -152,10 +175,20 @@ def decode(root):
 
         leaves, _ = load('records_candidate_60')
         leaves = leaves.reshape(-1, 14)
-        leaf_sets, leaf_errors = [], []
-        for leaf in leaves:
+        leaf_sets, leaf_errors, empty_leaves = [], [], []
+        for leaf_index, leaf in enumerate(leaves):
             ids = leaf_brushes(int(leaf[10]))
-            if not ids: raise ValueError('Empty measured collision leaf')
+            if not ids:
+                # zm_towers ends the table with a leaf rooted at node 0 with zero
+                # brush contents/bounds: a triangle-only leaf (word 0 = surface
+                # tree, word 2 = triangle contents; decode_bo4_triangle_collision).
+                # The BSP check below rejects it if the world tree reaches it.
+                if int(leaf[10]) or int(leaf[1]) or np.any(leaf.view('<f4')[3:9]):
+                    raise ValueError('Brushless collision leaf carries brush data')
+                empty_leaves.append({'leaf': leaf_index, 'surface_tree': int(leaf[0].view('<i4')),
+                                     'triangle_contents': hex(int(leaf[2]))})
+                leaf_errors.append(0.); leaf_sets.append(set())
+                continue
             bb = np.array([brushes[j]['bounds'] for j in ids])
             extent = np.r_[bb[:, :3].min(0), bb[:, 3:].max(0)]
             error = float(abs(leaf.view('<f4')[3:9]-extent-[-.125,-.125,-.125,.125,.125,.125]).max())
@@ -164,42 +197,119 @@ def decode(root):
                 raise ValueError('Leaf bounds or combined brush contents disagree')
             leaf_errors.append(error); leaf_sets.append(set(ids))
 
+        # Leaf-brush branches follow CoD's cLeafBrushNode: axis +0, split distance +16,
+        # child offsets +24/+28. zm_towers: every child-0 brush starts at or above the
+        # split, every child-1 brush ends at or below it, the following node of a -1
+        # branch holds exactly the straddlers, and node contents OR the subtree's.
+        bounds = np.array([b['bounds'] for b in brushes])
+        split = node_words.view('<f4')[:, 4]
+        split_nodes = 0
+        for i in range(1, len(node_words)):
+            if node_count[i] > 0 or not (node_words[i, 6] or node_words[i, 7]): continue
+            axis, dist = int(node_words[i, 0]), float(split[i])
+            above = leaf_brushes(i + int(node_words[i, 6]))
+            below = leaf_brushes(i + int(node_words[i, 7]))
+            across = leaf_brushes(i + 1) if node_count[i] == -1 else []
+            if (above and bounds[above, axis].min() < dist - 1e-3) or (below and bounds[below, axis+3].max() > dist + 1e-3):
+                raise ValueError('Leaf-brush split disagrees with brush bounds')
+            if across and not np.all((bounds[across, axis] < dist) & (bounds[across, axis+3] > dist)):
+                raise ValueError('Straddling leaf-brush set holds a brush on one side of the split')
+            if above + below + across and int(node_words[i, 2]) != int(np.bitwise_or.reduce(records[above + below + across, 7])):
+                raise ValueError('Leaf-brush node contents disagree with its brushes')
+            split_nodes += 1
+
+        # World BSP nodes: plane normal +0, distance +12, signed children +16.
         bsp, _ = load('planes_candidate_50')
         bsp = bsp.reshape(-1, 6)
+        planes = bsp.view('<f4')[:, :4].astype(float)
         children = bsp[:, 4].copy().view('<i2').reshape(-1, 2)
         bsp_seen, world_leaves = set(), set()
-        def walk_bsp(i):
+        bsp_rounding_cases = []
+        def walk_bsp(i, path=()):
             if i < 0:
                 leaf = -i-1
                 if leaf >= len(leaves): raise ValueError('Invalid BSP leaf')
-                world_leaves.add(leaf); return
+                world_leaves.add(leaf)
+                ids = sorted(leaf_sets[leaf])
+                for normal, dist, front in path:
+                    if not ids: break
+                    lo, hi = bounds[ids, :3], bounds[ids, 3:]
+                    reach = (np.where(normal > 0, hi, lo) if front else np.where(normal > 0, lo, hi)) @ normal
+                    outside = dist-reach if front else reach-dist
+                    # Keep graph ownership independent of this approximate bound test.
+                    # Float32 brush geometry can lie a few ULPs across a BSP plane.
+                    # The existing 0.125 leaf expansion is a hard diagnostic bound,
+                    # not a claim about the native traversal's numeric epsilon.
+                    if np.any(outside > .125):
+                        raise ValueError('World BSP brush separation exceeds captured leaf expansion')
+                    for brush, error in zip(ids, outside):
+                        if error > 1e-3:
+                            magnitude=max(abs(dist), float(np.max(abs(bounds[brush]))), 1.)
+                            ulp=float(np.spacing(np.float32(magnitude)))
+                            bsp_rounding_cases.append({'leaf':leaf,'brush':brush,'normal':normal.tolist(),
+                                'distance':float(dist),'front':front,'outside':float(error),
+                                'float32_ulp_at_coordinate_magnitude':ulp,'outside_ulps':float(error/ulp)})
+                return
             if i >= len(bsp) or i in bsp_seen: raise ValueError('Invalid BSP node')
             bsp_seen.add(i)
-            for child in children[i]: walk_bsp(int(child))
+            normal, dist = planes[i, :3], planes[i, 3]
+            walk_bsp(int(children[i, 0]), path + ((normal, dist, True),))
+            walk_bsp(int(children[i, 1]), path + ((normal, dist, False),))
         walk_bsp(0)
+        if world_leaves & {e['leaf'] for e in empty_leaves}: raise ValueError('World BSP reaches a brushless collision leaf')
         world_brushes = set.union(*(leaf_sets[i] for i in world_leaves))
         inline_brushes = set()
         model_sets = [world_brushes]
+        # Clip models embed a 56-byte cLeaf_t at +32 (word 8), laid out like the
+        # leaf table: surface tree +0, brush contents +4, triangle contents +8,
+        # bounds +12, leafbrush root +40 (clip word 18).
+        # Clip model 0 is the world: its embedded leaf is zero and the world uses
+        # the BSP collision leaves instead.
+        embedded = c.view('<u4')[:, 8:22]
+        if np.any(embedded[0]): raise ValueError('World clip model embeds a non-empty leaf')
+        for model, leaf in zip(models[1:], embedded[1:]):
+            model['surface_tree'] = int(leaf[0].view('<i4'))
+            model['triangle_contents'] = hex(int(leaf[2]))
         for model in models[1:]:
+            leaf = embedded[model['index']]
+            if not model['leaf_node_index_candidate']:
+                # Brush model with no brush collision (render-only or triangle/xmodel collision).
+                if int(leaf[1]) or np.any(leaf.view('<f4')[3:9]):
+                    raise ValueError('Brushless clip model carries brush data')
+                model['brush_bounds_join_error'] = None; model_sets.append(set())
+                continue
             ids = set(leaf_brushes(model['leaf_node_index_candidate']))
             if ids not in leaf_sets: raise ValueError('Inline brush set missing from leaf table')
             bb = np.array([brushes[j]['bounds'] for j in ids])
             extent = np.r_[bb[:, :3].min(0), bb[:, 3:].max(0)]
-            error = float(abs(extent-model['gfx_local_bounds']).max())
-            if error > .01: raise ValueError('Inline brushes disagree with gfx model bounds')
-            model['brush_bounds_join_error'] = error
+            if (int(leaf[1]) != int(np.bitwise_or.reduce(records[sorted(ids), 7])) or
+                    abs(leaf.view('<f4')[3:9]-extent-[-.125,-.125,-.125,.125,.125,.125]).max() > 1e-4):
+                raise ValueError('Clip model embedded leaf disagrees with its brushes')
+            model['brush_bounds_check'] = inline_bounds_check(extent, model['gfx_local_bounds'])
+            model['brush_bounds_join_error'] = model['brush_bounds_check']['maximum_difference']
             inline_brushes.update(ids); model_sets.append(ids)
         if world_brushes & inline_brushes or world_brushes | inline_brushes != set(range(len(brushes))):
             raise ValueError('World/inline ownership does not partition source brushes')
         for model, ids in zip(models, model_sets):
             model['brush_indices'] = sorted(ids)
-            model['ownership_basis'] = 'BSP root 0 leaves' if model['index'] == 0 else 'Clipmodel leaf brush references'
+            model['ownership_basis'] = ('BSP root 0 leaves' if model['index'] == 0 else
+                'Clipmodel leaf brush references' if ids else 'Clipmodel has no brush leaf (root node 0)')
             for j in ids:
                 brushes[j].setdefault('model_indices', []).append(model['index'])
                 brushes[j]['coordinate_space'] = 'world' if model['index'] == 0 else 'inline_model_local'
         ownership = {'world_brushes': len(world_brushes), 'inline_brushes': len(inline_brushes),
             'world_bsp_nodes': len(bsp_seen), 'world_bsp_leaf_indices': sorted(world_leaves),
+            'world_bsp_plane_sides_agree': not bsp_rounding_cases,
+            'world_bsp_plane_side_rounding_cases': bsp_rounding_cases,
+            'maximum_world_bsp_plane_separation':max((r['outside'] for r in bsp_rounding_cases),default=0.),
+            'bsp_validation_policy':'Exact reference graph ownership; approximate bounds separation retained. Reject separation beyond captured leaf expansion0.125; native epsilon not inferred.',
+            'leaf_brush_split_nodes_checked': split_nodes,
             'validated_collision_leaves': len(leaves), 'maximum_leaf_bounds_error': max(leaf_errors),
+            'brushless_unreferenced_leaves': empty_leaves,
+            'clip_model_embedded_leaves_agree': True,
+            'collision_subset_of_combined_model_bounds': [m['index'] for m in models
+                if m.get('brush_bounds_check', {}).get('status') == 'contained_collision_subset'],
+            'brushless_inline_models': [m['index'] for m, ids in zip(models, model_sets) if m['index'] and not ids],
             'all_leaf_contents_agree': True, 'all_brushes_owned': True,
             'index_count_field': index_table['count'],
             'sum_leaf_references': sum(len(leaf_brushes(int(leaf[10]))) for leaf in leaves),
@@ -245,7 +355,7 @@ def decode(root):
         'entity_gfx_placements_differ': sum(r.get('placement_crosscheck') == 'differs; no automatic correction' for r in placed),
         'triangle_vertices': len(v), 'triangles': len(tri), 'triangle_indices_all_in_range': True}
     if ownership: summary['ownership'] = ownership
-    return {'schema': 'greyhound-bo4-collision-data-v2', 'summary': summary,
+    return {'schema': 'greyhound-bo4-collision-data-v3', 'summary': summary,
         'sources': source_files, 'brushes': brushes, 'models': models, 'entities': entity_rows,
         'brush_vertices': vertex_table, 'brush_sides': side_table,
         'unfinished': ([] if ownership else ['Brush-to-model leaf/index ownership']) + ['Full entity property keys and values',

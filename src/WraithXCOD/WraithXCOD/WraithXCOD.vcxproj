@@ -50,15 +50,15 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\WraithX\WraithX;..\..\External\CascLib\src;..\..\External\DirectXShaderCompiler\include;..\..\External\DirectXTex\DirectXTex\;..\..\External\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\..;..\..\WraithX\WraithX;..\..\External\CascLib\src;..\..\External\DirectXShaderCompiler\include;..\..\External\DirectXTex\DirectXTex\;..\..\External\spdlog\include;..\..\External\WebView2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp14</LanguageStandard>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <ExceptionHandling>Async</ExceptionHandling>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opengl32.lib;glu32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;glu32.lib;..\..\External\WebView2\x64\WebView2LoaderStatic.lib;dwmapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
     <Manifest>
@@ -72,9 +72,9 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\WraithX\WraithX;..\..\External\CascLib\src;..\..\External\DirectXShaderCompiler\include;..\..\External\DirectXTex\DirectXTex\;..\..\External\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)..\..;..\..\WraithX\WraithX;..\..\External\CascLib\src;..\..\External\DirectXShaderCompiler\include;..\..\External\DirectXTex\DirectXTex\;..\..\External\spdlog\include;..\..\External\WebView2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp14</LanguageStandard>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <ExceptionHandling>Async</ExceptionHandling>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -83,7 +83,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>opengl32.lib;glu32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;glu32.lib;..\..\External\WebView2\x64\WebView2LoaderStatic.lib;dwmapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
     <Manifest>
@@ -105,163 +105,244 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="AssetCli.cpp" />
-    <ClCompile Include="SalukiNameDatabase.cpp" />
-    <ClCompile Include="AnimSettings.cpp" />
-    <ClCompile Include="CascFileSystem.cpp" />
-    <ClCompile Include="CoDAssets.cpp" />
-    <ClCompile Include="CoDAssetType.cpp" />
-    <ClCompile Include="CoDCDNCache.cpp" />
-    <ClCompile Include="CoDCDNDownloader.cpp" />
-    <ClCompile Include="CoDCDNDownloaderV0.cpp" />
-    <ClCompile Include="CoDCDNDownloaderV1.cpp" />
-    <ClCompile Include="CoDCDNDownloaderV2.cpp" />
-    <ClCompile Include="CoDIWITranslator.cpp" />
-    <ClCompile Include="CoDPackageCache.cpp" />
-    <ClCompile Include="CoDQTangent.cpp" />
-    <ClCompile Include="CoDRawfileTranslator.cpp" />
-    <ClCompile Include="CoDRawImageTranslator.cpp" />
-    <ClCompile Include="CoDXAnimReader.cpp" />
-    <ClCompile Include="CoDXAnimTranslator.cpp" />
-    <ClCompile Include="CoDXModelBonesHelper.cpp" />
-    <ClCompile Include="CoDXModelHelper.cpp" />
-    <ClCompile Include="CoDXModelMeshHelper.cpp" />
-    <ClCompile Include="CoDXModelTranslator.cpp" />
-    <ClCompile Include="DBGameAssets.cpp" />
-    <ClCompile Include="CoDFileHandle.cpp" />
-    <ClCompile Include="CoDFileSystem.cpp" />
-    <ClCompile Include="GameAdvancedWarfare.cpp" />
-    <ClCompile Include="GameBlackOps.cpp" />
-    <ClCompile Include="GameBlackOps2.cpp" />
-    <ClCompile Include="GameBlackOps3.cpp" />
-    <ClCompile Include="GameBlackOps4.cpp" />
-    <ClCompile Include="GameBlackOpsCW.cpp" />
-    <ClCompile Include="GameGhosts.cpp" />
-    <ClCompile Include="GameInfiniteWarfare.cpp" />
-    <ClCompile Include="GameModernWarfare.cpp" />
-    <ClCompile Include="GameModernWarfare2.cpp" />
-    <ClCompile Include="GameModernWarfare2RM.cpp" />
-    <ClCompile Include="GameModernWarfare3.cpp" />
-    <ClCompile Include="GameModernWarfare5.cpp" />
-    <ClCompile Include="GameModernWarfare5Structures.cpp" />
-    <ClCompile Include="GameModernWarfare6.cpp" />
-    <ClCompile Include="GameModernWarfare6Structures.cpp" />
-    <ClCompile Include="GameModernWarfareRM.cpp" />
-    <ClCompile Include="GameQuantumSolace.cpp" />
-    <ClCompile Include="GameVanguard.cpp" />
-    <ClCompile Include="GameWorldAtWar.cpp" />
-    <ClCompile Include="GameWorldWar2.cpp" />
-    <ClCompile Include="GeneralSettings.cpp" />
-    <ClCompile Include="ImageSettings.cpp" />
-    <ClCompile Include="IPAKCache.cpp" />
-    <ClCompile Include="IPAKSupport.cpp" />
-    <ClCompile Include="IWDCache.cpp" />
-    <ClCompile Include="IWDSupport.cpp" />
-    <ClCompile Include="Main.cpp" />
-    <ClCompile Include="MainWindow.cpp" />
-    <ClCompile Include="ModelSettings.cpp" />
-    <ClCompile Include="GameModernWarfare4.cpp" />
-    <ClCompile Include="PAKCache.cpp" />
-    <ClCompile Include="PAKSupport.cpp" />
-    <ClCompile Include="Parasyte.cpp" />
-    <ClCompile Include="SABCache.cpp" />
-    <ClCompile Include="SABSupport.cpp" />
-    <ClCompile Include="SettingsWindow.cpp" />
-    <ClCompile Include="Siren.cpp" />
-    <ClCompile Include="SoundSettings.cpp" />
-    <ClCompile Include="TerrainSettings.cpp" />
-    <ClCompile Include="VGXPAKCache.cpp" />
-    <ClCompile Include="XSUBCacheV2.cpp" />
-    <ClCompile Include="WinFileSystem.cpp" />
-    <ClCompile Include="XPAKCache.cpp" />
-    <ClCompile Include="XPAKSupport.cpp" />
-    <ClCompile Include="XPTOCCache.cpp" />
-    <ClCompile Include="XSUBCache.cpp" />
-    <ClCompile Include="XSUBCacheV3.cpp" />
+    <ClCompile Include="cli\AssetCli.cpp" />
+    <ClCompile Include="assets\SalukiNameDatabase.cpp" />
+    <ClCompile Include="settings\AnimSettings.cpp" />
+    <ClCompile Include="packages\CascFileSystem.cpp" />
+    <ClCompile Include="assets\CoDAssets.cpp"><LanguageStandard>stdcpp17</LanguageStandard><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="assets\CoDAssetType.cpp" />
+    <ClCompile Include="packages\CoDCDNCache.cpp" />
+    <ClCompile Include="packages\CoDCDNDownloader.cpp" />
+    <ClCompile Include="packages\CoDCDNDownloaderV0.cpp" />
+    <ClCompile Include="packages\CoDCDNDownloaderV1.cpp" />
+    <ClCompile Include="packages\CoDCDNDownloaderV2.cpp" />
+    <ClCompile Include="exporters\CoDIWITranslator.cpp" />
+    <ClCompile Include="packages\CoDPackageCache.cpp" />
+    <ClCompile Include="exporters\CoDQTangent.cpp" />
+    <ClCompile Include="exporters\CoDRawfileTranslator.cpp" />
+    <ClCompile Include="exporters\CoDRawImageTranslator.cpp" />
+    <ClCompile Include="exporters\CoDXAnimReader.cpp" />
+    <ClCompile Include="exporters\CoDXAnimTranslator.cpp" />
+    <ClCompile Include="exporters\CoDXModelBonesHelper.cpp" />
+    <ClCompile Include="exporters\CoDXModelHelper.cpp" />
+    <ClCompile Include="exporters\CoDXModelMeshHelper.cpp" />
+    <ClCompile Include="exporters\CoDXModelTranslator.cpp" />
+    <ClCompile Include="assets\DBGameAssets.cpp" />
+    <ClCompile Include="packages\CoDFileHandle.cpp" />
+    <ClCompile Include="packages\CoDFileSystem.cpp" />
+    <ClCompile Include="games\advanced_warfare\reader\GameAdvancedWarfare.cpp" />
+    <ClCompile Include="games\black_ops\reader\GameBlackOps.cpp" />
+    <ClCompile Include="games\black_ops_2\reader\GameBlackOps2.cpp" />
+    <ClCompile Include="games\black_ops_3\reader\GameBlackOps3.cpp" />
+    <ClCompile Include="games\black_ops_4\reader\GameBlackOps4.cpp" />
+    <ClCompile Include="games\cold_war\reader\GameBlackOpsCW.cpp" />
+    <ClCompile Include="games\ghosts\reader\GameGhosts.cpp" />
+    <ClCompile Include="games\infinite_warfare\reader\GameInfiniteWarfare.cpp" />
+    <ClCompile Include="games\modern_warfare\reader\GameModernWarfare.cpp" />
+    <ClCompile Include="games\modern_warfare_2\reader\GameModernWarfare2.cpp" />
+    <ClCompile Include="games\modern_warfare_2_remastered\reader\GameModernWarfare2RM.cpp" />
+    <ClCompile Include="games\modern_warfare_3\reader\GameModernWarfare3.cpp" />
+    <ClCompile Include="games\modern_warfare_5\reader\GameModernWarfare5.cpp" />
+    <ClCompile Include="games\modern_warfare_5\reader\GameModernWarfare5Structures.cpp" />
+    <ClCompile Include="games\modern_warfare_6\reader\GameModernWarfare6.cpp" />
+    <ClCompile Include="games\modern_warfare_6\reader\GameModernWarfare6Structures.cpp" />
+    <ClCompile Include="games\modern_warfare_remastered\reader\GameModernWarfareRM.cpp" />
+    <ClCompile Include="games\quantum_solace\reader\GameQuantumSolace.cpp" />
+    <ClCompile Include="games\vanguard\reader\GameVanguard.cpp" />
+    <ClCompile Include="games\world_at_war\reader\GameWorldAtWar.cpp" />
+    <ClCompile Include="games\world_war_2\reader\GameWorldWar2.cpp" />
+    <ClCompile Include="settings\GeneralSettings.cpp" />
+    <ClCompile Include="settings\ImageSettings.cpp" />
+    <ClCompile Include="packages\IPAKCache.cpp" />
+    <ClCompile Include="packages\IPAKSupport.cpp" />
+    <ClCompile Include="packages\IWDCache.cpp" />
+    <ClCompile Include="packages\IWDSupport.cpp" />
+    <ClCompile Include="ui\native\Main.cpp" />
+    <ClCompile Include="ui\native\MainWindow.cpp" />
+    <ClCompile Include="assets\AssetSearch.cpp" />
+    <ClCompile Include="exporters\ExportJobs.cpp" />
+    <ClCompile Include="ui\native\UiHost.cpp" />
+    <ClCompile Include="ui\native\UiBridge.cpp" />
+    <ClCompile Include="assets\preview\PreviewData.cpp" />
+    <ClCompile Include="assets\preview\PreviewImage.cpp" />
+    <ClCompile Include="settings\ModelSettings.cpp" />
+    <ClCompile Include="games\modern_warfare_4\reader\GameModernWarfare4.cpp" />
+    <ClCompile Include="packages\PAKCache.cpp" />
+    <ClCompile Include="packages\PAKSupport.cpp" />
+    <ClCompile Include="assets\Parasyte.cpp" />
+    <ClCompile Include="packages\SABCache.cpp" />
+    <ClCompile Include="packages\SABSupport.cpp" />
+    <ClCompile Include="settings\SettingsWindow.cpp" />
+    <ClCompile Include="assets\Siren.cpp" />
+    <ClCompile Include="settings\SoundSettings.cpp" />
+    <ClCompile Include="settings\TerrainSettings.cpp" />
+    <ClCompile Include="packages\VGXPAKCache.cpp" />
+    <ClCompile Include="packages\XSUBCacheV2.cpp" />
+    <ClCompile Include="packages\WinFileSystem.cpp" />
+    <ClCompile Include="packages\XPAKCache.cpp" />
+    <ClCompile Include="packages\XPAKSupport.cpp" />
+    <ClCompile Include="packages\XPTOCCache.cpp" />
+    <ClCompile Include="packages\XSUBCache.cpp" />
+    <ClCompile Include="packages\XSUBCacheV3.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AssetCli.h" />
-    <ClInclude Include="SalukiNameDatabase.h" />
-    <ClInclude Include="SalukiNameIndex.h" />
-    <ClInclude Include="AboutWindow.h" />
-    <ClInclude Include="AnimSettings.h" />
-    <ClInclude Include="CascFileSystem.h" />
-    <ClInclude Include="CoDAssets.h" />
-    <ClInclude Include="CoDAssetType.h" />
-    <ClInclude Include="CoDCDNCache.h" />
-    <ClInclude Include="CoDCDNDownloader.h" />
-    <ClInclude Include="CoDCDNDownloaderV0.h" />
-    <ClInclude Include="CoDCDNDownloaderV1.h" />
-    <ClInclude Include="CoDCDNDownloaderV2.h" />
-    <ClInclude Include="CoDIWITranslator.h" />
-    <ClInclude Include="CoDPackageCache.h" />
-    <ClInclude Include="CoDQTangent.h" />
-    <ClInclude Include="CoDRawfileTranslator.h" />
-    <ClInclude Include="CoDRawImageTranslator.h" />
-    <ClInclude Include="CoDXAnimReader.h" />
-    <ClInclude Include="CoDXAnimTranslator.h" />
-    <ClInclude Include="CoDXConverter.h" />
-    <ClInclude Include="CoDXModelBonesHelper.h" />
-    <ClInclude Include="CoDXModelHelper.h" />
-    <ClInclude Include="CoDXModelMeshHelper.h" />
-    <ClInclude Include="CoDXModelTranslator.h" />
-    <ClInclude Include="CoDXPoolParser.h" />
+    <ClInclude Include="cli\AssetCli.h" />
+    <ClInclude Include="assets\SalukiNameDatabase.h" />
+    <ClInclude Include="assets\SalukiNameIndex.h" />
+    <ClInclude Include="ui\native\AboutWindow.h" />
+    <ClInclude Include="settings\AnimSettings.h" />
+    <ClInclude Include="packages\CascFileSystem.h" />
+    <ClInclude Include="assets\CoDAssets.h" />
+    <ClInclude Include="assets\CoDAssetType.h" />
+    <ClInclude Include="packages\CoDCDNCache.h" />
+    <ClInclude Include="packages\CoDCDNDownloader.h" />
+    <ClInclude Include="packages\CoDCDNDownloaderV0.h" />
+    <ClInclude Include="packages\CoDCDNDownloaderV1.h" />
+    <ClInclude Include="packages\CoDCDNDownloaderV2.h" />
+    <ClInclude Include="exporters\CoDIWITranslator.h" />
+    <ClInclude Include="packages\CoDPackageCache.h" />
+    <ClInclude Include="exporters\CoDQTangent.h" />
+    <ClInclude Include="exporters\CoDRawfileTranslator.h" />
+    <ClInclude Include="exporters\CoDRawImageTranslator.h" />
+    <ClInclude Include="exporters\CoDXAnimReader.h" />
+    <ClInclude Include="exporters\CoDXAnimTranslator.h" />
+    <ClInclude Include="exporters\CoDXConverter.h" />
+    <ClInclude Include="exporters\CoDXModelBonesHelper.h" />
+    <ClInclude Include="exporters\CoDXModelHelper.h" />
+    <ClInclude Include="exporters\CoDXModelMeshHelper.h" />
+    <ClInclude Include="exporters\CoDXModelTranslator.h" />
+    <ClInclude Include="assets\CoDXPoolParser.h" />
     <ClInclude Include="DBGameAssets.h" />
     <ClInclude Include="DBGameFiles.h" />
-    <ClInclude Include="DBGameGenerics.h" />
-    <ClInclude Include="CoDFileHandle.h" />
-    <ClInclude Include="CoDFileSystem.h" />
-    <ClInclude Include="GameAdvancedWarfare.h" />
-    <ClInclude Include="GameBlackOps.h" />
-    <ClInclude Include="GameBlackOps2.h" />
-    <ClInclude Include="GameBlackOps3.h" />
-    <ClInclude Include="GameBlackOps4.h" />
-    <ClInclude Include="GameBlackOpsCW.h" />
-    <ClInclude Include="GameGhosts.h" />
-    <ClInclude Include="GameInfiniteWarfare.h" />
-    <ClInclude Include="GameModernWarfare.h" />
-    <ClInclude Include="GameModernWarfare2.h" />
-    <ClInclude Include="GameModernWarfare2RM.h" />
-    <ClInclude Include="GameModernWarfare3.h" />
-    <ClInclude Include="GameModernWarfare5.h" />
-    <ClInclude Include="GameModernWarfare5Structures.h" />
-    <ClInclude Include="GameModernWarfare6.h" />
-    <ClInclude Include="GameModernWarfare6Structures.h" />
-    <ClInclude Include="GameModernWarfareRM.h" />
-    <ClInclude Include="GameQuantumSolace.h" />
-    <ClInclude Include="GameVanguard.h" />
-    <ClInclude Include="GameWorldAtWar.h" />
-    <ClInclude Include="GameWorldWar2.h" />
-    <ClInclude Include="GeneralSettings.h" />
-    <ClInclude Include="ImageSettings.h" />
-    <ClInclude Include="IPAKCache.h" />
-    <ClInclude Include="IPAKSupport.h" />
-    <ClInclude Include="IWDCache.h" />
-    <ClInclude Include="IWDSupport.h" />
-    <ClInclude Include="MainWindow.h" />
-    <ClInclude Include="ModelSettings.h" />
-    <ClInclude Include="GameModernWarfare4.h" />
-    <ClInclude Include="PAKCache.h" />
-    <ClInclude Include="PAKSupport.h" />
-    <ClInclude Include="Parasyte.h" />
+    <ClInclude Include="assets\DBGameGenerics.h" />
+    <ClInclude Include="packages\CoDFileHandle.h" />
+    <ClInclude Include="packages\CoDFileSystem.h" />
+    <ClInclude Include="games\advanced_warfare\reader\GameAdvancedWarfare.h" />
+    <ClInclude Include="games\black_ops\reader\GameBlackOps.h" />
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2.h" />
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3.h" />
+    <ClInclude Include="games\black_ops_4\reader\GameBlackOps4.h" />
+    <ClInclude Include="games\cold_war\reader\GameBlackOpsCW.h" />
+    <ClInclude Include="games\ghosts\reader\GameGhosts.h" />
+    <ClInclude Include="games\infinite_warfare\reader\GameInfiniteWarfare.h" />
+    <ClInclude Include="games\modern_warfare\reader\GameModernWarfare.h" />
+    <ClInclude Include="games\modern_warfare_2\reader\GameModernWarfare2.h" />
+    <ClInclude Include="games\modern_warfare_2_remastered\reader\GameModernWarfare2RM.h" />
+    <ClInclude Include="games\modern_warfare_3\reader\GameModernWarfare3.h" />
+    <ClInclude Include="games\modern_warfare_5\reader\GameModernWarfare5.h" />
+    <ClInclude Include="games\modern_warfare_5\reader\GameModernWarfare5Structures.h" />
+    <ClInclude Include="games\modern_warfare_6\reader\GameModernWarfare6.h" />
+    <ClInclude Include="games\modern_warfare_6\reader\GameModernWarfare6Structures.h" />
+    <ClInclude Include="games\modern_warfare_remastered\reader\GameModernWarfareRM.h" />
+    <ClInclude Include="games\quantum_solace\reader\GameQuantumSolace.h" />
+    <ClInclude Include="games\vanguard\reader\GameVanguard.h" />
+    <ClInclude Include="games\world_at_war\reader\GameWorldAtWar.h" />
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2.h" />
+    <ClInclude Include="settings\GeneralSettings.h" />
+    <ClInclude Include="settings\ImageSettings.h" />
+    <ClInclude Include="packages\IPAKCache.h" />
+    <ClInclude Include="packages\IPAKSupport.h" />
+    <ClInclude Include="packages\IWDCache.h" />
+    <ClInclude Include="packages\IWDSupport.h" />
+    <ClInclude Include="ui\native\MainWindow.h" />
+    <ClInclude Include="assets\AssetSearch.h" />
+    <ClInclude Include="exporters\ExportJobs.h" />
+    <ClInclude Include="ui\native\UiHost.h" />
+    <ClInclude Include="ui\native\UiBridge.h" />
+    <ClInclude Include="ui\native\PreviewService.h" />
+    <ClInclude Include="assets\preview\PreviewData.h" />
+    <ClInclude Include="assets\preview\PreviewImage.h" />
+    <ClInclude Include="assets\preview\PreviewPolicy.h" />
+    <ClInclude Include="settings\ModelSettings.h" />
+    <ClInclude Include="games\modern_warfare_4\reader\GameModernWarfare4.h" />
+    <ClInclude Include="packages\PAKCache.h" />
+    <ClInclude Include="packages\PAKSupport.h" />
+    <ClInclude Include="assets\Parasyte.h" />
     <ClInclude Include="resource.h" />
-    <ClInclude Include="SABCache.h" />
-    <ClInclude Include="SABSupport.h" />
-    <ClInclude Include="SettingsWindow.h" />
-    <ClInclude Include="Siren.h" />
-    <ClInclude Include="SoundSettings.h" />
-    <ClInclude Include="TerrainSettings.h" />
-    <ClInclude Include="TerrainLayout.h" />
-    <ClInclude Include="TerrainResearchCapture.h" />
-    <ClInclude Include="TerrainResearchPolicy.h" />
-    <ClInclude Include="VGXPAKCache.h" />
-    <ClInclude Include="XSUBCacheV2.h" />
-    <ClInclude Include="WinFileSystem.h" />
-    <ClInclude Include="XPAKCache.h" />
-    <ClInclude Include="XPAKSupport.h" />
-    <ClInclude Include="XPTOCCache.h" />
-    <ClInclude Include="XSUBCache.h" />
-    <ClInclude Include="XSUBCacheV3.h" />
+    <ClInclude Include="packages\SABCache.h" />
+    <ClInclude Include="packages\SABSupport.h" />
+    <ClInclude Include="settings\SettingsWindow.h" />
+    <ClInclude Include="assets\Siren.h" />
+    <ClInclude Include="settings\SoundSettings.h" />
+    <ClInclude Include="settings\TerrainSettings.h" />
+    <ClInclude Include="games\cold_war\terrain\CWTerrainBake.h" />
+    <ClInclude Include="assets\TerrainLayout.h" />
+    <ClInclude Include="assets\TerrainResearchCapture.h" />
+    <ClInclude Include="assets\TerrainResearchPolicy.h" />
+    <ClInclude Include="packages\VGXPAKCache.h" />
+    <ClInclude Include="packages\XSUBCacheV2.h" />
+    <ClInclude Include="packages\WinFileSystem.h" />
+    <ClInclude Include="packages\XPAKCache.h" />
+    <ClInclude Include="packages\XPAKSupport.h" />
+    <ClInclude Include="packages\XPTOCCache.h" />
+    <ClInclude Include="packages\XSUBCache.h" />
+    <ClInclude Include="packages\XSUBCacheV3.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="games\black_ops_4\capture\BO4CaptureModes.h" />
+    <ClInclude Include="games\black_ops_4\brushes\BO4CollisionHandlerProbe.h" />
+    <ClInclude Include="games\black_ops_4\brushes\BO4ModelCollisionProbe.h" />
+    <ClInclude Include="games\black_ops_4\placements\BO4ModelPlacementCapture.h" />
+    <ClInclude Include="shared\BO4NameDatabase.h" />
+    <ClInclude Include="games\black_ops_4\capture\BO4WorldPoolProbe.h" />
+    <ClInclude Include="games\cold_war\brushes\CWBrushTypeCapture.h" />
+    <ClInclude Include="games\cold_war\brushes\CWClipMapCapture.h" />
+    <ClInclude Include="games\cold_war\brushes\CWClipModelExport.h" />
+    <ClInclude Include="games\cold_war\brushes\CWCollisionWorldCapture.h" />
+    <ClInclude Include="games\cold_war\capture\CWDistrictPayload.h" />
+    <ClInclude Include="games\cold_war\placements\CWFXAnimationPlacements.h" />
+    <ClInclude Include="games\cold_war\placements\CWLightPlacements.h" />
+    <ClInclude Include="games\cold_war\placements\CWLightSettings.h" />
+    <ClInclude Include="games\cold_war\capture\CWMapCandidateCapture.h" />
+    <ClInclude Include="games\cold_war\capture\CWMapCandidateLayout.h" />
+    <ClInclude Include="games\cold_war\placements\CWMapEntityExport.h" />
+    <ClInclude Include="games\cold_war\capture\CWMapWorldCapture.h" />
+    <ClInclude Include="shared\CWModelLodSelection.h" />
+    <ClInclude Include="games\cold_war\placements\CWModelProxyCatalog.h" />
+    <ClInclude Include="games\cold_war\placements\CWModelProxyFilter.h" />
+    <ClInclude Include="games\cold_war\capture\CWNonStaticCapture.h" />
+    <ClInclude Include="games\cold_war\placements\CWNonStaticPlacements.h" />
+    <ClInclude Include="games\cold_war\placements\CWPlacementOrganize.h" />
+    <ClInclude Include="games\cold_war\placements\CWPlacementRotation.h" />
+    <ClInclude Include="games\cold_war\placements\CWPlacementVerify.h" />
+    <ClInclude Include="games\cold_war\capture\CWPoolProbe.h" />
+    <ClInclude Include="games\cold_war\capture\CWProbeBounds.h" />
+    <ClInclude Include="shared\CWRadiantExport.h" />
+    <ClInclude Include="shared\RadiantExportResult.h" />
+    <ClInclude Include="games\black_ops_4\brushes\BO4BrushVisualCapture.h" />
+    <ClInclude Include="games\cold_war\terrain\CWShaderContainer.h" />
+    <ClInclude Include="games\cold_war\placements\CWSplineBake.h" />
+    <ClInclude Include="games\cold_war\placements\CWSplineCapture.h" />
+    <ClInclude Include="games\cold_war\placements\CWSplineModel.h" />
+    <ClInclude Include="games\cold_war\placements\CWStaticPlacementFilter.h" />
+    <ClInclude Include="exporters\ExportRun.h" />
+    <ClInclude Include="exporters\FlatMaterialExport.h" />
+    <ClInclude Include="exporters\ModelBatchResume.h" />
+    <ClInclude Include="exporters\ModelBatchSelection.h" />
+    <ClInclude Include="exporters\ModelExportNaming.h" />
+    <ClInclude Include="packages\XSUBObjectLayout.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="games\advanced_warfare\reader\GameAdvancedWarfareAssetLayouts.h" />
+    <ClInclude Include="games\black_ops\reader\GameBlackOpsAssetLayouts.h" />
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2AssetLayouts.h" />
+    <ClInclude Include="games\black_ops_2\reader\GameBlackOps2FileLayouts.h" />
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3AssetLayouts.h" />
+    <ClInclude Include="games\black_ops_3\reader\GameBlackOps3FileLayouts.h" />
+    <ClInclude Include="games\black_ops_4\reader\GameBlackOps4AssetLayouts.h" />
+    <ClInclude Include="games\cold_war\reader\GameBlackOpsCWAssetLayouts.h" />
+    <ClInclude Include="games\ghosts\reader\GameGhostsAssetLayouts.h" />
+    <ClInclude Include="games\infinite_warfare\reader\GameInfiniteWarfareAssetLayouts.h" />
+    <ClInclude Include="games\modern_warfare\reader\GameModernWarfareAssetLayouts.h" />
+    <ClInclude Include="games\modern_warfare_2\reader\GameModernWarfare2AssetLayouts.h" />
+    <ClInclude Include="games\modern_warfare_3\reader\GameModernWarfare3AssetLayouts.h" />
+    <ClInclude Include="games\modern_warfare_4\reader\GameModernWarfare4AssetLayouts.h" />
+    <ClInclude Include="games\modern_warfare_remastered\reader\GameModernWarfareRMAssetLayouts.h" />
+    <ClInclude Include="games\quantum_solace\reader\GameQuantumSolaceAssetLayouts.h" />
+    <ClInclude Include="games\vanguard\reader\GameVanguardAssetLayouts.h" />
+    <ClInclude Include="games\world_at_war\reader\GameWorldAtWarAssetLayouts.h" />
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2AssetLayouts.h" />
+    <ClInclude Include="games\world_war_2\reader\GameWorldWar2FileLayouts.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="WraithXCOD.rc" />
@@ -280,6 +361,19 @@
     <Manifest Include="WraithXCOD.manifest" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CopyGreyhoundUi" AfterTargets="Build">
+    <ItemGroup>
+      <GreyhoundUiFiles Include="$(MSBuildProjectDirectory)\ui\**\*.*" Exclude="$(MSBuildProjectDirectory)\ui\native\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GreyhoundUiFiles)" DestinationFiles="@(GreyhoundUiFiles->'$(OutDir)ui\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyTerrainShaderReflectionRuntime" AfterTargets="Build">
+    <PropertyGroup>
+      <TerrainDxcRuntime>$(WindowsSdkDir)bin\$(WindowsTargetPlatformVersion)\x64\dxcompiler.dll</TerrainDxcRuntime>
+    </PropertyGroup>
+    <Copy SourceFiles="$(TerrainDxcRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'$(Platform)' == 'x64' and Exists('$(TerrainDxcRuntime)')" />
+    <Warning Text="dxcompiler.dll was not found in the selected Windows SDK; terrain shader reflection will report compiler_unavailable unless the runtime is supplied." Condition="'$(Platform)' == 'x64' and !Exists('$(TerrainDxcRuntime)')" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

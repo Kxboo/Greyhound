@@ -25,17 +25,17 @@ This repository is a complete fork and builds from its own source tree.
 
 | file | purpose |
 | --- | --- |
-| `TerrainSettings.cpp` / `.h` | Source-only terrain settings page. Reconstruction controls and presets are intentionally absent. |
+| `src/WraithXCOD/WraithXCOD/settings/TerrainSettings.cpp` / `.h` | Source-only terrain settings page. Reconstruction controls and presets are intentionally absent. |
 
 ### Changed files
 
 | file | change |
 | --- | --- |
-| `CoDAssets.cpp` / `.h` | TerrainGfx capture: header decode, image bindings, quadtree, holes, index and control maps, and the research metadata block. |
-| `CoDAssetType.cpp` / `.h` | The terrain asset type. |
-| `GameBlackOpsCW.cpp` / `.h` | BOCW pool discovery for asset type `0xB1`. |
-| `Main.cpp` | Headless `superterrain` source-capture CLI. |
-| `MainWindow.cpp`, `SettingsWindow.cpp` / `.h` | Terrain asset list and settings page registration. |
+| `src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp` / `.h` | TerrainGfx capture: header decode, image bindings, quadtree, holes, index and control maps, and the research metadata block. |
+| `src/WraithXCOD/WraithXCOD/assets/CoDAssetType.cpp` / `.h` | The terrain asset type. |
+| `src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp` / `.h` | BOCW pool discovery for asset type `0xB1`. |
+| `src/WraithXCOD/WraithXCOD/ui/native/Main.cpp` | Headless `superterrain` source-capture CLI. |
+| `src/WraithXCOD/WraithXCOD/ui/native/MainWindow.cpp`, `src/WraithXCOD/WraithXCOD/settings/SettingsWindow.cpp` / `.h` | Terrain asset list and settings page registration. |
 | `WraithXCOD.rc`, `resource.h` | Terrain settings dialog layout and control IDs. |
 | `WraithXCOD.vcxproj`, `.filters` | New source files added to the project. |
 | `WraithX/WraithAsset.h`, `WraithX/stdafx.h` | Terrain asset kind. |

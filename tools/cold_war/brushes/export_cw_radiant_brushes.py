@@ -21,6 +21,13 @@ from repair_cw_map_face_limit import planes_for_tetra
 from export_cw_district_placements import rotation
 from build_cw_bo3_brush_prototype import read_map_planes,materials
 CHOICES={0x80:'clip_missile',0x400:'clip_physics',0x1040:'nosight_noclip',0x10000:'clip_player',0x20000:'clip_ai',0x130200:'clip',0x131640:'clip_nosight',0x1336c0:'clip_full'}
+def implementation_hashes(siblings):
+ paths = {name: Path(__file__).parent / name for name in siblings}
+ paths.update({name: TOOLS_ROOT / name for name in (
+  'shared/brushes/exact_geometry.py', 'shared/brushes/bo3_map_planes.py')})
+ return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
+
+
 def pieces(vertices,faces,limit):
  eq=hull_planes(dict(vertices=vertices,faces=faces))
  if len(eq)<=limit:return [(np.array(vertices),eq)],dict(partitioned=False,source_support_planes=len(eq))
@@ -63,7 +70,7 @@ def main():
    if len(eq)<=a.partition_trigger:return [(np.array(vertices),eq)],dict(partitioned=False,source_support_planes=len(eq))
    return selected(vertices,faces,limit)
  j=json.loads((a.capture/'capture.json').read_text());a.output.mkdir(exist_ok=True,parents=True);known=materials(a.gdt);assert set(CHOICES.values())|{'clip'}<=set(known)
- policy=dict(version=2,recombine_max_faces=a.recombine_max_faces,capture_sha256=hashlib.sha256((a.capture/'capture.json').read_bytes()).hexdigest(),max_faces=a.max_faces,partition_trigger=a.partition_trigger,cleanup_world_tolerance=a.cleanup_world_tolerance,halfspace_partitions=a.halfspace_partitions,compact_partitions=a.compact_partitions,spatial_partitions=a.spatial_partitions,helpers={n:hashlib.sha256((Path(__file__).parent/n).read_bytes()).hexdigest() for n in ['cw_bounded_brush_cleanup.py','cw_halfspace_partition.py','cw_exact_vertex_hull.py','cw_compact_brush_partition.py','cw_spatial_brush_partition.py','export_cw_full_brush_map.py','cw_brush_reconstruction.py']})
+ policy=dict(version=2,recombine_max_faces=a.recombine_max_faces,capture_sha256=hashlib.sha256((a.capture/'capture.json').read_bytes()).hexdigest(),max_faces=a.max_faces,partition_trigger=a.partition_trigger,cleanup_world_tolerance=a.cleanup_world_tolerance,halfspace_partitions=a.halfspace_partitions,compact_partitions=a.compact_partitions,spatial_partitions=a.spatial_partitions,helpers=implementation_hashes(['cw_bounded_brush_cleanup.py','cw_halfspace_partition.py','cw_exact_vertex_hull.py','cw_compact_brush_partition.py','cw_spatial_brush_partition.py','export_cw_full_brush_map.py','cw_brush_reconstruction.py']))
  policy_path=a.output/'hull-cache-policy.json'
  if policy_path.exists():
   if json.loads(policy_path.read_text())!=policy:raise ValueError('Cached geometry policy changed: select a fresh output directory')
@@ -154,7 +161,7 @@ def main():
  if a.cleanup_world_tolerance:
   import platform,scipy
   report['runtime_versions']=dict(python=platform.python_version(),numpy=np.__version__,scipy=scipy.__version__)
-  report['implementation_sha256']={n:hashlib.sha256((Path(__file__).parent/n).read_bytes()).hexdigest() for n in ['export_cw_radiant_brushes.py','cw_bounded_brush_cleanup.py','cw_halfspace_partition.py','cw_exact_vertex_hull.py','cw_canonical_map_planes.py','cw_brush_reconstruction.py']}
+  report['implementation_sha256']=implementation_hashes(['export_cw_radiant_brushes.py','cw_bounded_brush_cleanup.py','cw_halfspace_partition.py','cw_exact_vertex_hull.py','cw_canonical_map_planes.py','cw_brush_reconstruction.py'])
   report['bounded_cleanup']['summary']=dict(changed_unique_brushes=sum(bool(c.get('cleanup',{}).get('changed')) and c.get('cleanup',{}).get('used',True) for c in certs),partitioned_unique_brushes=sum(c['partitioned'] for c in certs),max_measured_world_outward_distance=max(c.get('cleanup',{}).get('final_partition_world_distance',c.get('cleanup',{}).get('max_world_outward_distance',0.)) for c in certs),remaining_tetra_fallback_regions=sum(len(c.get('tetrahedral_fallback_regions',[])) for c in certs),max_relative_cut_volume_error=max((cut['relative_volume_error'] for c in certs for cut in c.get('cuts',[])),default=0.))
  report['plane_serialization']=dict(canonical_exact_equation_reuse=writer is not None,basis=writer.basis if writer else 128,distinct_definitions=len(writer.cache) if writer else None)
  (a.output/'collision_metadata.json').write_text(json.dumps(report,indent=2));print(json.dumps(report['summary'],indent=2),flush=True)

@@ -24,6 +24,25 @@ void SettingsManager::LoadTransientSettings(const std::map<std::string, std::str
         SettingsCache.insert(Entry);
 }
 
+std::string SettingsManager::ReadSavedSetting(const std::string& SettingsName, const std::string& Key, const std::string& Default)
+{
+    const auto ConfigPath = FileSystems::CombinePath(FileSystems::GetApplicationPath(), SettingsName + ".json");
+    if (!FileSystems::FileExists(ConfigPath))
+        return Default;
+    TextReader Reader;
+    if (!Reader.Open(ConfigPath))
+        return Default;
+    try
+    {
+        const auto Saved = nlohmann::json::parse(Reader.ReadToEnd(), nullptr, true, true);
+        const auto Entry = Saved.find(Key);
+        if (Entry == Saved.end() || !Entry->is_string())
+            return Default;
+        return ModifyValue(Key, Entry->get<std::string>());
+    }
+    catch (...) { return Default; }
+}
+
 void SettingsManager::LoadSettings(const std::string& SettingsName, const std::map<std::string, std::string>& Defaults)
 {
     SettingsCache.clear();

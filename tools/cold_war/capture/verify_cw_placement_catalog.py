@@ -16,6 +16,19 @@ import struct
 from pathlib import Path
 
 
+def rotation_roundtrip_error(row):
+    r,p,y = (math.radians(row["RotationDegrees"][a])/2 for a in "XYZ")
+    cr,sr,cp,sp,cy,sy = math.cos(r),math.sin(r),math.cos(p),math.sin(p),math.cos(y),math.sin(y)
+    rebuilt = [sr*cp*cy-cr*sp*sy,cr*sp*cy+sr*cp*sy,cr*cp*sy-sr*sp*cy,cr*cp*cy+sr*sp*sy]
+    original = [row["RotationQuaternion"][a] for a in "XYZW"]
+    norm = math.sqrt(sum(v*v for v in original))
+    assert math.isfinite(norm) and norm > 1e-12, "Invalid placement quaternion"
+    original = [v/norm for v in original]
+    distance = math.sqrt(min(sum((a-b)**2 for a,b in zip(original,rebuilt)),
+                             sum((a+b)**2 for a,b in zip(original,rebuilt))))
+    return math.degrees(4*math.asin(min(1,distance/2)))
+
+
 def audit(root, baseline=None):
     root = Path(root).resolve()
     load = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
@@ -72,6 +85,22 @@ def audit(root, baseline=None):
     by_class = [r for file in (root / "non_static_models").glob("*.json") for r in json.loads(file.read_text())]
     assert sorted(by_class, key=lambda x: x["SourceEntityId"]) == sorted(models, key=lambda x: x["SourceEntityId"])
     assert len(models) == report["model_placements"]
+
+    # Dynamic models: clip_map +0x60 records, joined to their pool 0xD1 definition.
+    dynamic = load("dynamic_models.json") if (root / "dynamic_models.json").is_file() else []
+    definitions = {d["AssetAddress"]: d for d in load("dynmodel_assets.json")} if dynamic else {}
+    for row in dynamic:
+        raw = original("dynamic_models", row["RecordAddress"], 96)
+        assert bytes.fromhex(row["RawRecordHex"]) == raw
+        assert "0x%x" % struct.unpack_from("<Q", raw, 0)[0] == row["DynamicModelAsset"].lower()
+        assert row["DynamicModelAsset"] in definitions and (root / row["DefinitionFile"]).is_file()
+        assert [row["RotationQuaternion"][k] for k in "XYZW"] == list(struct.unpack_from("<4f", raw, 0x08))
+        assert [row["Position"][k] for k in "XYZ"] == list(struct.unpack_from("<3f", raw, 0x18))
+        assert row["ModelScale"]["X"] == struct.unpack_from("<f", raw, 0x2C)[0]
+        assert rotation_roundtrip_error(row) < 0.00002, ("dynamic model rotation mismatch", row["SourceId"])
+    for address, definition in definitions.items():
+        assert definition["InstanceCount"] == sum(r["DynamicModelAsset"] == address for r in dynamic)
+    assert len(dynamic) == report.get("dynamic_model_placements", 0)
 
     fx = load("fx_placement_candidates.json")
     for row in fx:
@@ -176,14 +205,23 @@ def audit(root, baseline=None):
         probe_matches += 1
 
     static, splines = load("static_models.json"), load("spline_models.json")
+    maximum_rotation_error = 0.0
+    for row in static + splines:
+        error = rotation_roundtrip_error(row)
+        assert error < 0.00002, ("Euler/quaternion rotation mismatch", row.get("District"), row.get("ReferenceIndex"), error)
+        maximum_rotation_error = max(maximum_rotation_error, error)
     assert all(not r.get("RequiresSplineDeformation", False) for r in static)
     assert all(r.get("RequiresSplineDeformation", False) for r in splines)
     if baseline:
         before = json.loads((Path(baseline)/"static_models.json").read_text())
-        clean = lambda rows: [{k:v for k,v in r.items() if k not in ("Name", "SourceName", "NameResolved")} for r in rows]
+        # Fields added after a baseline was captured are not transform changes.
+        added = ("BoundingRadius", "GlobalInstanceId", "StreamingCell", "StreamingCellAnchor")
+        clean = lambda rows: [{k:v for k,v in r.items() if k not in ("Name", "SourceName", "NameResolved") + added} for r in rows]
         assert clean(before) == clean(static), "Static transforms changed between captures"
     summary = {"status":"passed", "root":str(root), "static_models":len(static), "spline_models":len(splines),
+        "maximum_rotation_roundtrip_error_degrees":maximum_rotation_error,
         "entities":len(entities), "entity_class_files":len(groups), "entity_model_placements":len(models),
+        "dynamic_model_placements":len(dynamic),
         "fx_records":len(fx), "light_records":len(lights), "probe_records":len(probes),
         "validated_probe_records":sum(r["StructuralValidation"] for r in probes),
         "probe_bound_records":len(bounds), "multiface_bound_records":sum(r["PlaneCount"]>0 for r in bounds),

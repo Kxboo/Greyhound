@@ -28,10 +28,11 @@ Bug reports should include the game/build, map, steps and relevant export report
 | Cold War effects and entities | [FX, animation and entity data](docs/cw-effects-entities.md) |
 | Cold War brushes and navigation | [Collision](docs/cw-collision.md) · [Navigation](docs/cw-navigation.md) |
 | Black Ops 4 | [Workflows](docs/bo4.md) · [Terrain and collision research](docs/bo4-terrain-research.md) |
+| Cold War terrain models | [Baked terrain export](docs/cw-terrain.md) |
 | Source captures and validation | [Capture research](docs/capture-research.md) |
 
 Support varies by game. The guides describe supported exports and experimental
-data; terrain reconstruction and OMPV baking remain external.
+data. Cold War terrain exports baked model packages; raw source capture is in Dev Tools.
 
 ## Credits and license
 

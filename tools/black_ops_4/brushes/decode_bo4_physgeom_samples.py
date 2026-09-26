@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 import struct
 import numpy as np
-from cw_brush_hull import checked_hull
+from exact_geometry import checked_hull
 
 
 def decode(root):

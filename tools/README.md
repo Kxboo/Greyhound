@@ -11,6 +11,7 @@ tools/
       templates/      # script templates consumed by the CW helpers
     placements/       # model placement counts, budgets and source splitting
     brushes/          # CW collision decoding, hulls and Radiant conversion
+    terrain/          # native-shader terrain bake and package validation
     research/         # development investigations and capture comparisons
   black_ops_4/
     capture/          # terrain packaging and GDT intake verification
@@ -22,7 +23,7 @@ tools/
   shared/
     capture/          # source organization and sealed inventory verification
     core/             # source layout contract
-    brushes/          # common export layout and progress handling
+    brushes/          # shared geometry, MAP planes, metadata and progress
     models/           # common placement-name normalization
     name_db/          # name database importer used by CW and BO4
     runtime/          # packaging, cross-game export entry point and checks
@@ -35,6 +36,7 @@ tools/
 | --- | --- |
 | Organize CW placements | [organize_cw_placements.py](cold_war/capture/organize_cw_placements.py) |
 | Decode saved CW entities | [decode_cw_entitylist.py](cold_war/capture/decode_cw_entitylist.py) |
+| Bake saved CW terrain inputs | [bake.py](cold_war/terrain/bake.py) |
 | Audit CW placement counts | [audit_cw_placement_counts.py](cold_war/placements/audit_cw_placement_counts.py) |
 | Offline CW spline bake with per-model images and material info | [bake_cw_splines.py](cold_war/placements/bake_cw_splines.py) |
 | Audit BO4 placements | [audit_bo4_placements.py](black_ops_4/placements/audit_bo4_placements.py) |
@@ -55,7 +57,7 @@ python -m pytest tests -q
 
 Read a research script before running it: some require a particular saved
 capture, optional dependencies, or a live game. Research directories contain
-investigations, not a promise of complete game support. NumPy/SciPy are required
+investigations, not a promise of complete game support. NumPy/SciPy/Pillow are required
 for packaging/conversion; the alternate name importer and some live CW research
 helpers also require `lz4` in the developer interpreter.
 
@@ -73,12 +75,22 @@ remain descriptive and keep game prefixes; shared modules are not copied into
 each game folder. The name importer retains its historical `bo4` filename but
 serves both CW and BO4, which is why it is under `shared/name_db/`.
 
-BO4 converters also reuse some geometry functions from CW-owned converter
-modules. Follow their imports for those dependencies; shared geometry is not
-evidence that the games use the same binary layouts.
+BO4 and CW converters import common geometry from
+[`shared/brushes/exact_geometry.py`](shared/brushes/exact_geometry.py) and BO3
+MAP formatting/readback from [`shared/brushes/bo3_map_planes.py`](shared/brushes/bo3_map_planes.py).
+The former CW geometry modules remain compatible imports. Sharing these algorithms
+does not mean the games use the same binary layouts.
+
+CW export layout and material-report implementations live in
+[`cold_war/brushes/cw_export_layout_impl.py`](cold_war/brushes/cw_export_layout_impl.py) and
+[`cold_war/brushes/cw_material_comparison_report.py`](cold_war/brushes/cw_material_comparison_report.py).
+Their previous `shared/brushes/cw_export_layout.py` and
+`shared/brushes/material_comparison_report.py` paths remain forwarding modules.
+Use unique implementation filenames so `tool_bootstrap.py` resolves each module unambiguously.
 
 Python and Node tests live under `tests/<game>/<task>/`; common runtime tests
-are in `tests/shared/`. Standalone C++ tests and their PowerShell runner remain
+are in `tests/shared/`. Standalone C++ tests follow their native code under
+`tests/<game>/native/` or `tests/shared/native/`; their PowerShell runners remain
 at the test root. Project-wide build scripts remain at the repository root.
 
 For a new game, add its folder when adding actual scripts. Use the existing task

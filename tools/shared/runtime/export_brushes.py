@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE=TOOLS_ROOT
 from cw_export_progress import write_progress
-from cw_export_layout import map_name, publish
+from cw_export_layout_impl import map_name, publish
 
 def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 

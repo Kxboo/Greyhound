@@ -27,7 +27,7 @@ Raw `diagnostics/` bytes are retained. Separate instances are never deduplicated
 ## Cold War streamed model placements
 
 `Export Model Placements` uses the shared DISTRICTS reader in
-`CWMapWorldCapture.h`. It writes the existing plain `static_models.json` array
+`src/WraithXCOD/WraithXCOD/games/cold_war/capture/CWMapWorldCapture.h`. It writes the existing plain `static_models.json` array
 and a separate `placement_report.json`. `Models from JSON` can consume that
 array using the existing naming and LOD settings.
 
@@ -84,6 +84,18 @@ source stability. Sorted placement ranges must tile from zero without overlaps
 or gaps before reporting a complete export. Limits produce an explicit partial
 export, not silent omission. Package reads share the scene package budget.
 
+### Rotation precision
+
+Placement quaternions retain the captured xyzw values. Euler export normalizes a
+copy and handles vertical-pitch singularities explicitly, preserving the full
+rotation as `Rz(yaw) * Ry(pitch) * Rx(roll)`. At a singularity, roll is zero and
+the coupled rotation is retained in yaw. Different equivalent Euler triples
+must be compared by reconstructed rotation, not component subtraction.
+
+The placement validator checks every district Euler rotation against its source
+quaternion. Older JSON may have incorrect Euler angles near vertical pitch;
+regenerate those angles from `RotationQuaternion` before producing a map.
+
 ### Provenance and limits
 
 - `PlacementSource`: `live` or `local_package`.
@@ -110,7 +122,7 @@ that every kind of rendered world geometry has been recovered.
 
 The native tests include district payload sizes, pointer relocation, reference
 permutations, finite transforms, bounds, range coverage and rigid/spline filtering.
-Start with [cw_district_payload_test.cpp](../tests/cw_district_payload_test.cpp)
+Start with [cw_district_payload_test.cpp](../tests/cold_war/native/cw_district_payload_test.cpp)
 and the [native runner](../tests/run-native-tests.ps1). Saved map comparisons
 must join by district/reference identity rather than physical array order.
 
@@ -132,8 +144,8 @@ Multiple selected formats are supported. No GDT is generated.
 Outputs go to `exported_files/black_ops_cw/spline_models/run_XX/`:
 
 ```text
-cwsp_<unique-identity>/
-    cwsp_<unique-identity>.cast       # only when CAST is selected
+splm_<model>_<instance>/
+    splm_<model>_<instance>.cast      # only when CAST is selected
     ...other selected model formats...
     _mat_info/
     _images/<material-name>/...
@@ -141,9 +153,19 @@ placements.json
 spline_export_report.json
 ```
 
-The name incorporates the controls, source model and district/reference/instance
-identity. Selected LODs share a common origin. The placement JSON contains the
-new model names and origins in game inches; do not apply the original spline or
+Names are `splm_<model>_<instance>`, e.g. `splm_p9_road_line_painted_7962`, or
+`splm_xmodel_7306a6f2f5924bb_12332` for an unresolved model. `<instance>` is the
+SplineInstanceIndex: every instance is a separately deformed mesh, so the index keeps
+names unique within one map. Names can repeat across maps; install each map into its
+own folder. Selected LODs share a common origin. The placement JSON contains the
+new model names and origins in game inches. The matching `spline_models_REVIEW.map`
+is written from these same names and origins, with identity angles and scale. CAST
+conversion to BO3 uses `0.3937007874`; map origins remain in inches.
+
+The native baker flattens neutral and translated child bind bones into one static
+root. Source vertices are already in model space, so child bone offsets must not
+be applied again. Animated poses, nonidentity bind rotations/scales and blend
+shapes are not supported. Do not apply the original spline or
 rigid transform again. Normal exporters retain their usual units (CAST in
 centimeters; XMODEL in game inches). Material metadata and image format settings
 follow the ordinary exporter. Each spline folder owns its dependencies.
@@ -430,11 +452,11 @@ be collapsed to the influence box center.
 Use `docs_modtools/` inside your own Black Ops III installation. Relevant
 shipped documents include:
 
-- `Lighting_Parameters.pdf`, pages 1Ã¢â‚¬â€œ3 and 8Ã¢â‚¬â€œ11: light types, intensity stops,
+- `Lighting_Parameters.pdf`, pages 1–3 and 8–11: light types, intensity stops,
   shaping, cookie parameters, states and shadows.
-- `FX_Lights.pdf`, pages 1Ã¢â‚¬â€œ2: dynamic light asset setup, animation and instance limits.
-- `Lighting_Probe_Workflow.pdf`, pages 1Ã¢â‚¬â€œ3: global probes, sun volumes and target origins.
-- `Probe/Reflection_Probes.pdf`, pages 1Ã¢â‚¬â€œ6: independent origin, size/blend bounds,
+- `FX_Lights.pdf`, pages 1–2: dynamic light asset setup, animation and instance limits.
+- `Lighting_Probe_Workflow.pdf`, pages 1–3: global probes, sun volumes and target origins.
+- `Probe/Reflection_Probes.pdf`, pages 1–6: independent origin, size/blend bounds,
   reflection planes and GI grids.
 - `Probe/Probe_Editing_Handles.pdf`: independent capture-center and box edits.
 - `Probe/Multiface_Probes.pdf`: convex planes, up to 24 authoring faces, child
@@ -460,7 +482,7 @@ and the focused FX/light auditors to compare decoded fields with source bytes.
 Check each tool's help and input schema before running it against an organized
 run. The native `--verify` route performs its audit before organization.
 
-[Probe-bound tests](../tests/cw_probe_bounds_test.cpp) cover rotated boxes,
+[Probe-bound tests](../tests/cold_war/native/cw_probe_bounds_test.cpp) cover rotated boxes,
 world plane conversion, gimbal-lock angles, invalid sizes/axes/counts and
 ownership gaps/overlaps. Add synthetic coverage for new layouts and report
 live-map tests separately.

@@ -32,12 +32,20 @@ def verify(bundle):
         manifest = json.loads((bundle / 'manifest.json').read_text())
         files = manifest['files']
         required = {'shared/runtime/export_brushes.py', 'shared/runtime/verify_runtime.py', 'shared/runtime/verify_saved_export.py', 'black_ops_3/reference/bo3_reference.json',
-                    'black_ops_4/brushes/bo4_brush_export.py', 'cold_war/brushes/export_cw_radiant_brushes.py',
+                    'black_ops_4/brushes/bo4_brush_export.py',
+                    'black_ops_4/brushes/bo4_brush_geometry.py', 'black_ops_4/brushes/verify_bo4_brush_geometry.py',
+                    'black_ops_4/brushes/bo4_brush_visual_materials.py', 'shared/brushes/certified_brush_partition.py',
+                    'cold_war/brushes/export_cw_radiant_brushes.py',
                     'cold_war/brushes/export_cw_model_collmaps.py',
                     'cold_war/brushes/cw_brush_reconstruction.py',
                     'cold_war/brushes/cw_collision_role_policy.py',
                     'cold_war/brushes/export_cw_render_surfaces.py', 'shared/brushes/render_surface_patches.py',
-                    'shared/brushes/stock_material_metadata.py', 'shared/brushes/material_comparison_report.py'}
+                    'shared/brushes/stock_material_metadata.py', 'shared/brushes/material_comparison_report.py',
+                    'shared/brushes/cw_export_layout.py', 'shared/brushes/exact_geometry.py', 'shared/brushes/bo3_map_planes.py',
+                    'cold_war/brushes/cw_export_layout_impl.py', 'cold_war/brushes/cw_material_comparison_report.py',
+                    'cold_war/brushes/cw_exact_vertex_hull.py', 'cold_war/brushes/cw_brush_hull.py',
+                    'cold_war/brushes/exact_cw_brush_halfspaces.py', 'cold_war/brushes/cw_canonical_map_planes.py',
+                    'cold_war/terrain/bake.py', 'cold_war/terrain/run_composition.exe', 'cold_war/terrain/finalize.py'}
         if not required.issubset(files):
             raise ValueError('Manifest omits required tools: ' + ', '.join(sorted(required - files.keys())))
         for name, digest in files.items():
@@ -47,10 +55,13 @@ def verify(bundle):
         return dict(files=len(files), version=manifest['version'])
 
     check('converter_integrity', integrity)
-    for name in ('numpy', 'scipy'):
+    for name in ('numpy', 'scipy', 'PIL'):
         check(name, lambda name=name: importlib.import_module(name).__version__)
-    for name in ('cw_brush_reconstruction', 'cw_collision_role_policy', 'stock_material_metadata', 'export_cw_render_surfaces', 'export_cw_radiant_brushes', 'export_cw_model_collmaps',
+    for name in ('exact_geometry', 'bo3_map_planes', 'cw_export_layout_impl', 'cw_material_comparison_report',
+                 'cw_export_layout', 'material_comparison_report', 'cw_exact_vertex_hull', 'cw_brush_hull',
+                 'exact_cw_brush_halfspaces', 'cw_canonical_map_planes', 'cw_brush_reconstruction', 'cw_collision_role_policy', 'stock_material_metadata', 'export_cw_render_surfaces', 'export_cw_radiant_brushes', 'export_cw_model_collmaps',
                  'export_cw_bo3_trigger_entities', 'export_cw_bo3_navigation', 'export_cw_navigation_tools', 'export_cw_volume_connections', 'bo4_brush_export',
+                 'certified_brush_partition', 'bo4_brush_geometry', 'verify_bo4_brush_geometry', 'bo4_brush_visual_materials',
                  'decode_cw_float_collision_triangles', 'decode_bo4_model_collision'):
         check(name, lambda name=name: str(importlib.import_module(name).__file__))
 
@@ -64,7 +75,8 @@ def verify(bundle):
 
     check('bo3_material_catalogue', catalogue)
     # These are the entry points actually launched by the native terrain exporter.
-    for helper in ('shared/capture/organize_export.py', 'shared/capture/finalize_research_capture.py'):
+    for helper in ('shared/capture/organize_export.py', 'shared/capture/finalize_research_capture.py',
+                   'cold_war/terrain/bake.py', 'cold_war/terrain/finalize.py'):
         def help_check(helper=helper):
             path = bundle / helper
             result = subprocess.run([sys.executable, '-I', str(path), '--help'],

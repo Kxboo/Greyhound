@@ -66,6 +66,7 @@ foreach ($candidate in ($pythonCandidates | Select-Object -Unique)) {
     if ($LASTEXITCODE -eq 0) { $capturePython = $candidate; break }
 }
 if ($capturePython) {
+    & (Join-Path $PSScriptRoot 'tools\cold_war\terrain\build.ps1')
     foreach ($runtimeRoot in $runtimeRoots) {
         Set-Content -LiteralPath (Join-Path $runtimeRoot "terrain-python.txt") -Value $capturePython -Encoding ascii
         # Keep native switches and their converter implementation in the same build.

@@ -20,6 +20,10 @@
 [Rr]eleases/
 x64/
 x86/
+# Vendored WebView2 loader required by the x64 application build.
+!/src/External/WebView2/x64/
+/src/External/WebView2/x64/*
+!/src/External/WebView2/x64/WebView2LoaderStatic.lib
 bld/
 [Bb]in/
 [Oo]bj/
@@ -186,6 +190,9 @@ PublishScripts/
 *.nupkg
 # The packages folder can be ignored because of Package Restore
 **/[Pp]ackages/*
+# Application package readers are source code, not restored NuGet output.
+!/src/WraithXCOD/WraithXCOD/packages/
+!/src/WraithXCOD/WraithXCOD/packages/**
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
@@ -341,3 +348,4 @@ ASALocalRun/
 /test-output/
 /exported_files/
 /.venv/
+/tools/cold_war/terrain/run_composition.exe

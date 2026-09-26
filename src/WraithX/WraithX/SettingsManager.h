@@ -33,6 +33,9 @@ public:
     // Starts a settings session from stable defaults without reading or writing
     // the user's settings file.
     static void LoadTransientSettings(const std::map<std::string, std::string>& Defaults);
+    // Reads one key from the user's saved settings file without loading or
+    // writing it; Default when the file or key is missing.
+    static std::string ReadSavedSetting(const std::string& SettingsName, const std::string& Key, const std::string& Default = "");
     // Saves the settings file to the disk, must have loaded first
     static void SaveSettings();
 

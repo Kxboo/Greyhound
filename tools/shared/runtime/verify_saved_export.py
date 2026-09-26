@@ -30,13 +30,45 @@ def verify(report_path):
                     kind='terrain_inventory', result=result,
                     scope='Sealed source inventory integrity; no terrain reconstruction or live readback.')
     schema = report.get('schema', '')
-    if not (schema.startswith('greyhound-cw-radiant-v') or schema == 'greyhound-bo4-brush-export-v1'):
+    if not (schema.startswith('greyhound-cw-radiant-v') or schema in ('greyhound-bo4-brush-export-v1', 'greyhound-bo4-brush-export-v2')):
         raise ValueError('Choose metadata/export_report.json from a Greyhound brush export, or research_capture.report.json from a sealed terrain capture.')
     root = report_path.parent.parent if report_path.parent.name == 'metadata' else report_path.parent
     prefabs = report.get('prefabs', {})
     if not prefabs:
         raise ValueError('Report contains no prefab inventory')
     embedded = report.get('embedded_data', {})
+    if schema == 'greyhound-bo4-brush-export-v2':
+        required = {'metadata/' + name for name in (
+            'collision_metadata.json', 'model_physics_metadata.json', 'material_assignments.json',
+            'bo3_material_reference.json', 'geometry_verification.json', 'material_mapping_report.json',
+            'visual_surfaces.json')}
+        if not required.issubset(embedded):
+            raise ValueError('BO4 export omits required geometry or material evidence: ' + ', '.join(sorted(required - embedded.keys())))
+        if report.get('prefab_geometry_verified') is not True:
+            raise ValueError('BO4 export has no successful geometry verification')
+        if not isinstance(report.get('visual_surfaces'), dict) or not report['visual_surfaces'].get('status'):
+            raise ValueError('BO4 export omits visual material availability status')
+        inventory = {entry.get('file', key) for key, entry in embedded.items()}
+        published = set()
+        for directory in ('metadata', '_mat_info', '_images'):
+            folder = root / directory
+            if folder.is_dir():
+                published.update(path.relative_to(root).as_posix() for path in folder.rglob('*')
+                                 if path.is_file() and path != report_path)
+        if not published.issubset(inventory):
+            raise ValueError('BO4 export has untracked metadata or material dependencies: ' + ', '.join(sorted(published - inventory)))
+        if any(entry.get('geometry_kind') not in ('brush', 'explicit_uv_patch') for entry in prefabs.values()):
+            raise ValueError('BO4 export omits prefab geometry kinds')
+        visual = report['visual_surfaces']
+        patch_names = {name for name, entry in prefabs.items() if entry['geometry_kind'] == 'explicit_uv_patch'}
+        if patch_names != set(visual.get('prefabs', {})):
+            raise ValueError('BO4 visual prefab inventory differs from published geometry')
+        if patch_names and visual.get('geometry_verified') is not True:
+            raise ValueError('BO4 visual geometry has not passed verification')
+        for group, records in ((prefabs, visual.get('prefabs', {})), (embedded, visual.get('embedded_data', {}))):
+            for name, entry in records.items():
+                if name not in group or any(group[name].get(key) != entry.get(key) for key in ('sha256', 'bytes')):
+                    raise ValueError('BO4 visual dependency inventory differs: ' + name)
     if schema in ('greyhound-cw-radiant-v7','greyhound-cw-radiant-v8','greyhound-cw-radiant-v9','greyhound-cw-radiant-v10','greyhound-cw-radiant-v11'):
         required = {'bo3_stock_reference.json', 'material_assignments.json', 'stock_material_audit.json'}
         if schema in ('greyhound-cw-radiant-v8','greyhound-cw-radiant-v9','greyhound-cw-radiant-v10','greyhound-cw-radiant-v11'):
@@ -68,6 +100,8 @@ def verify(report_path):
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             if digest != expected:
                 raise ValueError('File hash differs from the published inventory')
+            if 'bytes' in entry and entry['bytes'] != path.stat().st_size:
+                raise ValueError('File size differs from the published inventory')
             item.update(passed=True, sha256=digest, bytes=path.stat().st_size)
         except (OSError, KeyError, ValueError) as error:
             item['error'] = str(error)

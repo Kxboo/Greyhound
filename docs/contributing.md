@@ -16,16 +16,22 @@ Use the [script directory guide](../tools/README.md) to find entry points,
 understand shared imports and add support for another game. Related Python/Node
 tests follow `tests/<game>/<task>/`.
 
+Native readers for all twenty games live under
+`src/WraithXCOD/WraithXCOD/games/<game>/reader/`; their tests use
+`tests/<game>/native/` or `tests/shared/native/`. Cross-folder native includes
+start at the application project root. See the [organization guide and move
+manifest](code-organization.md) for every destination and the validation record.
+
 | Area | Entry point | What to inspect |
 | --- | --- | --- |
-| Process/game discovery | `src/WraithXCOD/WraithXCOD/CoDAssets.cpp` | Game dispatch, asset pools and exporter selection |
-| Structured asset CLI | `src/WraithXCOD/WraithXCOD/AssetCli.cpp` | Parsing, capabilities, settings overrides, selection, exit status |
-| Dedicated placement CLI | `src/WraithXCOD/WraithXCOD/Main.cpp` | `placements` parser, run reservation, game dispatch |
-| GUI workflows | `GeneralSettings.cpp`, `TerrainSettings.cpp`, `WraithXCOD.rc` in the same directory | Controls, settings keys, progress and displayed paths |
-| CW readers | `GameBlackOpsCW.cpp`, `CWNonStaticCapture.h`, `CWNonStaticPlacements.h` | Pool occupancy, bounded reads, identities and transforms |
-| BO4 readers | `GameBlackOps4.cpp`, `BO4ModelPlacementCapture.h` | BO4-specific layouts, source checks and placement validation |
-| Model batches | `CoDAssets.cpp`, `ModelBatchResume.h` | Identity, LOD completion, portable image paths and retry behavior |
-| Placement layout | `CWPlacementOrganize.h`, `tools/cold_war/capture/organize_cw_placements.py` | Transaction, public path rewrites and raw evidence preservation |
+| Process/game discovery | `src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp` | Game dispatch, asset pools and exporter selection |
+| Structured asset CLI | `src/WraithXCOD/WraithXCOD/cli/AssetCli.cpp` | Parsing, capabilities, settings overrides, selection, exit status |
+| Dedicated placement CLI | `src/WraithXCOD/WraithXCOD/ui/native/Main.cpp` | `placements` parser, run reservation, game dispatch |
+| GUI workflows | `src/WraithXCOD/WraithXCOD/settings/`, `src/WraithXCOD/WraithXCOD/ui/native/`, and `src/WraithXCOD/WraithXCOD/WraithXCOD.rc` | Controls, settings keys, progress and displayed paths |
+| CW readers | `src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp`, `src/WraithXCOD/WraithXCOD/games/cold_war/capture/CWNonStaticCapture.h`, `src/WraithXCOD/WraithXCOD/games/cold_war/placements/CWNonStaticPlacements.h` | Pool occupancy, bounded reads, identities and transforms |
+| BO4 readers | `src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp`, `src/WraithXCOD/WraithXCOD/games/black_ops_4/placements/BO4ModelPlacementCapture.h` | BO4-specific layouts, source checks and placement validation |
+| Model batches | `src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp`, `src/WraithXCOD/WraithXCOD/exporters/ModelBatchResume.h` | Identity, LOD completion, portable image paths and retry behavior |
+| Placement layout | `src/WraithXCOD/WraithXCOD/games/cold_war/placements/CWPlacementOrganize.h`, `tools/cold_war/capture/organize_cw_placements.py` | Transaction, public path rewrites and raw evidence preservation |
 | Brush conversion | `tools/cold_war/brushes/`, `tools/black_ops_4/brushes/` | Saved-byte decoding, material decisions and verification reports |
 | Terrain source contract | `tools/shared/core/layout.py`, `tools/shared/capture/finalize_research_capture.py` | Capture inventory and sealed source boundary |
 
@@ -34,7 +40,7 @@ Use searches to follow an action end to end:
 ```powershell
 rg -n 'ExportModelPlacements|cworganizeplacements' src/WraithXCOD/WraithXCOD
 rg -n 'SourcePlacementFile|static_models.json' tools/cold_war/capture tests
-rg -n 'SupportedGames|BeginGameMode' src/WraithXCOD/WraithXCOD/CoDAssets.cpp
+rg -n 'SupportedGames|BeginGameMode' src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp
 ```
 
 Confirm each filename and function in the checkout you are reviewing. File
@@ -63,7 +69,7 @@ research tools and list inputs that are not included in the repository.
 ## Extending CW, BO4, or another game
 
 Find the game's existing `Game*.cpp` implementation and its dispatch in
-`CoDAssets.cpp`. Trace one supported asset through discovery, reading and export
+`src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp`. Trace one supported asset through discovery, reading and export
 before adding another type. Reuse common export contracts where appropriate,
 but measure that game's offsets, strides, hash rules and coordinate conventions.
 CW offsets and flag meanings do not establish BO4 or another game's layouts.
@@ -85,7 +91,7 @@ unresolved names, nonfinite transforms and unsupported layouts as applicable.
 For brushes, preserve one-to-one source accounting and report added/omitted
 collision categories. For placements, keep separate instances and distinguish
 render placement from collision placement, proxies, splines and dynamic state.
-For terrain, keep sealed capture evidence immutable; reconstruction is external.
+For terrain, keep sealed Dev Tools captures immutable. The main Cold War exporter uses a focused capture and the bundled terrain bake; see cw-terrain.md.
 
 ## Working with an AI assistant
 

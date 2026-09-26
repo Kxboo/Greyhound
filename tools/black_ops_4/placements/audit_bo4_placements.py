@@ -69,8 +69,12 @@ def audit(root, collision=None):
         pointers = c.view("<u8")[:, 0]
         forward = np.linalg.inv(c[:, 6:15].reshape(-1, 3, 3))
         scales = np.cbrt(np.linalg.det(forward))
-        rotations = forward / scales[:, None, None]
-        rotation_errors, scale_errors = [], []
+        # The stored collision basis is not exactly orthonormal (zm_towers:
+        # anisotropy up to 3e-4), so take the rotation from its polar
+        # decomposition instead of dividing by a uniform scale.
+        u, _, vt = np.linalg.svd(forward)
+        rotations = u @ vt
+        best_by_render = {}
         ambiguous = 0
         for ptr in np.unique(refs[:, 0]):
             a = np.where(refs[:, 0] == ptr)[0]
@@ -85,12 +89,24 @@ def audit(root, collision=None):
                 candidates = b[matches]
                 errors = np.max(np.abs(rotations[candidates] - matrices[ri]), axis=(1, 2))
                 best = int(np.argmin(errors))
-                rotation_errors.append(float(errors[best]))
-                scale_errors.append(float(abs(scales[candidates[best]] - t[ri, 7])))
+                best_by_render[ri] = (float(errors[best]), int(candidates[best]))
+        # A collision record belongs to one render instance. Coincident render
+        # instances of the same model (zm_towers: chaos_strands_hanging_02 at one
+        # origin with different rotation/scale) must not all claim it.
+        owner = {}
+        for ri, (error, ci) in best_by_render.items():
+            if ci not in owner or error < best_by_render[owner[ci]][0]:
+                owner[ci] = ri
+        rotation_errors, scale_errors = [], []
+        for ci, ri in owner.items():
+            rotation_errors.append(best_by_render[ri][0])
+            scale_errors.append(float(abs(scales[ci] - t[ri, 7])))
+        coincident = len(best_by_render) - len(owner)
         assert rotation_errors and max(rotation_errors) < 1e-4
         result["independent_collision_check"] = {
             "matched_render_instances": len(rotation_errors),
             "rotation_matrix_max_error": max(rotation_errors),
+            "coincident_render_instances_without_own_collision": coincident,
             "multiple_collision_records_at_same_model_origin": ambiguous,
             "scale_disagreements_over_0_001": int(np.sum(np.array(scale_errors) > .001)),
             "note": "All candidates at duplicate origins considered; render scale retained unchanged."}

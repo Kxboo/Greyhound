@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Greyhound</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-hound" viewBox="0 0 24 24">
+      <path fill="currentColor" fill-rule="evenodd" d="M4.6 21.5c.3-3.9.6-6.6 1.7-9 .9-2 2.3-3.6 4.2-4.3 1.7-.6 3.4-.5 4.9.1l5.6 2.2c.9.4 1 1.5.1 1.9-1.6.6-3.5.8-5.4.9-1.5.1-2.6.7-3.4 1.8-1 1.5-1.4 3.7-1.4 6.4zM13.6 8.9a.85.85 0 1 0 0 1.7.85.85 0 0 0 0-1.7z"/>
+      <path fill="currentColor" d="M9.6 8.7c-.9-1.4-2.3-2.1-3.9-2 1 .8 1.6 1.9 2 3.3z"/>
+    </symbol>
+    <symbol id="i-library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6.5v13.5L9 17.5l6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.4"/><circle cx="12" cy="17" r=".5" fill="currentColor"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-3.5M4 4v4h4M4 13a8 8 0 0 0 14.8 3.5M20 20v-4h-4"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
+    <symbol id="i-spline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19c4 0 4-14 8-14s4 14 8 14"/><circle cx="4" cy="19" r="1.5"/><circle cx="20" cy="19" r="1.5"/></symbol>
+    <symbol id="i-brush" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 12 4l8 14z"/><path d="M8 11h8"/></symbol>
+    <symbol id="i-terrain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 19 6-9 4 5 3-4 5 8z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/><path d="M7.5 15h9"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark"><svg><use href="#i-hound"/></svg></div>
+      <div>
+        <h1>Greyhound</h1>
+        <div class="ver" id="ver">v2</div>
+      </div>
+    </div>
+
+    <div class="game-chip" id="gameChip" title="">
+      <div class="icon" id="gameIcon"><svg width="18" height="18"><use href="#i-cube"/></svg></div>
+      <div class="tx">
+        <div class="t1" id="gameName">No game loaded</div>
+        <div class="t2" id="gameMeta"><span class="dot"></span>Idle</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button data-page="library" class="active"><svg><use href="#i-library"/></svg><span>Library</span></button>
+      <button data-page="tools"><svg><use href="#i-map"/></svg><span>Map tools</span></button>
+      <div class="sep"></div>
+      <button data-page="settings"><svg><use href="#i-sliders"/></svg><span>Settings</span></button>
+      <button data-page="diagnostics"><svg><use href="#i-pulse"/></svg><span>Diagnostics</span></button>
+    </nav>
+
+    <div class="foot">
+      <button class="out-chip" id="outChip" title="Open the export folder">
+        <span class="k">Exporting to</span>
+        <span class="v" id="outPath">exported_files</span>
+      </button>
+      <div class="links">
+        <a data-url="wiki">Wiki</a>
+        <a data-action="about">About</a>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- ================= LIBRARY ================= -->
+    <section class="page active" id="page-library">
+      <div class="toolbar">
+        <div class="search">
+          <svg class="i"><use href="#i-search"/></svg>
+          <input type="search" id="search" placeholder="Search assets — names, or filters like bonecount:>40" spellcheck="false" autocomplete="off" disabled>
+          <span class="kbd">Ctrl F</span>
+          <button class="help" id="searchHelp" title="Search syntax"><svg width="16" height="16"><use href="#i-help"/></svg></button>
+          <div class="popover" id="searchPop">
+            <h5>Search syntax</h5>
+            <table>
+              <tr><td><code>tree, rock</code></td><td>Names containing any of the terms</td></tr>
+              <tr><td><code>!_lod</code></td><td>Names that don't contain the term</td></tr>
+              <tr><td><code>bonecount:&gt;40</code></td><td>Models or anims with more than 40 bones</td></tr>
+              <tr><td><code>lodcount:4</code></td><td>Models with exactly 4 LODs</td></tr>
+              <tr><td><code>framecount:&lt;30</code> · <code>framerate:30</code></td><td>Animation length and rate</td></tr>
+              <tr><td><code>width:2048</code> · <code>height:&gt;512</code></td><td>Image size in pixels</td></tr>
+              <tr><td><code>length:&gt;5000</code></td><td>Sounds longer than 5 s (milliseconds)</td></tr>
+              <tr><td><code>bonename:tag_weapon</code></td><td>Contains a bone with this name</td></tr>
+              <tr><td><code>streamed:1</code> · <code>placeholder:0</code></td><td>Streamed or placeholder assets</td></tr>
+            </table>
+          </div>
+        </div>
+        <button class="btn primary" id="btnLoad"><svg><use href="#i-play"/></svg>Load game</button>
+        <button class="btn" id="btnOpenFile"><svg><use href="#i-file"/></svg>Open file</button>
+        <button class="btn ghost" id="btnClear" disabled title="Unload the current game or file"><svg><use href="#i-x"/></svg>Unload</button>
+        <button class="btn" id="btnPreview" disabled title="Preview the focused model or image"><svg><use href="#i-cube"/></svg>Preview</button>
+      </div>
+
+      <div class="library-layout-bar hidden" id="layoutBar">
+        <span>Library</span>
+        <div class="layout-switch" role="group" aria-label="Library layout">
+          <button data-layout="list" aria-pressed="true">List</button>
+          <button data-layout="split" aria-pressed="false">Split</button>
+          <button data-layout="viewer" aria-pressed="false">Viewer</button>
+        </div>
+      </div>
+
+      <div class="filters hidden" id="filters"></div>
+
+      <!-- empty state -->
+      <div class="empty-wrap" id="libEmpty">
+        <div class="empty">
+          <div class="hero"><svg><use href="#i-hound"/></svg></div>
+          <h2>Nothing loaded yet</h2>
+          <p>Greyhound reads assets straight out of a running Call of Duty, or from a game package file on disk.</p>
+          <div class="actions">
+            <button class="btn primary" data-click="btnLoad"><svg><use href="#i-play"/></svg>Load game</button>
+            <button class="btn" data-click="btnOpenFile"><svg><use href="#i-file"/></svg>Open file…</button>
+          </div>
+          <div class="steps">
+            <div class="s"><div class="n">01</div><div class="t">Start the game</div><div class="h">Load into the map or menu whose assets you want.</div></div>
+            <div class="s"><div class="n">02</div><div class="t">Load game</div><div class="h">Pick asset types to show in Settings → Library.</div></div>
+            <div class="s"><div class="n">03</div><div class="t">Select and export</div><div class="h">Double-click a row, or select several and press Enter.</div></div>
+          </div>
+          <div class="dropzone">
+            <div>Or drop a package file anywhere in this window</div>
+            <div class="secondary">.xpak · .ipak · .iwd · .sabs · .sabl</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- loading state -->
+      <div class="empty-wrap hidden" id="libLoading">
+        <div class="loading"><div class="spinner"></div><div id="loadingText">Loading assets…</div></div>
+      </div>
+
+      <!-- table -->
+      <div class="library-workspace hidden" id="libraryWorkspace" data-layout="list">
+      <div class="library-list" id="libraryList">
+        <div id="viewerSearchSlot"></div>
+      <div class="table-wrap hidden" id="libTable">
+        <div class="thead">
+          <button class="th" data-sort="name">Asset name <span class="arrow"></span></button>
+          <button class="th" data-sort="type">Type <span class="arrow"></span></button>
+          <button class="th" data-sort="status">Status <span class="arrow"></span></button>
+          <button class="th" data-sort="details">Details <span class="arrow"></span></button>
+        </div>
+        <div class="tbody" id="tbody" tabindex="0"><div class="spacer" id="spacer"></div></div>
+      </div>
+      </div>
+      <div id="previewDivider" class="preview-divider" role="separator" aria-label="Resize asset list" aria-orientation="vertical" tabindex="0" aria-valuemin="20" aria-valuemax="75" aria-valuenow="50"></div>
+      <section class="preview-panel" id="previewPanel" aria-label="Asset preview">
+        <div class="preview-head"><div class="preview-title" id="previewName">Asset preview</div><button class="btn sm" id="previewPopout">Pop out</button></div>
+        <div class="preview-stage" id="previewStage">
+          <canvas id="previewCanvas" tabindex="0" aria-label="Asset preview. Drag to orbit, Shift-drag or right-drag to pan, scroll to zoom, F to fit."></canvas>
+          <div class="preview-message" id="previewMessage"><svg width="32" height="32"><use href="#i-cube"/></svg><span>Focus a model or image, then choose Preview.</span></div>
+          <div class="preview-detached hidden" id="previewDetached"><span>Preview is in a separate window.</span><button class="btn" id="previewDock">Dock preview</button></div>
+        </div>
+        <div class="preview-foot"><div id="previewInfo" aria-live="polite">Preview loads only when requested.</div><div class="preview-controls"><button class="btn sm" id="previewZoomOut" title="Zoom out" aria-label="Zoom out">−</button><button class="btn sm" id="previewFit" title="Fit preview (F)">Fit</button><button class="btn sm" id="previewZoomIn" title="Zoom in" aria-label="Zoom in">+</button></div></div>
+        <div class="preview-hint" id="previewHint">Drag to orbit · Shift-drag to pan · Scroll to zoom</div>
+      </section>
+      </div>
+
+      <div class="statusbar hidden" id="libBar">
+        <div class="count" id="countText"></div>
+        <div class="spacer"></div>
+        <button class="btn" id="btnExportAll" title="Export every asset in the current view">Export all shown</button>
+        <button class="btn primary" id="btnExportSel" disabled><svg><use href="#i-export"/></svg>Export selected</button>
+      </div>
+    </section>
+
+    <!-- ================= MAP TOOLS ================= -->
+    <section class="page" id="page-tools">
+      <div class="scroll"><div class="doc">
+        <div class="page-head"><h2>Map tools</h2><span class="tag" id="toolsGameTag">No map</span></div>
+        <p class="lede">Rebuild a whole map outside the game: export where every model sits, export those models, then add splines and Radiant brushes. Load the map with <b>Load game</b> first.</p>
+
+        <div class="section">
+          <h3><span class="num">01</span>Model placements</h3>
+          <p class="sub">Writes <code>static_models.json</code>: every placed model with its position, rotation and scale.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-pin"/></svg></div>
+              <div class="tx"><div class="t">Export model placements <span class="tag muted">BO4 · CW</span></div>
+              <div class="h">Cold War can also include entities, lights, probes and effects.</div></div>
+            </div>
+            <div class="opts rows" data-group="placements"></div>
+            <div class="foot"><button class="btn primary" data-tool="placements"><svg><use href="#i-export"/></svg>Export placements</button><span class="note" data-need="bo4cw"></span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3><span class="num">02</span>Models from placements</h3>
+          <p class="sub">Exports each unique model named in a placements file once, as CAST, with images and material info beside it. Interrupted runs can resume.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-cube"/></svg></div>
+              <div class="tx"><div class="t">Export models from JSON <span class="tag muted">BO4 · CW</span></div>
+              <div class="h">Choose <code>static_models.json</code>, <code>non_static_models.json</code> or a per-class model file. Needs XModels loaded.</div></div>
+            </div>
+            <div class="foot"><button class="btn primary" data-tool="modelsFromJson"><svg><use href="#i-file"/></svg>Choose placements file…</button><span class="note" data-need="bo4cw"></span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3><span class="num">03</span>Spline models</h3>
+          <p class="sub">Bakes models that bend along splines (roads, pipes, cables) into real meshes in your selected model formats.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-spline"/></svg></div>
+              <div class="tx"><div class="t">Bake spline models <span class="tag muted">CW</span></div>
+              <div class="h">You'll pick two files: the placements JSON, then <code>splined_models.json</code> from the same map session. Turn on <i>Splined model inputs</i> under Settings → Cold War research to capture them.</div></div>
+            </div>
+            <div class="foot"><button class="btn primary" data-tool="splineModels"><svg><use href="#i-file"/></svg>Choose files…</button><span class="note" data-need="cw"></span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3><span class="num">04</span>Radiant brushes</h3>
+          <p class="sub">Turns the map's collision into Radiant brush prefabs: brushes, clips, volumes and triggers in separate files.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-brush"/></svg></div>
+              <div class="tx"><div class="t">Export brushes <span class="tag muted">BO4 · CW</span></div>
+              <div class="h">BO4 and Cold War use named BO3 stock clip and tool materials, with substitutions listed in the export report. BO4 visible surfaces keep their source materials and textures; unavailable materials are reported without a replacement.</div></div>
+            </div>
+            <div class="opts rows" data-group="brushes"></div>
+            <div class="foot"><button class="btn primary" data-tool="brushes"><svg><use href="#i-export"/></svg>Export brushes</button><span class="note" data-need="bo4cw"></span></div>
+          </div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="page" id="page-settings">
+      <div class="scroll" id="settingsScroll">
+        <div class="settings-layout">
+          <nav class="toc" id="toc"></nav>
+          <div id="settingsBody">
+            <div class="page-head"><h2>Settings</h2></div>
+            <p class="lede">Changes save immediately. Library changes apply the next time you load a game.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= DIAGNOSTICS ================= -->
+    <section class="page" id="page-diagnostics">
+      <div class="scroll"><div class="doc">
+        <div class="page-head"><h2>Diagnostics</h2></div>
+        <p class="lede">Checks and raw captures for troubleshooting and research. Every run writes a report into its own folder under <code>diagnostics</code>.</p>
+
+        <div class="grid2">
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-shield"/></svg></div>
+              <div class="tx"><div class="t">Check export runtime</div><div class="h">Verifies the bundled tools and Python dependencies are installed and intact.</div></div>
+            </div>
+            <div class="foot"><button class="btn" data-tool="verifyRuntime">Run check</button></div>
+          </div>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-file"/></svg></div>
+              <div class="tx"><div class="t">Check a saved export</div><div class="h">Pick a brush <code>export_report.json</code> or terrain <code>research_capture.report.json</code> to confirm no file changed.</div></div>
+            </div>
+            <div class="foot"><button class="btn" data-tool="verifyExport">Choose report…</button></div>
+          </div>
+        </div>
+
+        <div class="section" style="margin-top:34px">
+          <h3>Terrain source capture</h3>
+          <p class="sub">Saves the raw TerrainGfx data for every loaded terrain without building models. Enable <i>TerrainGfx</i> in Settings → Library first.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-terrain"/></svg></div>
+              <div class="tx"><div class="t">Capture raw terrain source <span class="tag muted">BO4 · CW</span></div><div class="h">Output goes to <code>dev_tools/terrain_sources</code>.</div></div>
+            </div>
+            <div class="foot"><button class="btn" data-tool="terrainSource">Capture</button><span class="note" data-need="bo4cw"></span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Black Ops 4 diagnostic captures</h3>
+          <p class="sub">Research captures of BO4 world data. Choose what to capture, then run it with a BO4 map loaded.</p>
+          <div class="card tool">
+            <div class="tool-head">
+              <div class="ic"><svg><use href="#i-flask"/></svg></div>
+              <div class="tx"><div class="t">Capture mode</div><div class="h" id="bo4Hint">—</div></div>
+            </div>
+            <select id="bo4Mode" style="width:100%"></select>
+            <div class="foot"><button class="btn" data-tool="bo4Diagnostic">Run capture</button><span class="note" data-need="bo4"></span></div>
+          </div>
+        </div>
+      </div></div>
+    </section>
+  </main>
+</div>
+
+<!-- export / job progress -->
+<div class="job" id="job">
+  <div class="jt"><span id="jobTitle">Exporting</span><span class="state tag muted" id="jobState">Running</span></div>
+  <div class="js" id="jobStatus"></div>
+  <div class="bar" id="jobBar"><i></i></div>
+  <div class="jb">
+    <button class="btn sm" id="jobOpen" hidden><svg><use href="#i-folder"/></svg>Open folder</button>
+    <button class="btn sm" id="jobCancel">Cancel</button>
+    <button class="btn sm primary" id="jobDone" hidden>Done</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h4 id="modalTitle"></h4>
+    <p class="mt" id="modalText"></p>
+    <div class="mb" id="modalButtons"></div>
+  </div>
+</div>
+
+<div class="menu" id="rowMenu">
+  <button data-m="preview" id="menuPreview">Preview focused asset</button>
+  <button data-m="export">Export<span class="k">Enter</span></button>
+  <button data-m="copy">Copy names<span class="k">Ctrl C</span></button>
+  <button data-m="copycsv">Copy names, comma-separated<span class="k">Ctrl X</span></button>
+  <hr>
+  <button data-m="selectall">Select all shown<span class="k">Ctrl A</span></button>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<div class="drop-overlay">Drop to open this file</div>
+
+<script src="mock.js"></script>
+<script src="preview.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

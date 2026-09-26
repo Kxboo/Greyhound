@@ -14,9 +14,9 @@ import struct
 from collections import Counter, defaultdict
 from pathlib import Path
 import numpy as np
-from exact_cw_brush_halfspaces import reconstruct_exact
-from cw_canonical_map_planes import CanonicalPlaneWriter
-from build_cw_bo3_brush_prototype import read_map_planes
+from exact_geometry import reconstruct_exact
+from bo3_map_planes import CanonicalPlaneWriter
+from bo3_map_planes import read_map_planes
 
 
 def export(root, output, name):
@@ -73,6 +73,7 @@ def export(root, output, name):
             layer=f'000_Global/BO4_{group.upper()}_ASSOCIATION_REVIEW/{cls}'
             groups[group].append((layer,'// brush '+str(len(rows))+'\n{\nlayer "'+layer+'"\n'+'\n'.join(lines)+'\n}\n'))
             rows.append(dict(entity_index=e['index'],model_index=model_index,hull_index=hi,
+                map_brush_index=len(rows),face_count=len(lines),expected_planes=eq.tolist(),
                 classname=cls,source_properties=e['properties'],origin=e['origin'],angles=e['angles'],
                 prefab_group=group,material=material,plane_error=error,
                 placement_status='SPAWN_ORDER_ASSOCIATION_REQUIRES_RUNTIME_CONFIRMATION'))
@@ -84,6 +85,8 @@ def export(root, output, name):
         path=output/(name+'_'+group+'_review.map');path.write_bytes(text.replace('\n','\r\n').encode())
         if path.read_text().count('// brush ')!=len(bodies):raise ValueError('Trigger prefab count changed')
         files[path.name]=dict(brushes=len(bodies),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        for row in rows:
+            if row['prefab_group']==group:row['prefab_file']=path.name
     for e in entities:
         if e not in geometric: omissions.append(dict(entity=e['index'],reason='Parameter trigger retained in JSON; no fabricated box',source=e))
     report=dict(schema='greyhound-bo4-trigger-prefabs-v1',map_files=files,rows=rows,omissions=omissions,

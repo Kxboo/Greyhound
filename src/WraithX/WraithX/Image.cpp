@@ -694,6 +694,8 @@ std::unique_ptr<int8_t[]> Image::BuildDDSHeader(uint32_t Width, uint32_t Height,
     case ImageFormat::DDS_Standard_A8_UNORM: Metadata.format = DXGI_FORMAT::DXGI_FORMAT_A8_UNORM; break;
     case ImageFormat::DDS_Standard_R8_UNORM: Metadata.format = DXGI_FORMAT::DXGI_FORMAT_R8_UNORM; break;
     case ImageFormat::DDS_Standard_R8_UINT: Metadata.format = DXGI_FORMAT::DXGI_FORMAT_R8_UINT; break;
+    case ImageFormat::DDS_Standard_R16_UNORM: Metadata.format = DXGI_FORMAT::DXGI_FORMAT_R16_UNORM; break;
+    case ImageFormat::DDS_Standard_R32_UINT: Metadata.format = DXGI_FORMAT::DXGI_FORMAT_R32_UINT; break;
 
     default:
         // Default to BC1

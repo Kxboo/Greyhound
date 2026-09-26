@@ -123,7 +123,11 @@ BEGIN
     PUSHBUTTON      "Disable",IDC_SALUKI_DISABLE,256,183,57,16
     CONTROL         "Update automatically when loading assets (daily)",IDC_SALUKI_AUTO,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,202,310,11
     LTEXT           "Optional: download names or choose your cod-name-db folder.",IDC_BO4_NAME_DB_HINT,17,216,310,12
-    CONTROL "Create a Radiant brush .map when exporting CW collision",IDC_CW_RADIANT_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,40,310,14
+    LTEXT           "Export folder",IDC_EXPORT_ROOT_LABEL,170,32,173,9
+    EDITTEXT        IDC_EXPORT_ROOT_PATH,170,44,173,14,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Choose folder...",IDC_EXPORT_ROOT_CHOOSE,170,62,81,16
+    PUSHBUTTON      "Use default",IDC_EXPORT_ROOT_DEFAULT,255,62,65,16
+    CONTROL "Automatically build brushes during Cold War pool exports",IDC_CW_RADIANT_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,40,310,14
     PUSHBUTTON "Export brushes now",IDC_EXPORT_BRUSHES,17,66,155,20
     PUSHBUTTON "Export Model Placements JSON",IDC_EXPORT_PLACEMENTS,17,48,220,24
     CONTROL "Include non-static placements and entity classes (CW)",IDC_CW_NONSTATIC_PLACEMENTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,78,310,14
@@ -142,10 +146,11 @@ BEGIN
     LTEXT "",IDC_DEV_HEADING,17,59,310,12
     LTEXT "",IDC_DEV_DESCRIPTION,17,160,310,60
     COMBOBOX IDC_BO4_CAPTURE_MODE,17,80,310,130,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "Capture raw terrain source",IDC_DEV_TERRAIN_SOURCE,17,80,220,22
     PUSHBUTTON "Run BO4 diagnostic capture",IDC_DEV_BO4_RUN,17,108,220,22
     PUSHBUTTON "Check installed export runtime",IDC_DEV_VERIFY_RUNTIME,17,108,220,22
     PUSHBUTTON "Check saved export",IDC_DEV_VERIFY_EXPORT,17,132,220,22
-    PUSHBUTTON "Terrain source settings",IDC_DEV_TERRAIN_SETTINGS,17,80,220,22
+    PUSHBUTTON "Terrain model settings",IDC_DEV_TERRAIN_SETTINGS,17,80,220,22
 
 END
 
@@ -163,6 +168,7 @@ BEGIN
     LTEXT           "Tip: Global images setting saves space and speeds up export time",IDC_TIP,17,198,312,8
     LTEXT           "Notice: Hitbox export is only available for Black Ops 1/3",IDC_NOTICE,17,210,312,8
     LTEXT           "Model export formats",IDC_TITLE2,8,100,156,16
+    CONTROL         "Reverse LODs: 0 = highest (BO4 / CW)",IDC_REVERSELOD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,174,102,168,11
     CONTROL         "Export .MA (Maya scene)",IDC_EXPORTMA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,122,109,11
     CONTROL         "Export .OBJ",IDC_EXPORTOBJ,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,138,109,11
     CONTROL         "Export .MESH.ASCII (XNALara)",IDC_EXPORTXNA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,154,133,11
@@ -235,18 +241,16 @@ IDD_TERRAINSETTINGS DIALOGEX 0, 0, 350, 230
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD | WS_SYSMENU
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Terrain source export",IDC_TITLE,8,10,180,20
-    CONTROL         "Load 'TerrainGfx' from the game (Cold War and Black Ops 4)",IDC_SHOWXTERRAIN,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,32,250,11
-    CONTROL         "Skip previously exported TerrainGfx captures",IDC_SKIPPREVTERRAIN,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,48,215,11
-    GROUPBOX        "Cold War capture contract",IDC_STATIC,17,66,325,52
-    LTEXT           "Every Cold War terrain export includes the full height/index/control data, shipped tiles, material and image dependencies, decal evidence, bounded research arrays, and a SHA-256 inventory.",IDC_STATIC,28,80,302,34
-    LTEXT           "",IDC_BO4_CAPTURE_LABEL,17,124,325,10
-    COMBOBOX        IDC_BO4_CAPTURE_MODE,17,136,325,130,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "",IDC_BO4_CAPTURE_HINT,17,155,325,32
-    LTEXT           "",IDC_TERRAIN_STATUS,17,191,325,17
-    LTEXT           "",IDC_TERRAIN_NOTICE,17,211,325,18
+    LTEXT "Terrain model export",IDC_TITLE,8,10,220,20
+    CONTROL "Load TerrainGfx assets from the game",IDC_SHOWXTERRAIN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,34,310,12
+    LTEXT "Export area",IDC_STATIC,17,57,310,10
+    COMBOBOX IDC_TERRAIN_AREA,17,71,310,70,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Model format",IDC_STATIC,17,97,310,10
+    COMBOBOX IDC_TERRAIN_FORMATS,17,111,310,70,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Cold War: baked terrain models with _mat_info and _images in every package. Whole maps are split into manageable sections with placement coordinates.",IDC_STATIC,17,140,310,30
+    LTEXT "Output folder (blank uses Greyhound's export folder)",IDC_STATIC,17,174,310,10
+    EDITTEXT IDC_TERRAIN_OUTPUT,17,187,310,14,ES_AUTOHSCROLL
+    LTEXT "Distortion enabled. PNG textures at 1024. No collision or adaptive LODs. Raw capture is in Dev Tools.",IDC_STATIC,17,210,310,18
 END
 
 IDD_PROGRESSDIALOG DIALOGEX 0, 0, 229, 88

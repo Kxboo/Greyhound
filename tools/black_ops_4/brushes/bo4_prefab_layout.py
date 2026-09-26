@@ -16,7 +16,7 @@ def brush_role(decision):
     role=decision.get('role','brushes')
     if role in ('traversal','non_colliding'):
         return role
-    material=decision.get('material','')
+    material=decision.get('material') or ''
     if role=='clips' or 'clip' in material.split('_') or material=='nosight_noclip':
         return 'clips'
     return 'brushes'
@@ -25,6 +25,9 @@ def brush_role(decision):
 def prefab_relative_path(name):
     if Path(name).name!=name:
         raise ValueError('Expected a prefab basename')
+    fallback=re.search(r'_(model_physics|world|inline_models)_tool_fallback_review\.map$',name)
+    if fallback:
+        return Path('review')/'tool fallbacks'/fallback[1]/name
     model=re.search(r'_model_physics_(brushes|clips|traversal|non_colliding)\.map$',name)
     if model:
         return Path('model clips')/model[1]/name
@@ -36,7 +39,7 @@ def prefab_relative_path(name):
         return Path(top)/folder/name
     review=re.search(r'_(triggers|volumes)_review\.map$',name)
     if review:
-        return Path('brushes')/review[1]/name
+        return Path('review')/review[1]/name
     raise ValueError('Unclassified BO4 prefab: '+name)
 
 

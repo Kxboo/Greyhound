@@ -24,6 +24,7 @@ import numpy as np
 from export_cross_map_cw_geometry import decode_brushes, relative_pointer
 from decode_cw_brush_side_filters import decode as decode_sides
 from exact_cw_brush_halfspaces import reconstruct_exact
+from bo3_map_planes import read_map_planes
 
 
 def sha(path):
@@ -83,21 +84,6 @@ def map_brush(equations, offset, material):
         line = ' '.join('( ' + ' '.join(map(number, p)) + ' )' for p in points)
         lines.append(line + f' {material} 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0')
     return '\n'.join(lines + ['}', '}', ''])
-
-
-def read_map_planes(text):
-    out = []
-    for line in text.splitlines():
-        groups = re.findall(r'\(\s*([^()]*)\)', line)
-        if not groups:
-            continue
-        if len(groups) != 3:
-            raise ValueError('Invalid face syntax')
-        a, b, c = [np.array([float(x) for x in g.split()]) for g in groups]
-        n = -np.cross(b-a, c-a)
-        n /= np.linalg.norm(n)
-        out.append([*n, float(n@a)])
-    return out
 
 
 def main():
