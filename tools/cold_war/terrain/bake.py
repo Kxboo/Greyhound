@@ -24,6 +24,7 @@ LIMITATIONS = [
     'Reconstructed dispatch constants, provisional linear-wrap bindless samplers; no exact frame parity claim.',
     'Weather globals omitted, matching the approved blend examples.',
     'Conventional tangent-space normal adaptation. Collision is not included.',
+    'Independent volume decals are not projected onto these terrain materials.',
 ]
 
 
@@ -203,7 +204,8 @@ def main(args):
                                      meshes=package['records'], placement_origin_game_units=package['placement'].tolist()))
                 write(package['folder']/'export_report.json', dict(status='awaiting_model_export', mapping=m['mapping'],
                     placement_origin_game_units=package['placement'].tolist(), tiles=[r['tile'] for r in package['records']],
-                    texture_resolution=res, distortion_enabled=True, collision_included=False, limitations=LIMITATIONS))
+                    texture_resolution=res, distortion_enabled=True, terrain_material_layers_included=True,
+                    volume_decals_included=False, collision_included=False, limitations=LIMITATIONS))
 
             request(0)
             for i, ((gx, gy), x, y) in enumerate(order):
@@ -265,7 +267,8 @@ def main(args):
     savers.shutdown()
     write(work/'models.json',dict(packages=packages))
     write(output/'terrain_export.json',dict(status='awaiting_model_export',map=source['name'],area=args.area,tiles=total,
-        distortion_enabled=True,shader_sha256=SHADER_SHA,texture_resolution=res,collision_included=False,limitations=LIMITATIONS,
+        distortion_enabled=True,shader_sha256=SHADER_SHA,texture_resolution=res,
+        terrain_material_layers_included=True,volume_decals_included=False,collision_included=False,limitations=LIMITATIONS,
         source_textures=[dict(id=e['id'],width=e['width'],height=e['height'],format=e['format'],sha256=hashlib.sha256(Path(e['file']).read_bytes()).hexdigest()) for e in source['textures']],
         distortion_sha256=hashlib.sha256(Path(source['distortion']['file']).read_bytes()).hexdigest(),
         layers_sha256=hashlib.sha256(Path(source['layers']).read_bytes()).hexdigest(),

@@ -185,10 +185,10 @@ void GeneralSettings::ConfigurePage()
         GetDlgItem(Id)->MoveWindow(Rect); GetDlgItem(Id)->ShowWindow(SW_SHOW);
     };
     GetDlgItem(IDC_TITLE)->SetWindowText(Page==0 ? L"In-game asset settings" :
-        Page==1 ? L"Map & Model Export" : L"Dev Tools");
+        Page==1 ? L"Placements" : L"Dev Tools");
     if (Page==0)
     {
-        GetDlgItem(IDC_NOTICE)->SetWindowText(L"Model placement JSON and batch exports: Map & Model Export. Diagnostics: Dev Tools.");
+        GetDlgItem(IDC_NOTICE)->SetWindowText(L"Placement JSON and batch exports: Placements. Diagnostics: Dev Tools.");
         GetDlgItem(IDC_TIP)->SetWindowText(L"Asset group changes require Load Game. Name changes refresh on closing Settings.");
         return;
     }
@@ -404,7 +404,7 @@ void GeneralSettings::UpdateCWExportHint()
     // evidence in every mode, headers-only included. It is not mode-dependent.
     const wchar_t* Hints[]={
         L"Exports CW pool headers for research. Referenced geometry and entity properties are not collected.",
-        L"Enable matching pools, Load Game, then export their cw_pool rows. Spline capture saves controls. Bake meshes with Spline models from JSON in Map & Model Export.",
+        L"Enable matching pools, Load Game, then export their cw_pool rows. Spline capture saves controls. Bake meshes with Spline models from JSON in Placements.",
         L"Exports headers and small samples of referenced memory. Samples are incomplete and may include adjacent data. Results remain research evidence.",
         L"Advanced: bounded reference probes plus selected map sections. Probes may include adjacent data regardless of section choices. Collision topology and ownership remain experimental."
     };

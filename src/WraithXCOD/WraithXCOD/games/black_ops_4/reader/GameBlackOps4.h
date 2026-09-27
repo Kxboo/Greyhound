@@ -27,6 +27,10 @@ public:
     // Loads assets for Black Ops 4
     static bool LoadAssets();
 
+    // Capture one observed BO4 volume decal material, optionally with native placement evidence.
+    static bool ExportDecalSource(uint64_t MaterialPointer, bool IncludePlacements,
+        const std::string& ExportPath, std::string& Error);
+
     static bool ExportDiagnostic(int Mode, const std::string& Directory);
 
     static std::string ExportRadiantBrushes(const std::function<void(uint32_t, const std::string&)>& Progress, bool* Succeeded = nullptr);

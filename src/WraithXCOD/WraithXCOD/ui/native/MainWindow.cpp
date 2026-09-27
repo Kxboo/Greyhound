@@ -1045,7 +1045,7 @@ void MainWindow::OnExportJsonModels()
 
 void MainWindow::OnExportPlacements()
 {
-    RunJob("Model placements", "Reading model placements...", false, ExportJobs::ModelPlacements);
+    RunJob("Placements", "Reading placements...", false, ExportJobs::ModelPlacements);
 }
 
 void MainWindow::OnExportBrushes()

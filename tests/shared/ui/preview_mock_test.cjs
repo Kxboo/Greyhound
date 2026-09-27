@@ -19,10 +19,11 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => document.querySelector('.trow[data-i="0"] .name')?.textContent !== "…");
     await page.evaluate(() => { const original = GreyhoundPreview.Renderer.prototype.load; GreyhoundPreview.Renderer.prototype.load = function(value) { window.lastPreview = value.meta; window.lastRenderer = this; return original.call(this, value); }; });
     const row0 = page.locator('.trow[data-i="0"]'), row1 = page.locator('.trow[data-i="1"]');
-    await row0.click(); await row1.click({ modifiers: ["Control"] });
-    assert.equal(await page.evaluate(() => GreyhoundMock.calls.filter(c => c.cmd === "preview.request").length), 0, "selection must not load");
-    await page.locator("#btnPreview").click();
-    await page.waitForFunction(() => window.lastPreview?.kind === "model");
+    await row0.click();
+    await page.waitForFunction(() => window.lastPreview?.name === rowAt(0).name);
+    await row1.click({ modifiers: ["Control"] });
+    await page.waitForFunction(() => window.lastPreview?.name === rowAt(1).name);
+    assert.equal(await page.evaluate(() => GreyhoundMock.calls.filter(c => c.cmd === "preview.request").length), 2, "each selection loads automatically");
     assert.equal(await page.evaluate(() => S.sel.size), 2, "preview preserves export selection");
     assert.equal(await page.evaluate(() => GreyhoundMock.calls.findLast(c => c.cmd === "preview.request").args.index), 1);
     assert.deepEqual(await page.evaluate(() => lastPreview.meshes.map(m => m.texture)), [0,1,-1]);
@@ -39,11 +40,16 @@ const server = http.createServer((req, res) => {
     await row0.click({ button: "right" }); await page.locator("#menuPreview").click();
     assert.equal(await page.evaluate(() => S.sel.size), 2);
     await page.waitForFunction(() => GreyhoundMock.calls.findLast(c => c.cmd === "preview.request").args.index === 0);
-    // A newer focus invalidates only the pending request, not a completed preview.
-    await row1.click();
-    const previous = await page.evaluate(() => lastPreview.requestId);
-    await page.waitForTimeout(350);
-    assert.equal(await page.evaluate(() => lastPreview.requestId), previous);
+    // Rapid focus changes must load the latest selection instead of a stale model.
+    await page.evaluate(() => { select(0, false, false, false); select(1, false, false, false); });
+    await page.waitForFunction(() => lastPreview.requestId === GreyhoundMock.calls.findLast(c => c.cmd === "preview.request").args.requestId);
+    assert.equal(await page.evaluate(() => lastPreview.name), await page.evaluate(() => rowAt(1).name));
+    // Keyboard navigation also loads a row whose virtual page is not cached yet.
+    await page.locator("#tbody").press("End");
+    await page.waitForFunction(() => rowAt(S.cursor) && lastPreview.name === rowAt(S.cursor).name);
+    assert.equal(await page.evaluate(() => S.cursor), await page.evaluate(() => S.view - 1));
+    await page.locator("#tbody").press("Home");
+    await page.waitForFunction(() => lastPreview.name === rowAt(0).name);
     await page.locator('#layoutBar [data-layout="viewer"]').click();
     assert.equal(await page.locator("#viewerSearchSlot #search").count(), 1);
     await page.setViewportSize({ width: 1100, height: 720 });
@@ -61,14 +67,13 @@ const server = http.createServer((req, res) => {
     assert.equal(await popup.evaluate(() => GreyhoundMock.calls.filter(c => c.cmd === "assets.query").length), 0);
     await popup.setViewportSize({ width: 740, height: 540 }); await popup.waitForTimeout(80);
     assert((await popup.locator("#previewCanvas").boundingBox()).width > 680);
-    await row0.click(); await page.locator("#btnPreview").click();
-    const popoutAsset = await page.evaluate(() => rowAt(0).name);
-    await popup.waitForFunction(name => document.querySelector("#previewName").textContent === name, popoutAsset);
     await row1.click();
+    const popoutAsset = await page.evaluate(() => rowAt(1).name);
+    await popup.waitForFunction(name => document.querySelector("#previewName").textContent === name, popoutAsset);
     await popup.close(); await page.waitForFunction(() => document.querySelector("#previewDetached").classList.contains("hidden"));
     await page.waitForFunction(name => document.querySelector("#previewName").textContent === name, popoutAsset);
     await page.locator('#filters [data-type="image"]').click();
-    await page.waitForFunction(() => rowAt(0)?.type === "image"); await row0.click(); await page.locator("#btnPreview").click();
+    await page.waitForFunction(() => rowAt(0)?.type === "image"); await row0.click();
     await page.waitForFunction(() => window.lastPreview?.kind === "image");
     assert(await page.locator("#previewStage").evaluate(el => el.classList.contains("image")));
     await page.waitForTimeout(60);
@@ -83,13 +88,13 @@ const server = http.createServer((req, res) => {
       assert.equal(await page.evaluate(() => lastRenderer.gl.getError()), 0, "context restoration reloads the retained asset");
     }
     // Unload overtakes a newly requested decode.
-    await row1.click(); await page.locator("#btnPreview").click(); await page.locator("#btnClear").click(); await page.waitForTimeout(350);
+    await row1.click(); await page.locator("#btnClear").click(); await page.waitForTimeout(350);
     assert.equal(await page.locator("#previewName").textContent(), "Asset preview");
-    assert.equal(await page.locator("#previewMessage span").textContent(), "Focus a model or image, then choose Preview.");
+    assert.equal(await page.locator("#previewMessage span").textContent(), "Select a model or image to preview it.");
     await page.reload(); await page.waitForFunction(() => !!S.settings.previewlayout);
     assert.equal(await page.locator("#libraryWorkspace").getAttribute("data-layout"), "split");
     assert.equal(await page.evaluate(() => Number(S.settings.previewdivider)), share);
     assert.deepEqual(errors, [], "No browser exceptions");
-    console.log("Preview UI mock: passed focus/multiselect, explicit loading, duplicate slots/missing textures, stale requests, layout/divider persistence, resizing, popout-close docking, image controls and unload.");
+    console.log("Preview UI mock: passed automatic loading on click/keyboard/multiselect, duplicate slots/missing textures, stale requests, layout/divider persistence, resizing, popout-close docking, image controls and unload.");
   } finally { await browser.close(); server.close(); }
 })().catch(e => { console.error(e); server.close(); process.exitCode = 1; });

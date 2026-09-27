@@ -38,6 +38,14 @@ void XPAKCache::LoadPackageCache(const std::string& BasePath)
     // Call Base function first!
     CoDPackageCache::LoadPackageCache(BasePath);
 
+    // A failed CASC/directory open leaves no filesystem. Placement capture can
+    // still use resident data; streamed exports will report missing packages.
+    if (!FileSystem)
+    {
+        this->SetLoadedState();
+        return;
+    }
+
     // Grab files
     FileSystem->EnumerateFiles("*.xpak", [this](const std::string& name, const size_t size)
     {

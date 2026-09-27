@@ -718,6 +718,9 @@
     <ClInclude Include="games\black_ops_4\capture\BO4CaptureModes.h">
       <Filter>games\black_ops_4\capture</Filter>
     </ClInclude>
+    <ClInclude Include="games\black_ops_4\capture\BO4DecalCapture.h">
+      <Filter>games\black_ops_4\capture</Filter>
+    </ClInclude>
     <ClInclude Include="games\black_ops_4\brushes\BO4CollisionHandlerProbe.h">
       <Filter>games\black_ops_4\brushes</Filter>
     </ClInclude>

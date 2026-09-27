@@ -15,7 +15,7 @@
       bounded(offset, size, "offset"); bounded(count, MAX_BYTES, "count");
       if (offset + count * stride > size) throw Error("Preview buffer range exceeds its size");
     };
-    if (!["model", "image"].includes(meta.kind)) throw Error("Unsupported preview type");
+    if (!["model", "image", "terrain"].includes(meta.kind)) throw Error("Unsupported preview type");
     const textures = meta.textures || [], meshes = meta.meshes || [];
     if (textures.length > 4096 || meshes.length > 65536) throw Error("Preview has too many parts");
     textures.forEach(t => {
@@ -34,7 +34,7 @@
         if (!Number.isFinite(vertices[i + j])) throw Error("Preview contains non-finite geometry");
       }
     });
-    if (meta.kind === "model" && !meshes.some(m => m.indexCount)) throw Error("This model has no usable geometry");
+    if (meta.kind !== "image" && !meshes.some(m => m.indexCount)) throw Error("This preview has no usable geometry");
     if (meta.kind === "image" && !textures.length) throw Error("This image could not be decoded");
     return { meta, buffer };
   }
@@ -100,12 +100,12 @@
         uniform mat4 matrix; uniform bool imageMode; uniform vec2 imageScale; uniform vec2 imagePan; out vec2 texUV; out vec4 tint; out vec3 n;
         void main(){ gl_Position=imageMode?vec4(position.xy*imageScale+imagePan,0.,1.):matrix*vec4(position,1.); texUV=uv; tint=color; n=normal; }`);
       const fs = shader(gl.FRAGMENT_SHADER, `#version 300 es
-        precision highp float; in vec2 texUV; in vec4 tint; in vec3 n; uniform sampler2D diffuse; uniform bool textured; uniform bool imageMode; out vec4 frag;
-        void main(){ vec4 c=(textured?texture(diffuse,texUV):vec4(.68,.69,.71,1.)); c.rgb*=tint.rgb; if(c.a<.015)discard;
-        float light=imageMode?1.:.48+.52*max(0.,dot(normalize(n),normalize(vec3(.4,-.55,.8)))); frag=vec4(c.rgb*light,c.a); }`);
+        precision highp float; in vec2 texUV; in vec4 tint; in vec3 n; uniform sampler2D diffuse; uniform bool textured; uniform bool imageMode; uniform bool terrainMode; out vec4 frag;
+        void main(){ vec4 c=(textured?texture(diffuse,texUV):(terrainMode?vec4(1.):vec4(.68,.69,.71,1.))); c.rgb*=tint.rgb; if(c.a<.015)discard;
+        float light=(imageMode||terrainMode)?1.:.48+.52*max(0.,dot(normalize(n),normalize(vec3(.4,-.55,.8)))); frag=vec4(c.rgb*light,c.a); }`);
       this.program = gl.createProgram(); gl.attachShader(this.program, vs); gl.attachShader(this.program, fs); gl.linkProgram(this.program); gl.deleteShader(vs); gl.deleteShader(fs);
       if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(this.program));
-      this.uniforms = Object.fromEntries(["matrix", "imageMode", "imageScale", "imagePan", "diffuse", "textured"].map(n => [n, gl.getUniformLocation(this.program, n)]));
+      this.uniforms = Object.fromEntries(["matrix", "imageMode", "terrainMode", "imageScale", "imagePan", "diffuse", "textured"].map(n => [n, gl.getUniformLocation(this.program, n)]));
       };
       this.initialize();
       canvas.addEventListener("contextmenu", e => e.preventDefault());
@@ -157,7 +157,7 @@
         const texture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, texture); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, t.width, t.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(buffer, t.offset, t.width * t.height * 4));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, meta.kind === "image" ? gl.CLAMP_TO_EDGE : gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, meta.kind === "image" ? gl.CLAMP_TO_EDGE : gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, meta.kind === "image" || meta.kind === "terrain" ? gl.CLAMP_TO_EDGE : gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, meta.kind === "image" || meta.kind === "terrain" ? gl.CLAMP_TO_EDGE : gl.REPEAT);
         return texture;
       });
       this.min = [Infinity, Infinity, Infinity]; this.max = [-Infinity, -Infinity, -Infinity];
@@ -189,7 +189,7 @@
       if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
       gl.viewport(0, 0, w, h); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); if (!this.parts.length) return;
       gl.useProgram(this.program); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.CULL_FACE);
-      gl.uniform1i(this.uniforms.diffuse, 0); gl.uniform1i(this.uniforms.imageMode, this.kind === "image");
+      gl.uniform1i(this.uniforms.diffuse, 0); gl.uniform1i(this.uniforms.imageMode, this.kind === "image"); gl.uniform1i(this.uniforms.terrainMode, this.kind === "terrain");
       if (this.kind === "image") {
         gl.disable(gl.DEPTH_TEST); const scale = Math.min(c.clientWidth / this.imageWidth, c.clientHeight / this.imageHeight) * .92 * this.imageZoom;
         gl.uniform2f(this.uniforms.imageScale, this.imageWidth * scale / c.clientWidth, this.imageHeight * scale / c.clientHeight);

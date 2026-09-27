@@ -3,6 +3,8 @@
 
 // The class we are implementing
 #include "games/black_ops_4/reader/GameBlackOps4.h"
+#include "games/black_ops_4/capture/BO4DecalCapture.h"
+#include <fstream>
 
 // We need the CoDAssets class
 #include "assets/CoDAssets.h"
@@ -21,6 +23,7 @@
 #include "shared/BO4NameDatabase.h"
 #include <stdexcept>
 #include "HalfFloats.h"
+#include "Hashing.h"
 #include "BinaryWriter.h"
 #include "Image.h"
 #include "json.hpp"
@@ -1198,6 +1201,416 @@ uint64_t BO4CalculateHash(const std::string& Name)
     return Result & 0xFFFFFFFFFFFFFFF;
 }
 
+namespace
+{
+    bool BO4ReadExact(uint64_t Pointer, size_t Size, std::vector<uint8_t>& Out)
+    {
+        if (!CoDAssets::GameInstance || Pointer < 0x10000 ||
+            Pointer >= 0x0000800000000000ull || Size > 0x0000800000000000ull - Pointer)
+            return false;
+        uintptr_t Got = 0;
+        std::unique_ptr<int8_t[]> Raw(CoDAssets::GameInstance->Read(Pointer, Size, Got));
+        if (!Raw || Got != Size) return false;
+        Out.assign(reinterpret_cast<uint8_t*>(Raw.get()), reinterpret_cast<uint8_t*>(Raw.get()) + Size);
+        return true;
+    }
+
+    bool BO4ReadDecalRecords(std::vector<uint8_t>& World, std::vector<uint8_t>& Records,
+        uint64_t& WorldPtr, std::string& Error)
+    {
+        const auto Fail = [&](const char* Why) { Error = Why; return false; };
+        if (CoDAssets::GameID != SupportedGames::BlackOps4 || !BO4DBAssetPoolsOffset)
+            return Fail("BO4 gfxworld pool is unavailable");
+        std::vector<uint8_t> Descriptor, Pool;
+        const auto DescriptorPtr = BO4DBAssetPoolsOffset + 14 * sizeof(BO4XAssetPoolData);
+        if (!BO4ReadExact(DescriptorPtr, sizeof(BO4XAssetPoolData), Descriptor))
+            return Fail("Cannot read BO4 gfxworld pool descriptor");
+        BO4XAssetPoolData G;
+        std::memcpy(&G, Descriptor.data(), sizeof G);
+        if (G.AssetSize != BO4DecalCapture::WorldBytes || !G.PoolSize ||
+            G.PoolSize > BO4DecalCapture::MaxWorldSlots || G.AssetsLoaded != 1)
+            return Fail("Unsupported BO4 gfxworld layout or occupancy");
+        if (!BO4ReadExact(G.PoolPtr, size_t(G.AssetSize) * G.PoolSize, Pool))
+            return Fail("Cannot read complete BO4 gfxworld pool");
+        Error = BO4DecalCapture::SelectWorld(G.PoolPtr, G.AssetSize, G.PoolSize,
+            G.AssetsLoaded, G.PoolFreeHeadPtr, Pool.data(), Pool.size(), WorldPtr);
+        if (!Error.empty()) return false;
+        World.assign(Pool.begin() + size_t(WorldPtr - G.PoolPtr),
+            Pool.begin() + size_t(WorldPtr - G.PoolPtr) + G.AssetSize);
+        uint32_t Count = 0; uint64_t Array = 0;
+        std::memcpy(&Count, World.data() + 0x590, 4);
+        std::memcpy(&Array, World.data() + 0x598, 8);
+        if (Count > 65536) return Fail("BO4 volume decal count exceeds capture limit");
+        Records.clear();
+        if (Count && !BO4ReadExact(Array, size_t(Count) * 216, Records))
+            return Fail("Cannot read complete BO4 volume decal records");
+        // Recheck ownership and the decal pointers; the unrelated frame counter changes each frame.
+        std::vector<uint8_t> DescriptorAfter, WorldFieldsAfter;
+        if (!BO4ReadExact(DescriptorPtr, Descriptor.size(), DescriptorAfter) || DescriptorAfter != Descriptor ||
+            !BO4ReadExact(WorldPtr + 0x590, 32, WorldFieldsAfter) ||
+            std::memcmp(World.data() + 0x590, WorldFieldsAfter.data(), 32) != 0)
+            return Fail("BO4 volume decal pool changed during capture; retry after loading finishes");
+        return true;
+    }
+
+    template<typename T> T BO4ReadDecalValue(uint64_t Pointer)
+    {
+        std::vector<uint8_t> Bytes;
+        if (!BO4ReadExact(Pointer, sizeof(T), Bytes))
+            throw std::runtime_error("Cannot read BO4 decal dependency at " + Strings::Format("0x%llX", Pointer));
+        T Value;
+        std::memcpy(&Value, Bytes.data(), sizeof Value);
+        return Value;
+    }
+
+    bool BO4SupportedDecal(uint64_t Material, std::map<uint64_t, bool>& ShaderCache)
+    {
+        try
+        {
+            const auto Techset = BO4ReadDecalValue<uint64_t>(Material + BO4MaterialTechsetOffset);
+            if (!Techset) return false;
+            const auto Technique = BO4ReadDecalValue<uint64_t>(Techset + 0x40);
+            if (!Technique) return false;
+            const auto Pass = BO4ReadDecalValue<uint64_t>(Technique + 0x38);
+            if (!Pass) return false;
+            const auto Shader = BO4ReadDecalValue<uint64_t>(Pass + 0x18);
+            if (!Shader) return false;
+            const auto Blob = BO4ReadDecalValue<uint64_t>(Shader + 0x18);
+            const auto Size = BO4ReadDecalValue<uint32_t>(Shader + 0x20);
+            if (!Blob || Size <= 32 || Size > BO4ShaderCeiling) return false;
+            const auto Cached = ShaderCache.find(Blob);
+            if (Cached != ShaderCache.end()) return Cached->second;
+            std::vector<uint8_t> Bytes;
+            if (!BO4ReadExact(Blob, Size, Bytes) || std::memcmp(Bytes.data(), "DXBC", 4)) return false;
+            const auto Hash = Hashing::HashSHA1String(std::string(reinterpret_cast<const char*>(Bytes.data()), Bytes.size()));
+            return ShaderCache[Blob] = Hash.substr(0, 16) == "6e0a762e671e6047";
+        }
+        catch (const std::exception&) { return false; }
+    }
+
+    nlohmann::json BO4CaptureVolumeDecals(const std::string& ExportPath,
+        uint64_t MaterialFilter, bool IncludePlacements)
+    {
+        const auto Hex = [](uint64_t Value) { return Strings::Format("0x%llX", Value); };
+        const auto SampleAt = [](uint64_t Pointer, std::string&) {
+            std::vector<uint8_t> Bytes;
+            return BO4ReadExact(Pointer, 16, Bytes);
+        };
+        nlohmann::json Decals = {{"status", "not_found"}};
+        constexpr uint32_t GfxWorldPool = 14, GfxWorldBytes = 6832;
+        constexpr uint64_t DecalCountOffset = 0x590, DecalArrayOffset = 0x598,
+                           DecalAuxOffset = 0x5A0, DecalAtlasOffset = 0x5A8;
+        constexpr uint32_t DecalBytes = 216, DecalMaterialOffset = 0xB8;
+        const auto WriteBytes = [&](const std::string& Name, const uint8_t* Data, size_t Size) {
+            const auto Path = FileSystems::CombinePath(ExportPath, Name);
+            std::ofstream Writer(Path, std::ios::binary | std::ios::trunc);
+            Writer.write(reinterpret_cast<const char*>(Data), static_cast<std::streamsize>(Size));
+            Writer.close();
+            if (!Writer)
+                throw std::runtime_error("Failed to save BO4 volume decal evidence: " + Path);
+        };
+        const auto ReadBytes = BO4ReadExact;
+        // Exports an image by pointer. Raw keeps every channel as stored: the
+        // shaders read normal maps' blue channel, which the normal patch rebuilds.
+        std::map<std::string, std::pair<uint32_t, uint32_t>> DecalImagesWritten;
+        const auto ExportImage = [&](uint64_t ImagePtr, bool Raw) -> nlohmann::json {
+            nlohmann::json Row = {{"image", Hex(ImagePtr)}};
+            std::string Probe;
+            if (ImagePtr == 0 || !SampleAt(ImagePtr, Probe))
+            {
+                Row["status"] = "unreadable";
+                return Row;
+            }
+            const auto Image = BO4ReadDecalValue<BO4GfxImage>(ImagePtr);
+            const uint64_t Hash = Image.NamePtr & 0xFFFFFFFFFFFFFFF;
+            const auto Known = GameBlackOps4::AssetNameCache.NameDatabase.find(Hash);
+            const std::string Name = Known != GameBlackOps4::AssetNameCache.NameDatabase.end()
+                ? Known->second : "ximage_" + Hex(Hash);
+            Row["name"] = Name;
+            Row["format"] = Image.ImageFormat;
+            Row["resident_width"] = Image.LoadedMipWidth;
+            Row["resident_height"] = Image.LoadedMipHeight;
+            const std::string File = Strings::Format("ximage_%llx", Hash) + (Raw ? "_raw.png" : ".png");
+            if (DecalImagesWritten.count(File) == 0)
+            {
+                auto Pixels = GameBlackOps4::LoadXImage(XImage_t(
+                    ImageUsageType::DiffuseMap, 0, ImagePtr, Name));
+                uint32_t HeaderSize = 0, Width = 0, Height = 0;
+                // LoadXImage can choose a larger packaged mip than the resident image.
+                // The DDS payload is authoritative for the PNG's dimensions.
+                if (Pixels != nullptr && Pixels->DataBuffer != nullptr && Pixels->DataSize >= 128 &&
+                    std::memcmp(Pixels->DataBuffer, "DDS ", 4) == 0)
+                {
+                    std::memcpy(&HeaderSize, Pixels->DataBuffer + 4, 4);
+                    std::memcpy(&Height, Pixels->DataBuffer + 12, 4);
+                    std::memcpy(&Width, Pixels->DataBuffer + 16, 4);
+                }
+                if (HeaderSize == 124 && Width && Height &&
+                    Image::ConvertImageMemory(Pixels->DataBuffer, Pixels->DataSize,
+                        ImageFormat::DDS_WithHeader, FileSystems::CombinePath(ExportPath, File),
+                        ImageFormat::Standard_PNG, ImagePatch::NoPatch))
+                {
+                    DecalImagesWritten.emplace(File, std::make_pair(Width, Height));
+                }
+                else
+                    Row["status"] = "not_in_package";
+            }
+            const auto Written = DecalImagesWritten.find(File);
+            if (Written != DecalImagesWritten.end())
+            {
+                Row["file"] = File;
+                Row["width"] = Written->second.first;
+                Row["height"] = Written->second.second;
+            }
+            return Row;
+        };
+
+        std::vector<uint8_t> World, CapturedRecords;
+        uint64_t WorldPtr = 0;
+        std::string WorldError;
+        if (!BO4ReadDecalRecords(World, CapturedRecords, WorldPtr, WorldError))
+        {
+            Decals["status"] = "unreadable";
+            Decals["error"] = WorldError;
+            return Decals;
+        }
+        if (WorldPtr != 0)
+        {
+            uint32_t Count = 0;
+            uint64_t Array = 0, Aux = 0, Atlas = 0;
+            std::memcpy(&Count, World.data() + DecalCountOffset, 4);
+            std::memcpy(&Array, World.data() + DecalArrayOffset, 8);
+            std::memcpy(&Aux, World.data() + DecalAuxOffset, 8);
+            std::memcpy(&Atlas, World.data() + DecalAtlasOffset, 8);
+            Decals = {{"gfxworld", Hex(WorldPtr)}, {"count", Count}, {"array", Hex(Array)},
+                      {"record_bytes", DecalBytes}, {"aux", Hex(Aux)}, {"atlas_image", Hex(Atlas)}};
+            const auto& Records = CapturedRecords;
+            if (Count == 0)
+                Decals["status"] = Count == 0 ? "none" : "unreadable";
+            else
+            {
+                std::map<uint64_t, uint32_t> Uses;
+                nlohmann::json SelectedIndices = nlohmann::json::array();
+                for (uint32_t i = 0; i < Count; i++)
+                {
+                    uint64_t M = 0;
+                    std::memcpy(&M, Records.data() + size_t(i) * DecalBytes + DecalMaterialOffset, 8);
+                    if (MaterialFilter == 0 || M == MaterialFilter)
+                    {
+                        Uses[M]++;
+                        SelectedIndices.push_back(i);
+                    }
+                }
+                if (MaterialFilter != 0 && Uses.empty())
+                    throw std::runtime_error("Selected material is no longer referenced by BO4 volume decals; reload the game assets");
+                if (MaterialFilter != 0)
+                {
+                    Decals["selected_material"] = Hex(MaterialFilter);
+                    Decals["selected_source_indices"] = SelectedIndices;
+                    Decals["records_scope"] = IncludePlacements ? "full_world" : "omitted";
+                }
+                if (IncludePlacements)
+                {
+                    WriteBytes("volume_decals.bin", Records.data(), Records.size());
+                    Decals["file"] = "volume_decals.bin";
+                    std::vector<uint8_t> AuxBytes;
+                    if (Aux != 0 && ReadBytes(Aux, size_t(Count) * 8, AuxBytes))
+                    {
+                        WriteBytes("volume_decal_aux.bin", AuxBytes.data(), AuxBytes.size());
+                        Decals["aux_file"] = "volume_decal_aux.bin";
+                    }
+                    Decals["atlas"] = ExportImage(Atlas, true);
+                }
+
+                std::set<uint64_t> ShadersWritten;
+                nlohmann::json Materials = nlohmann::json::array();
+                for (const auto& Use : Uses)
+                {
+                    const uint64_t MaterialPtr = Use.first;
+                    nlohmann::json Mat = {{"material", Hex(MaterialPtr)}, {"decals", Use.second}};
+                    std::string Probe;
+                    if (MaterialPtr == 0 || !SampleAt(MaterialPtr, Probe))
+                    {
+                        Mat["status"] = "unreadable";
+                        Materials.push_back(Mat);
+                        continue;
+                    }
+                    const auto Material = BO4ReadDecalValue<BO4XMaterial>(MaterialPtr);
+                    if (MaterialFilter != 0 && (Material.ImageCount > BO4MaterialImageCeiling ||
+                        (Material.ImageCount && !Material.ImageTablePtr)))
+                        throw std::runtime_error("Invalid BO4 decal image dependency table");
+                    const uint64_t Hash = Material.NamePtr & 0xFFFFFFFFFFFFFFF;
+                    const auto Known = GameBlackOps4::AssetNameCache.NameDatabase.find(Hash);
+                    Mat["hash"] = Hex(Hash);
+                    if (Known != GameBlackOps4::AssetNameCache.NameDatabase.end())
+                        Mat["name"] = Known->second;
+
+                    const auto CBytes = BO4ReadDecalValue<uint32_t>(MaterialPtr + BO4MaterialCBufferSizeOffset);
+                    const auto CPtr = BO4ReadDecalValue<uint64_t>(MaterialPtr + BO4MaterialCBufferPointerOffset);
+                    std::vector<uint8_t> Constants;
+                    if (CPtr != 0 && CBytes > 0 && CBytes <= BO4MaterialCBufferCeiling && ReadBytes(CPtr, CBytes, Constants))
+                    {
+                        const auto Name = Strings::Format("decal_material_%llX_cbuffer.bin", Hash);
+                        WriteBytes(Name, Constants.data(), Constants.size());
+                        Mat["cbuffer"] = Name;
+                    }
+
+                    nlohmann::json Images = nlohmann::json::array();
+                    const uint64_t Shown = Material.ImageCount < BO4MaterialImageCeiling ? Material.ImageCount : BO4MaterialImageCeiling;
+                    for (uint64_t I = 0; Material.ImageTablePtr != 0 && I < Shown; I++)
+                    {
+                        const auto Entry = BO4ReadDecalValue<BO4XMaterialImage>(
+                            Material.ImageTablePtr + I * sizeof(BO4XMaterialImage));
+                        auto Row = ExportImage(Entry.ImagePtr, true);
+                        Row["semantic"] = Hex(Entry.SemanticHash);
+                        // The whole 32-byte texture def: uv scale floats at +0x0C.
+                        std::vector<uint8_t> Def;
+                        if (ReadBytes(Material.ImageTablePtr + I * sizeof(BO4XMaterialImage), sizeof(BO4XMaterialImage), Def))
+                        {
+                            std::string Hexed;
+                            for (auto B : Def)
+                                Hexed += Strings::Format("%02x", B);
+                            Row["texture_def"] = Hexed;
+                        }
+                        Images.push_back(Row);
+                    }
+                    Mat["images"] = Images;
+                    // Material +0x40: {u32 sampler name hash, u32 engine sampler state},
+                    // count at +0x131.  The pass arguments bind these hashes to s-slots.
+                    const auto SamplerTable = BO4ReadDecalValue<uint64_t>(MaterialPtr + 0x40);
+                    const auto SamplerCount = BO4ReadDecalValue<uint8_t>(MaterialPtr + 0x131);
+                    std::vector<uint8_t> Samplers;
+                    if (SamplerTable != 0 && SamplerCount > 0 && SamplerCount <= 32 &&
+                        ReadBytes(SamplerTable, size_t(SamplerCount) * 8, Samplers))
+                    {
+                        nlohmann::json Rows = nlohmann::json::array();
+                        for (uint32_t S = 0; S < SamplerCount; S++)
+                        {
+                            uint32_t SamplerHash = 0, SamplerState = 0;
+                            std::memcpy(&SamplerHash, Samplers.data() + S * 8, 4);
+                            std::memcpy(&SamplerState, Samplers.data() + S * 8 + 4, 4);
+                            Rows.push_back({{"hash", Hex(SamplerHash)}, {"state", Hex(SamplerState)}});
+                        }
+                        Mat["samplers"] = Rows;
+                    }
+
+                    // Technique +0x40 is the G-buffer decal pass on every decal
+                    // techset seen; its argument table is 12-byte records
+                    // {u8 1, u8 kind (1 texture, 2 sampler, 3 constant), u8 slot, u8,
+                    //  u32 count, u32 hash}.
+                    const auto Techset = BO4ReadDecalValue<uint64_t>(MaterialPtr + BO4MaterialTechsetOffset);
+                    const auto Technique = Techset ? BO4ReadDecalValue<uint64_t>(Techset + 0x40) : 0;
+                    if (Technique != 0 && SampleAt(Technique, Probe))
+                    {
+                        Mat["techset"] = Hex(Techset);
+                        const auto ArgTable = BO4ReadDecalValue<uint64_t>(Technique + 0x28);
+                        const auto Pass = BO4ReadDecalValue<uint64_t>(Technique + 0x38);
+                        nlohmann::json Args = nlohmann::json::array();
+                        std::vector<uint8_t> ArgBytes;
+                        if (ArgTable != 0 && ReadBytes(ArgTable, 32 * 12, ArgBytes))
+                        {
+                            for (uint32_t A = 0; A < 32; A++)
+                            {
+                                const uint8_t* R = ArgBytes.data() + A * 12;
+                                if (R[0] != 1 || R[1] < 1 || R[1] > 3)
+                                    break;
+                                uint32_t ArgCount = 0, ArgHash = 0;
+                                std::memcpy(&ArgCount, R + 4, 4);
+                                std::memcpy(&ArgHash, R + 8, 4);
+                                Args.push_back({{"kind", R[1] == 1 ? "texture" : R[1] == 2 ? "sampler" : "constant"},
+                                    {"slot", R[2]}, {"count", ArgCount}, {"hash", Hex(ArgHash)}});
+                            }
+                        }
+                        Mat["pass_arguments"] = Args;
+                        // Pass +0 is the render state: one engine word per render target,
+                        // then (+0x38) the ID3D11BlendState built from them.  Word layout,
+                        // matched against every blend state live on zm_towers: src 1-4,
+                        // op 5-7 (0 = blending off), dst 8-11, srcA 12-15, opA 16-18,
+                        // dstA 19-22, write mask 23-26, all in D3D11 enum values.  The
+                        // runtime's own packed copy of the descriptor sits at +0xA8.
+                        const auto State = Pass ? BO4ReadDecalValue<uint64_t>(Pass) : 0;
+                        std::vector<uint8_t> StateBytes, Packed;
+                        if (State != 0 && ReadBytes(State, 0x40, StateBytes))
+                        {
+                            nlohmann::json Words = nlohmann::json::array();
+                            for (uint32_t Rt = 0; Rt < 4; Rt++)
+                            {
+                                uint32_t Word = 0;
+                                std::memcpy(&Word, StateBytes.data() + Rt * 4, 4);
+                                Words.push_back(Strings::Format("0x%08X", Word));
+                            }
+                            Mat["blend_words"] = Words;
+                            const auto BlendObject = BO4ReadDecalValue<uint64_t>(State + 0x38);
+                            const auto PackedPtr = BlendObject ? BO4ReadDecalValue<uint64_t>(BlendObject + 0xA8) : 0;
+                            if (PackedPtr != 0 && ReadBytes(PackedPtr, 4 + 8 * 8, Packed))
+                            {
+                                std::string Hexed;
+                                for (auto B : Packed)
+                                    Hexed += Strings::Format("%02x", B);
+                                Mat["d3d11_blend_packed"] = Hexed;
+                            }
+                        }
+                        const auto ShaderObject = Pass ? BO4ReadDecalValue<uint64_t>(Pass + 0x18) : 0;
+                        const auto Blob = ShaderObject ? BO4ReadDecalValue<uint64_t>(ShaderObject + 0x18) : 0;
+                        const auto BlobBytes = ShaderObject ? BO4ReadDecalValue<uint32_t>(ShaderObject + 0x20) : 0;
+                        std::vector<uint8_t> Shader;
+                        if (Blob != 0 && BlobBytes > 32 && BlobBytes <= BO4ShaderCeiling && ReadBytes(Blob, BlobBytes, Shader) &&
+                            std::memcmp(Shader.data(), "DXBC", 4) == 0)
+                        {
+                            const auto Name = Strings::Format("decal_ps_%llX.dxbc", Blob);
+                            if (ShadersWritten.insert(Blob).second)
+                                WriteBytes(Name, Shader.data(), Shader.size());
+                            Mat["pixel_shader"] = Name;
+                        }
+                    }
+                    Materials.push_back(Mat);
+                }
+                Decals["materials"] = Materials;
+                Decals["status"] = "captured";
+            }
+        }
+        return Decals;
+    }
+}
+
+bool GameBlackOps4::ExportDecalSource(uint64_t MaterialPointer, bool IncludePlacements,
+    const std::string& ExportPath, std::string& Error)
+{
+    Error.clear();
+    if (CoDAssets::GameID != SupportedGames::BlackOps4 || !CoDAssets::GameInstance || !MaterialPointer)
+    {
+        Error = "Load a BO4 map and select an observed volume decal material";
+        return false;
+    }
+    try
+    {
+        auto Decals = BO4CaptureVolumeDecals(ExportPath, MaterialPointer, IncludePlacements);
+        if (Decals.value("status", "") != "captured")
+            throw std::runtime_error(Decals.value("error", "No BO4 volume decal instances are available"));
+        const auto& Materials = Decals.at("materials");
+        if (Materials.size() != 1 || !Materials[0].contains("pixel_shader") || !Materials[0].contains("cbuffer"))
+            throw std::runtime_error("Selected BO4 decal is missing its shader or material constants");
+        for (const auto& Image : Materials[0].at("images"))
+            if (!Image.contains("file"))
+                throw std::runtime_error("Selected BO4 decal has an unavailable image dependency");
+        if (IncludePlacements && !Decals.at("atlas").contains("file"))
+            throw std::runtime_error("BO4 decal placements require the captured reveal atlas");
+        const nlohmann::json Document = {{"schema", "greyhound-bo4-decal-source-v1"},
+            {"material_pointer", Strings::Format("0x%llX", MaterialPointer)},
+            {"include_placements", IncludePlacements}, {"volume_decals", Decals}};
+        std::ofstream Writer(FileSystems::CombinePath(ExportPath, "decal_capture.json"), std::ios::binary | std::ios::trunc);
+        Writer << Document.dump(2);
+        Writer.close();
+        if (!Writer) throw std::runtime_error("Failed to save BO4 decal source manifest");
+        return true;
+    }
+    catch (const std::exception& Exception)
+    {
+        Error = Exception.what();
+        return false;
+    }
+}
+
 bool GameBlackOps4::LoadAssets()
 {
     // Prepare to load game assets, into the AssetPool
@@ -1206,6 +1619,7 @@ bool GameBlackOps4::LoadAssets()
     bool NeedsImages = (SettingsManager::GetSetting("showximage", "false") == "true");
     bool NeedsRawFiles = (SettingsManager::GetSetting("showxrawfiles", "false") == "true");
     bool NeedsMaterials = (SettingsManager::GetSetting("showxmtl", "false") == "true");
+    bool NeedsDecals = (SettingsManager::GetSetting("showxdecals", "false") == "true");
     bool NeedsTerrains = (SettingsManager::GetSetting("showxterrain", "true") == "true");
     bool NeedsExtInfo = (SettingsManager::GetSetting("needsextinfo", "true") == "true");
 
@@ -1419,11 +1833,20 @@ bool GameBlackOps4::LoadAssets()
         });
     }
 
-    if (NeedsMaterials)
+    if (NeedsMaterials || NeedsDecals)
     {
-        // Parse the XModel pool
-        CoDXPoolParser<uint64_t, BO4XMaterial>((CoDAssets::GameOffsetInfos[3]), CoDAssets::GamePoolSizes[3], [Filters](BO4XMaterial& Asset, uint64_t& AssetOffset)
+        std::map<uint64_t, uint32_t> DecalUses;
+        std::vector<uint8_t> World, Records;
+        uint64_t WorldPointer = 0;
+        std::string DecalError;
+        if (BO4ReadDecalRecords(World, Records, WorldPointer, DecalError))
+            DecalUses = BO4DecalCapture::MaterialUses(Records);
+        std::map<uint64_t, bool> ShaderCache;
+        // Classify only observed world materials; material names are not evidence.
+        CoDXPoolParser<uint64_t, BO4XMaterial>((CoDAssets::GameOffsetInfos[3]), CoDAssets::GamePoolSizes[3], [Filters, NeedsMaterials, DecalUses, &ShaderCache](BO4XMaterial& Asset, uint64_t& AssetOffset)
         {
+            const auto DecalUse = DecalUses.find(AssetOffset);
+            if (!NeedsMaterials && DecalUse == DecalUses.end()) return;
             // Mask the name as hashes are 60Bit
             Asset.NamePtr &= 0xFFFFFFFFFFFFFFF;
 
@@ -1468,6 +1891,9 @@ bool GameBlackOps4::LoadAssets()
             LoadedImage->AssetName = MaterialName;
             LoadedImage->AssetPointer = AssetOffset;
             LoadedImage->ImageCount = Asset.ImageCount;
+            LoadedImage->IsVolumeDecal = DecalUse != DecalUses.end();
+            LoadedImage->VolumeDecalInstances = DecalUse != DecalUses.end() ? DecalUse->second : 0;
+            LoadedImage->VolumeDecalSupported = LoadedImage->IsVolumeDecal && BO4SupportedDecal(AssetOffset, ShaderCache);
             LoadedImage->AssetStatus = WraithAssetStatus::Loaded;
             // Add
             CoDAssets::GameAssets->LoadedAssets.push_back(LoadedImage);
@@ -1544,7 +1970,8 @@ bool GameBlackOps4::LoadAssets()
 bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
     const std::string& ExportPath, const std::function<void(uint32_t)>& ReportProgress)
 {
-    if (CoDAssets::GameInstance == nullptr || Terrain == nullptr ||
+    if (CoDAssets::GameID != SupportedGames::BlackOps4 ||
+        CoDAssets::GameInstance == nullptr || Terrain == nullptr ||
         Terrain->AssetPointer == 0 || Terrain->AssetSize == 0 ||
         Terrain->AssetSize > 0x10000)
     {
@@ -4198,271 +4625,8 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
         };
     }
 
-    // --- volume decals ------------------------------------------------------
-    // GfxWorld +0x590 count, +0x598 GfxVolumeDecal[count] (216 bytes each),
-    // +0x5A8 the shared reveal atlas image (atian's T8 GfxWorld; the frame
-    // counter at +0x1B8 confirms the layout for this build). Each decal names
-    // a material. For each one, keep what the decal pixel shader reads:
-    // its constant buffer, its images, and the G-buffer pass it draws with
-    // (technique +0x40, pass +0x38; the pass's argument table maps each
-    // semantic hash to a texture slot, and pass +0x18 is the pixel shader).
-    {
-        nlohmann::json Decals = {{"status", "not_found"}};
-        constexpr uint32_t GfxWorldPool = 14, GfxWorldBytes = 6832;
-        constexpr uint64_t DecalCountOffset = 0x590, DecalArrayOffset = 0x598,
-                           DecalAuxOffset = 0x5A0, DecalAtlasOffset = 0x5A8;
-        constexpr uint32_t DecalBytes = 216, DecalMaterialOffset = 0xB8;
-        const auto WriteBytes = [&](const std::string& Name, const uint8_t* Data, size_t Size) {
-            auto Writer = BinaryWriter();
-            if (!Writer.Create(FileSystems::CombinePath(ExportPath, Name)))
-                return false;
-            Writer.Write(Data, static_cast<uint32_t>(Size));
-            Writer.Close();
-            return true;
-        };
-        const auto ReadBytes = [](uint64_t Pointer, size_t Size, std::vector<uint8_t>& Out) {
-            Out.assign(Size, 0);
-            uintptr_t Got = 0;
-            std::unique_ptr<int8_t[]> Raw(CoDAssets::GameInstance->Read(Pointer, Size, Got));
-            if (!Raw || Got != Size)
-                return false;
-            std::memcpy(Out.data(), Raw.get(), Size);
-            return true;
-        };
-        // Exports an image by pointer. Raw keeps every channel as stored: the
-        // shaders read normal maps' blue channel, which the normal patch rebuilds.
-        std::set<std::string> DecalImagesWritten;
-        const auto ExportImage = [&](uint64_t ImagePtr, bool Raw) -> nlohmann::json {
-            nlohmann::json Row = {{"image", Hex(ImagePtr)}};
-            std::string Probe;
-            if (ImagePtr == 0 || !SampleAt(ImagePtr, Probe))
-            {
-                Row["status"] = "unreadable";
-                return Row;
-            }
-            const auto Image = CoDAssets::GameInstance->Read<BO4GfxImage>(ImagePtr);
-            const uint64_t Hash = Image.NamePtr & 0xFFFFFFFFFFFFFFF;
-            const auto Known = AssetNameCache.NameDatabase.find(Hash);
-            const std::string Name = Known != AssetNameCache.NameDatabase.end()
-                ? Known->second : "ximage_" + Hex(Hash);
-            Row["name"] = Name;
-            Row["format"] = Image.ImageFormat;
-            Row["width"] = Image.LoadedMipWidth;
-            Row["height"] = Image.LoadedMipHeight;
-            const std::string File = Name + (Raw ? "_raw.png" : ".png");
-            if (DecalImagesWritten.count(File) == 0)
-            {
-                DecalImagesWritten.insert(File);
-                auto Pixels = GameBlackOps4::LoadXImage(XImage_t(
-                    ImageUsageType::DiffuseMap, 0, ImagePtr, Name));
-                if (Pixels != nullptr && Pixels->DataSize > 0 &&
-                    Image::ConvertImageMemory(Pixels->DataBuffer, Pixels->DataSize,
-                        ImageFormat::DDS_WithHeader, FileSystems::CombinePath(ExportPath, File),
-                        ImageFormat::Standard_PNG, ImagePatch::NoPatch))
-                    Row["file"] = File;
-                else
-                    Row["status"] = "not_in_package";
-            }
-            else
-                Row["file"] = File;
-            return Row;
-        };
-
-        const auto& G = Pools[GfxWorldPool];
-        std::vector<uint8_t> World;
-        uint64_t WorldPtr = 0;
-        if (G.PoolPtr != 0 && G.AssetSize == GfxWorldBytes && G.PoolSize > 0 && G.PoolSize <= 16)
-        {
-            // The loaded slot is the one not on the free list.
-            std::set<uint64_t> Free;
-            for (uint64_t Next = G.PoolFreeHeadPtr; Next != 0 && Free.size() <= G.PoolSize;)
-            {
-                if (Next < G.PoolPtr || (Next - G.PoolPtr) % G.AssetSize != 0 || !Free.insert(Next).second)
-                    break;
-                Next = CoDAssets::GameInstance->Read<uint64_t>(Next);
-            }
-            for (uint64_t S = 0; S < G.PoolSize && WorldPtr == 0; S++)
-                if (Free.count(G.PoolPtr + S * G.AssetSize) == 0)
-                    WorldPtr = G.PoolPtr + S * G.AssetSize;
-        }
-        if (WorldPtr != 0 && ReadBytes(WorldPtr, GfxWorldBytes, World))
-        {
-            uint32_t Count = 0;
-            uint64_t Array = 0, Aux = 0, Atlas = 0;
-            std::memcpy(&Count, World.data() + DecalCountOffset, 4);
-            std::memcpy(&Array, World.data() + DecalArrayOffset, 8);
-            std::memcpy(&Aux, World.data() + DecalAuxOffset, 8);
-            std::memcpy(&Atlas, World.data() + DecalAtlasOffset, 8);
-            Decals = {{"gfxworld", Hex(WorldPtr)}, {"count", Count}, {"array", Hex(Array)},
-                      {"record_bytes", DecalBytes}, {"aux", Hex(Aux)}, {"atlas_image", Hex(Atlas)}};
-            std::vector<uint8_t> Records;
-            if (Count == 0 || Count > 65536 || !ReadBytes(Array, size_t(Count) * DecalBytes, Records))
-                Decals["status"] = Count == 0 ? "none" : "unreadable";
-            else
-            {
-                WriteBytes("volume_decals.bin", Records.data(), Records.size());
-                Decals["file"] = "volume_decals.bin";
-                std::vector<uint8_t> AuxBytes;
-                if (Aux != 0 && ReadBytes(Aux, size_t(Count) * 8, AuxBytes))
-                {
-                    WriteBytes("volume_decal_aux.bin", AuxBytes.data(), AuxBytes.size());
-                    Decals["aux_file"] = "volume_decal_aux.bin";
-                }
-                Decals["atlas"] = ExportImage(Atlas, true);
-
-                std::map<uint64_t, uint32_t> Uses;
-                for (uint32_t i = 0; i < Count; i++)
-                {
-                    uint64_t M = 0;
-                    std::memcpy(&M, Records.data() + size_t(i) * DecalBytes + DecalMaterialOffset, 8);
-                    Uses[M]++;
-                }
-                std::set<uint64_t> ShadersWritten;
-                nlohmann::json Materials = nlohmann::json::array();
-                for (const auto& Use : Uses)
-                {
-                    const uint64_t MaterialPtr = Use.first;
-                    nlohmann::json Mat = {{"material", Hex(MaterialPtr)}, {"decals", Use.second}};
-                    std::string Probe;
-                    if (MaterialPtr == 0 || !SampleAt(MaterialPtr, Probe))
-                    {
-                        Mat["status"] = "unreadable";
-                        Materials.push_back(Mat);
-                        continue;
-                    }
-                    const auto Material = CoDAssets::GameInstance->Read<BO4XMaterial>(MaterialPtr);
-                    const uint64_t Hash = Material.NamePtr & 0xFFFFFFFFFFFFFFF;
-                    const auto Known = AssetNameCache.NameDatabase.find(Hash);
-                    Mat["hash"] = Hex(Hash);
-                    if (Known != AssetNameCache.NameDatabase.end())
-                        Mat["name"] = Known->second;
-
-                    const auto CBytes = CoDAssets::GameInstance->Read<uint32_t>(MaterialPtr + BO4MaterialCBufferSizeOffset);
-                    const auto CPtr = CoDAssets::GameInstance->Read<uint64_t>(MaterialPtr + BO4MaterialCBufferPointerOffset);
-                    std::vector<uint8_t> Constants;
-                    if (CPtr != 0 && CBytes > 0 && CBytes <= BO4MaterialCBufferCeiling && ReadBytes(CPtr, CBytes, Constants))
-                    {
-                        const auto Name = Strings::Format("decal_material_%llX_cbuffer.bin", Hash);
-                        WriteBytes(Name, Constants.data(), Constants.size());
-                        Mat["cbuffer"] = Name;
-                    }
-
-                    nlohmann::json Images = nlohmann::json::array();
-                    const uint64_t Shown = Material.ImageCount < BO4MaterialImageCeiling ? Material.ImageCount : BO4MaterialImageCeiling;
-                    for (uint64_t I = 0; Material.ImageTablePtr != 0 && I < Shown; I++)
-                    {
-                        const auto Entry = CoDAssets::GameInstance->Read<BO4XMaterialImage>(
-                            Material.ImageTablePtr + I * sizeof(BO4XMaterialImage));
-                        auto Row = ExportImage(Entry.ImagePtr, true);
-                        Row["semantic"] = Hex(Entry.SemanticHash);
-                        // The whole 32-byte texture def: uv scale floats at +0x0C.
-                        std::vector<uint8_t> Def;
-                        if (ReadBytes(Material.ImageTablePtr + I * sizeof(BO4XMaterialImage), sizeof(BO4XMaterialImage), Def))
-                        {
-                            std::string Hexed;
-                            for (auto B : Def)
-                                Hexed += Strings::Format("%02x", B);
-                            Row["texture_def"] = Hexed;
-                        }
-                        Images.push_back(Row);
-                    }
-                    Mat["images"] = Images;
-                    // Material +0x40: {u32 sampler name hash, u32 engine sampler state},
-                    // count at +0x131.  The pass arguments bind these hashes to s-slots.
-                    const auto SamplerTable = CoDAssets::GameInstance->Read<uint64_t>(MaterialPtr + 0x40);
-                    const auto SamplerCount = CoDAssets::GameInstance->Read<uint8_t>(MaterialPtr + 0x131);
-                    std::vector<uint8_t> Samplers;
-                    if (SamplerTable != 0 && SamplerCount > 0 && SamplerCount <= 32 &&
-                        ReadBytes(SamplerTable, size_t(SamplerCount) * 8, Samplers))
-                    {
-                        nlohmann::json Rows = nlohmann::json::array();
-                        for (uint32_t S = 0; S < SamplerCount; S++)
-                        {
-                            uint32_t SamplerHash = 0, SamplerState = 0;
-                            std::memcpy(&SamplerHash, Samplers.data() + S * 8, 4);
-                            std::memcpy(&SamplerState, Samplers.data() + S * 8 + 4, 4);
-                            Rows.push_back({{"hash", Hex(SamplerHash)}, {"state", Hex(SamplerState)}});
-                        }
-                        Mat["samplers"] = Rows;
-                    }
-
-                    // Technique +0x40 is the G-buffer decal pass on every decal
-                    // techset seen; its argument table is 12-byte records
-                    // {u8 1, u8 kind (1 texture, 2 sampler, 3 constant), u8 slot, u8,
-                    //  u32 count, u32 hash}.
-                    const auto Techset = CoDAssets::GameInstance->Read<uint64_t>(MaterialPtr + BO4MaterialTechsetOffset);
-                    const auto Technique = Techset ? CoDAssets::GameInstance->Read<uint64_t>(Techset + 0x40) : 0;
-                    if (Technique != 0 && SampleAt(Technique, Probe))
-                    {
-                        Mat["techset"] = Hex(Techset);
-                        const auto ArgTable = CoDAssets::GameInstance->Read<uint64_t>(Technique + 0x28);
-                        const auto Pass = CoDAssets::GameInstance->Read<uint64_t>(Technique + 0x38);
-                        nlohmann::json Args = nlohmann::json::array();
-                        std::vector<uint8_t> ArgBytes;
-                        if (ArgTable != 0 && ReadBytes(ArgTable, 32 * 12, ArgBytes))
-                        {
-                            for (uint32_t A = 0; A < 32; A++)
-                            {
-                                const uint8_t* R = ArgBytes.data() + A * 12;
-                                if (R[0] != 1 || R[1] < 1 || R[1] > 3)
-                                    break;
-                                uint32_t ArgCount = 0, ArgHash = 0;
-                                std::memcpy(&ArgCount, R + 4, 4);
-                                std::memcpy(&ArgHash, R + 8, 4);
-                                Args.push_back({{"kind", R[1] == 1 ? "texture" : R[1] == 2 ? "sampler" : "constant"},
-                                    {"slot", R[2]}, {"count", ArgCount}, {"hash", Hex(ArgHash)}});
-                            }
-                        }
-                        Mat["pass_arguments"] = Args;
-                        // Pass +0 is the render state: one engine word per render target,
-                        // then (+0x38) the ID3D11BlendState built from them.  Word layout,
-                        // matched against every blend state live on zm_towers: src 1-4,
-                        // op 5-7 (0 = blending off), dst 8-11, srcA 12-15, opA 16-18,
-                        // dstA 19-22, write mask 23-26, all in D3D11 enum values.  The
-                        // runtime's own packed copy of the descriptor sits at +0xA8.
-                        const auto State = Pass ? CoDAssets::GameInstance->Read<uint64_t>(Pass) : 0;
-                        std::vector<uint8_t> StateBytes, Packed;
-                        if (State != 0 && ReadBytes(State, 0x40, StateBytes))
-                        {
-                            nlohmann::json Words = nlohmann::json::array();
-                            for (uint32_t Rt = 0; Rt < 4; Rt++)
-                            {
-                                uint32_t Word = 0;
-                                std::memcpy(&Word, StateBytes.data() + Rt * 4, 4);
-                                Words.push_back(Strings::Format("0x%08X", Word));
-                            }
-                            Mat["blend_words"] = Words;
-                            const auto BlendObject = CoDAssets::GameInstance->Read<uint64_t>(State + 0x38);
-                            const auto PackedPtr = BlendObject ? CoDAssets::GameInstance->Read<uint64_t>(BlendObject + 0xA8) : 0;
-                            if (PackedPtr != 0 && ReadBytes(PackedPtr, 4 + 8 * 8, Packed))
-                            {
-                                std::string Hexed;
-                                for (auto B : Packed)
-                                    Hexed += Strings::Format("%02x", B);
-                                Mat["d3d11_blend_packed"] = Hexed;
-                            }
-                        }
-                        const auto ShaderObject = Pass ? CoDAssets::GameInstance->Read<uint64_t>(Pass + 0x18) : 0;
-                        const auto Blob = ShaderObject ? CoDAssets::GameInstance->Read<uint64_t>(ShaderObject + 0x18) : 0;
-                        const auto BlobBytes = ShaderObject ? CoDAssets::GameInstance->Read<uint32_t>(ShaderObject + 0x20) : 0;
-                        std::vector<uint8_t> Shader;
-                        if (Blob != 0 && BlobBytes > 32 && BlobBytes <= BO4ShaderCeiling && ReadBytes(Blob, BlobBytes, Shader) &&
-                            std::memcmp(Shader.data(), "DXBC", 4) == 0)
-                        {
-                            const auto Name = Strings::Format("decal_ps_%llX.dxbc", Blob);
-                            if (ShadersWritten.insert(Blob).second)
-                                WriteBytes(Name, Shader.data(), Shader.size());
-                            Mat["pixel_shader"] = Name;
-                        }
-                    }
-                    Materials.push_back(Mat);
-                }
-                Decals["materials"] = Materials;
-                Decals["status"] = "captured";
-            }
-        }
-        Document["volume_decals"] = Decals;
-    }
+    // BO4 volume decals retain their own world layout and shader dependencies.
+    Document["volume_decals"] = BO4CaptureVolumeDecals(ExportPath, 0, true);
 
     // Walk every committed readable region of the game looking for DXBC
     // containers, and keep the ones that pull vertices at terrain's stride.

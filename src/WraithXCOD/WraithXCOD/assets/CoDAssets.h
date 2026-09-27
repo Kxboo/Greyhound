@@ -254,6 +254,11 @@ public:
         void* ProgressCaller = nullptr, uint32_t ProgressStart = 0,
         uint32_t ProgressSpan = 100, bool TerrainSourceOnly = false);
 
+    // Empty when the loaded game's requested terrain route is supported.
+    // Check before reserving output folders or starting a capture.
+    static std::string TerrainExportProblem(bool SourceOnly);
+    static std::string DecalExportProblem(const CoDMaterial_t* Material);
+
     // Explicit per-call layout for Models from JSON; never changes saved settings.
     static ExportGameResult ExportJsonBatchModel(const CoDModel_t* Model, const std::string& Root);
     // Bake each saved CW spline placement and use the user's normal model formats.
@@ -320,6 +325,7 @@ private:
         const std::function<void(uint32_t)>& ReportProgress);
     // Exports a game rawfile asset
     static ExportGameResult ExportMaterialAsset(const CoDMaterial_t* Material, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension);
+    static ExportGameResult ExportDecalAsset(const CoDMaterial_t* Material, const std::string& ExportPath);
 
 public:
     // Exports material semantic/image names and readable settings. Terrain

@@ -280,6 +280,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="games\black_ops_4\capture\BO4CaptureModes.h" />
+    <ClInclude Include="games\black_ops_4\capture\BO4DecalCapture.h" />
     <ClInclude Include="games\black_ops_4\brushes\BO4CollisionHandlerProbe.h" />
     <ClInclude Include="games\black_ops_4\brushes\BO4ModelCollisionProbe.h" />
     <ClInclude Include="games\black_ops_4\placements\BO4ModelPlacementCapture.h" />

@@ -11,6 +11,7 @@ Build and use this fork, understand its exports, or find a place to contribute.
 | Cold War FX, animation references and entity properties | [CW effects and entities](cw-effects-entities.md) |
 | Cold War navigation and progression research | [CW navigation](cw-navigation.md) |
 | Cold War brushes and collision | [CW collision](cw-collision.md) |
+| TerrainGfx findings, live preview and source references | [TerrainGfx reference](terraingfx-reference.md) |
 | Capture contracts, diagnostic pools and audits | [Capture research](capture-research.md) |
 | Black Ops 4 placements, names and brushes | [BO4](bo4.md) |
 | Download Saluki names or use a local name database | [Saluki names](saluki-names.md) |

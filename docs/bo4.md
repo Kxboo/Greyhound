@@ -6,9 +6,53 @@ BO4 supports static placements, model batches, supported brush exports and
 diagnostic captures. Its terrain probe and binary layouts are separate from
 Cold War's. Start with [build and CLI usage](README.md).
 
+BO4 terrain currently uses **Diagnostics > Terrain source capture**, or
+`assets export --type terrain --all --terrain-source` with an explicit output
+folder. The normal terrain model exporter is Cold War-only; BO4 selections are
+rejected before output folders are reserved. Offline BO4 terrain tools remain
+separate and support decal omission through `--no-decals`.
+See [BO4 terrain research](bo4-terrain-research.md).
+
+## Native BO3 decals
+
+Enable **Settings > Library > Decals**, reload a BO4 map, and select a decal in
+the Library. **Settings > Decals** selects either a reusable asset or an asset
+with original placements. Verified BO3 material and image defaults are bundled
+with Greyhound; exporting does not require a BO3 installation. Export writes a
+fresh run under `black_ops_4/decals/<material>/`; copy the contents of its
+`bo3_root` folder into BO3. The source evidence and conversion log stay outside
+that shareable overlay. Convert the GDT assets in APE, then use the material or
+optional prefab in Radiant.
+
+Discovery uses the loaded world's actual volume-decal material references,
+not name prefixes. The first supported shader family is the verified BO4
+color/reveal grunge shader `6e0a762e671e6047`. Other families are listed with an
+unsupported status; they are not silently converted to this shader. The
+converter checks the dependencies again and preserves image alpha. Original
+placement export checks whether each transform and reveal mask is representable;
+any omissions are reported and the export does not claim complete success.
+Placements preserve each instance's layer and edge feathering: supported BO4
+priorities map to BO3's named layers, and BO3 editor feather values use the
+complement of the captured runtime values. A material can have placements on
+different layers without duplicating the reusable material. BO3 visual parity
+still needs testing in Radiant and in game.
+
+```powershell
+& $gh assets list --type decal --json
+& $gh assets export --type decal --name '<exact listed name>' --export-root 'D:\_superterrain\exports' --json
+# Add --decal-placements for original world placements.
+```
+
+The legacy `--bo3-root` argument remains accepted for existing CLI scripts but
+is no longer read. BO3 Mod Tools are needed only when using the exported package.
+
+This path is independent of terrain. Cold War terrain layers remain included
+in its own bake; separate Cold War decals are omitted and cannot use the BO4
+reader or converter.
+
 ## Static placements
 
-Load a BO4 map and use **Map & Model Export**, or run from the checkout:
+Load a BO4 map and open **Placements**, or run from the checkout:
 
 ```powershell
 $gh = '.\bin\cli\Greyhound-cli.exe'
@@ -417,7 +461,7 @@ uses the brush workflow. Mode 0 requires selecting and exporting a terrain asset
 | 1 | Map world pools | `world_pools_probe.json`, pool/slot payloads |
 | 2 | Model collision references | `model_collision_probe.json`, surface headers and triangle equations |
 | 3 | Model physics | `model_physics_probe.json`, `model_physics.bin` |
-| 4 | Model placements | Placement capture, static JSON and report |
+| 4 | Placements | Placement capture, static JSON and report |
 | 5 | Radiant brush prefabs | Separate brush/clip/model-physics export |
 | 6 | Collision handler tables | `collision_handlers.json`, handler byte ranges |
 | 7 | Named surface declarations | `surface_flags_probe.json`, without a map-pool capture |

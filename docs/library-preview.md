@@ -1,8 +1,9 @@
 # Library preview
 
-The WebView Library can preview the focused model or image without exporting it.
+The WebView Library can preview the focused model, image or TerrainGfx asset
+without exporting it.
 Choose **Preview** in the toolbar or row menu. A multi-row export selection is
-preserved. Selecting a row does not read its model or image; Enter and
+preserved. Selecting a row does not read its preview data; Enter and
 double-click still export. Image rows follow the existing Library setting.
 
 **List** keeps the asset table, **Split** shares space with the viewer, and
@@ -25,6 +26,11 @@ same direct-image loader as export. Usable color alpha and vertex RGB are retain
 Unknown or unavailable color images use a neutral material and increase the
 missing-texture count. Game shader effects, animation and texture synthesis are
 outside this viewer. [Every supported reader route is audited here](preview-reader-audit.md).
+
+TerrainGfx uses a coarse, live map preview. Cold War reads a combined color
+image and R16 height image; BO4 reads sectors and approximates layer colors.
+See the [TerrainGfx reference](terraingfx-reference.md) for layouts, live
+checks and limits.
 
 Default limits are 500,000 vertices, 1,000,000 triangles, 2,048 submeshes,
 64 textures, a 64 MiB total packet and 24 MiB of RGBA texture data. Model textures
@@ -63,7 +69,7 @@ The shared-buffer lifecycle follows Microsoft's
 
 The native policy, lifecycle and actual DirectXTex tests are in `tests/shared/native`.
 The browser mock and binary transport tests are in `tests/shared/ui`.
-`assets preview --type model|image --name EXACT --json` exercises the same native
+`assets preview --type model|image|terrain --name EXACT --json` exercises the same native
 builder without writing an export. Add `--file PACKAGE` for an image package.
 See the reader audit for the games actually smoke-tested and any unavailable routes.
 

@@ -50,6 +50,7 @@ def finalize(root):
         'terrain_export.json records each package placement in game units.\n'
         'CAST/OBJ/SEModel/glTF/Maya/XNA positions use centimetres (2.54 per game unit); XMODEL/SMD use game units.\n'
         'Distortion is enabled. Installed textures only; no texture-pack downloads.\n'
+        'Terrain material layers are baked into the images. Independent volume decals are omitted.\n'
         'This is visual terrain geometry; collision and adaptive LODs are not included.\n')
 
 

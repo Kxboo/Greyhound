@@ -24,7 +24,7 @@ namespace BO4Diagnostics
           L"model_collision_probe.json with model headers, the counted collision surface and triangle arrays and instance transforms. Decode and placement validation happen offline." },
         { "3", L"Model collision (physics only)",
           L"model_physics_probe.json and model_physics.bin: references, transforms and brush / primitive lists only. This is the capture the Radiant brush export consumes." },
-        { "4", L"Model placements",
+        { "4", L"Placements",
           L"model_placement_capture.json plus static_models.json and placement_report.json. Placement records, not render meshes." },
         { "5", L"Radiant brush prefabs",
           L"Runs the full BO4 brush, clip and model-physics prefab export, the same as Settings / Radiant Brushes / Export brushes now. Output goes to its own export folder, not this terrain run." },

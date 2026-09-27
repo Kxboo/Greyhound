@@ -180,7 +180,7 @@
     "shell.openExportRoot": () => { emit("toast", { text: "Opens " + exportRoot() }); return true; },
     "shell.openPath": a => { emit("toast", { text: "Opens " + a.path }); return true; },
     "shell.url": () => true,
-    "tools.run": a => { runJob({ placements: "Model placements", brushes: "Radiant brushes" }[a.tool] || a.tool, 40, "Saved to placements\\run_01"); return true; },
+    "tools.run": a => { runJob({ placements: "Placements", brushes: "Radiant brushes" }[a.tool] || a.tool, 40, "Saved to placements\\run_01"); return true; },
     "tools.bo4Modes": () => ({ selected: 0, overridden: false, modes: [{ label: "Off", hint: "Pick a capture mode." }, { label: "World probe", hint: "Captures world headers." }] }),
     "names.download": () => { settings.salukinamefolder = "C:\\Users\\you\\AppData\\Local\\Greyhound\\cod-name-db\\2026-09-20"; settings.salukiautoupdate = "true"; emit("settings", { ...settings }); return true; },
     "names.folder": () => true,

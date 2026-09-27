@@ -33,6 +33,8 @@ def verify(bundle):
         files = manifest['files']
         required = {'shared/runtime/export_brushes.py', 'shared/runtime/verify_runtime.py', 'shared/runtime/verify_saved_export.py', 'black_ops_3/reference/bo3_reference.json',
                     'black_ops_4/brushes/bo4_brush_export.py',
+                    'black_ops_4/decals/export_bo3.py',
+                    'black_ops_4/decals/bo3_stock_template_v1.json',
                     'black_ops_4/brushes/bo4_brush_geometry.py', 'black_ops_4/brushes/verify_bo4_brush_geometry.py',
                     'black_ops_4/brushes/bo4_brush_visual_materials.py', 'shared/brushes/certified_brush_partition.py',
                     'cold_war/brushes/export_cw_radiant_brushes.py',
@@ -76,10 +78,13 @@ def verify(bundle):
     check('bo3_material_catalogue', catalogue)
     # These are the entry points actually launched by the native terrain exporter.
     for helper in ('shared/capture/organize_export.py', 'shared/capture/finalize_research_capture.py',
+                   'black_ops_4/decals/export_bo3.py',
                    'cold_war/terrain/bake.py', 'cold_war/terrain/finalize.py'):
         def help_check(helper=helper):
             path = bundle / helper
-            result = subprocess.run([sys.executable, '-I', str(path), '--help'],
+            # Isolated Python ignores PYTHONDONTWRITEBYTECODE. Avoid creating
+            # bytecode for the whole scientific runtime during a read-only check.
+            result = subprocess.run([sys.executable, '-B', '-I', str(path), '--help'],
                                     capture_output=True, text=True, timeout=30)
             if result.returncode:
                 raise ValueError(result.stderr.strip() or result.stdout.strip())

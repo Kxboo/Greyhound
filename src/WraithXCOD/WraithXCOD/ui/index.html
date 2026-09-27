@@ -57,7 +57,7 @@
 
     <nav class="nav" id="nav">
       <button data-page="library" class="active"><svg><use href="#i-library"/></svg><span>Library</span></button>
-      <button data-page="tools"><svg><use href="#i-map"/></svg><span>Map tools</span></button>
+      <button data-page="tools"><svg><use href="#i-map"/></svg><span>Placements</span></button>
       <div class="sep"></div>
       <button data-page="settings"><svg><use href="#i-sliders"/></svg><span>Settings</span></button>
       <button data-page="diagnostics"><svg><use href="#i-pulse"/></svg><span>Diagnostics</span></button>
@@ -102,7 +102,7 @@
         <button class="btn primary" id="btnLoad"><svg><use href="#i-play"/></svg>Load game</button>
         <button class="btn" id="btnOpenFile"><svg><use href="#i-file"/></svg>Open file</button>
         <button class="btn ghost" id="btnClear" disabled title="Unload the current game or file"><svg><use href="#i-x"/></svg>Unload</button>
-        <button class="btn" id="btnPreview" disabled title="Preview the focused model or image"><svg><use href="#i-cube"/></svg>Preview</button>
+        <button class="btn" id="btnPreview" disabled title="Preview the focused model, image, or terrain"><svg><use href="#i-cube"/></svg>Preview</button>
       </div>
 
       <div class="library-layout-bar hidden" id="layoutBar">
@@ -162,10 +162,10 @@
         <div class="preview-head"><div class="preview-title" id="previewName">Asset preview</div><button class="btn sm" id="previewPopout">Pop out</button></div>
         <div class="preview-stage" id="previewStage">
           <canvas id="previewCanvas" tabindex="0" aria-label="Asset preview. Drag to orbit, Shift-drag or right-drag to pan, scroll to zoom, F to fit."></canvas>
-          <div class="preview-message" id="previewMessage"><svg width="32" height="32"><use href="#i-cube"/></svg><span>Focus a model or image, then choose Preview.</span></div>
+          <div class="preview-message" id="previewMessage"><svg width="32" height="32"><use href="#i-cube"/></svg><span>Select a model, image, or terrain to preview it.</span></div>
           <div class="preview-detached hidden" id="previewDetached"><span>Preview is in a separate window.</span><button class="btn" id="previewDock">Dock preview</button></div>
         </div>
-        <div class="preview-foot"><div id="previewInfo" aria-live="polite">Preview loads only when requested.</div><div class="preview-controls"><button class="btn sm" id="previewZoomOut" title="Zoom out" aria-label="Zoom out">−</button><button class="btn sm" id="previewFit" title="Fit preview (F)">Fit</button><button class="btn sm" id="previewZoomIn" title="Zoom in" aria-label="Zoom in">+</button></div></div>
+        <div class="preview-foot"><div id="previewInfo" aria-live="polite">Preview loads automatically on selection.</div><div class="preview-controls"><button class="btn sm" id="previewZoomOut" title="Zoom out" aria-label="Zoom out">−</button><button class="btn sm" id="previewFit" title="Fit preview (F)">Fit</button><button class="btn sm" id="previewZoomIn" title="Zoom in" aria-label="Zoom in">+</button></div></div>
         <div class="preview-hint" id="previewHint">Drag to orbit · Shift-drag to pan · Scroll to zoom</div>
       </section>
       </div>
@@ -181,16 +181,16 @@
     <!-- ================= MAP TOOLS ================= -->
     <section class="page" id="page-tools">
       <div class="scroll"><div class="doc">
-        <div class="page-head"><h2>Map tools</h2><span class="tag" id="toolsGameTag">No map</span></div>
-        <p class="lede">Rebuild a whole map outside the game: export where every model sits, export those models, then add splines and Radiant brushes. Load the map with <b>Load game</b> first.</p>
+        <div class="page-head"><h2>Placements</h2><span class="tag" id="toolsGameTag">No map</span></div>
+        <p class="lede">Export map placements, models, splines and Radiant brushes. For decals with optional original placements, select them in <b>Library → Decals</b>. Load the map with <b>Load game</b> first.</p>
 
         <div class="section">
-          <h3><span class="num">01</span>Model placements</h3>
+          <h3><span class="num">01</span>Placements</h3>
           <p class="sub">Writes <code>static_models.json</code>: every placed model with its position, rotation and scale.</p>
           <div class="card tool">
             <div class="tool-head">
               <div class="ic"><svg><use href="#i-pin"/></svg></div>
-              <div class="tx"><div class="t">Export model placements <span class="tag muted">BO4 · CW</span></div>
+              <div class="tx"><div class="t">Export placements <span class="tag muted">BO4 · CW</span></div>
               <div class="h">Cold War can also include entities, lights, probes and effects.</div></div>
             </div>
             <div class="opts rows" data-group="placements"></div>

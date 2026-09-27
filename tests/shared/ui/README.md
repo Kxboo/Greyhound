@@ -5,13 +5,14 @@ Run from the repository root:
 ```powershell
 node tests/shared/ui/preview_transport_test.cjs
 node tests/shared/ui/preview_mock_test.cjs
+node tests/shared/ui/terrain_mock_test.cjs
 ```
 
 The transport check uses Node's built-in assertions and has no package dependencies. The browser check requires the `playwright` package and installed Microsoft Edge; set `NODE_PATH` to the existing package directory if it is not on Node's module path. It starts a temporary loopback server and a headless browser, then closes both. It does not attach to a game, export files, or change native Greyhound settings.
 
 The browser fixture deliberately contains three model parts with the same material name: two reference different color textures and one has no available texture. The image fixture contains transparent pixels. The checks cover:
 
-- Explicit preview, focused-row identity and preserving multiple export selections.
+- Automatic preview on click and keyboard navigation (including uncached rows), focused-row identity and preserving multiple export selections.
 - Duplicate-name texture slots, neutral fallback, missing-texture count and decoded image display.
 - Orbit, zoom, fit, canvas resize and recovery after graphics context loss.
 - List, Split and Viewer layouts, draggable divider and persistent layout settings.

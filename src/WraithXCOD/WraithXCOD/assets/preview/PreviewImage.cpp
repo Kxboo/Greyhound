@@ -114,8 +114,12 @@ namespace PreviewData
         }
         if (width != current->width || height != current->height)
         {
-            if (FAILED(DirectX::Resize(*current, width, height,
-                static_cast<DirectX::TEX_FILTER_FLAGS>(DirectX::TEX_FILTER_FANT | DirectX::TEX_FILTER_FORCE_NON_WIC), resized)))
+            auto resizeResult = DirectX::Resize(*current, width, height,
+                static_cast<DirectX::TEX_FILTER_FLAGS>(DirectX::TEX_FILTER_FANT | DirectX::TEX_FILTER_FORCE_NON_WIC), resized);
+            if (FAILED(resizeResult))
+                resizeResult = DirectX::Resize(*current, width, height,
+                    static_cast<DirectX::TEX_FILTER_FLAGS>(DirectX::TEX_FILTER_LINEAR | DirectX::TEX_FILTER_FORCE_NON_WIC), resized);
+            if (FAILED(resizeResult))
             {
                 result.error = "Image could not be resized for preview.";
                 return result;

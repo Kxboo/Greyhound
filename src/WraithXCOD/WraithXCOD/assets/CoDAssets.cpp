@@ -1196,10 +1196,53 @@ LoadGameFileResult CoDAssets::LoadFile(const std::string& FilePath)
     return LoadGameFileResult::InvalidFile;
 }
 
+std::string CoDAssets::TerrainExportProblem(bool SourceOnly)
+{
+    if (GameID == SupportedGames::BlackOpsCW ||
+        (SourceOnly && GameID == SupportedGames::BlackOps4)) return {};
+    if (GameID == SupportedGames::BlackOps4)
+        return "Black Ops 4 terrain uses its own source capture. Use Diagnostics > Terrain source capture "
+            "(CLI: --terrain-source). Baked terrain model export currently supports Cold War only.";
+    return "Terrain export supports Black Ops 4 source capture and Cold War terrain only.";
+}
+
+std::string CoDAssets::DecalExportProblem(const CoDMaterial_t* Material)
+{
+    if (GameID != SupportedGames::BlackOps4 || !Material->IsVolumeDecal)
+        return "Native BO3 decal export currently supports observed Black Ops 4 volume decals only.";
+    if (!Material->VolumeDecalSupported)
+        return "This decal's shader is not supported for BO3 conversion yet. The verified color/reveal grunge family is supported.";
+    const auto Template = FileSystems::CombinePath(FileSystems::GetApplicationPath(),
+        "tools/black_ops_4/decals/bo3_stock_template_v1.json");
+    if (!FileSystems::FileExists(Template))
+        return "The bundled BO3 decal template is missing. Restore Greyhound's tools folder.";
+    return {};
+}
+
 ExportGameResult CoDAssets::ExportAsset(const CoDAsset_t* Asset,
     void* ProgressCaller, uint32_t ProgressStart, uint32_t ProgressSpan, bool TerrainSourceOnly)
 {
     LatestTerrainFinalizationFailed = false;
+    if (Asset->AssetType == WraithAssetType::Material && static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal)
+    {
+        const auto Problem = DecalExportProblem(static_cast<const CoDMaterial_t*>(Asset));
+        if (!Problem.empty())
+        {
+            LatestExportPath.clear();
+            CoDAssets::Log->error(Problem);
+            return ExportGameResult::UnknownError;
+        }
+    }
+    if (Asset->AssetType == WraithAssetType::Terrain)
+    {
+        const auto Problem = TerrainExportProblem(TerrainSourceOnly);
+        if (!Problem.empty())
+        {
+            LatestExportPath.clear();
+            CoDAssets::Log->error(Problem);
+            return ExportGameResult::UnknownError;
+        }
+    }
     // Hold an inheritable, exclusive file handle for the complete capture and
     // integrity seal. The Python finalizer inherits it, so force-closing
     // Greyhound cannot allow another export to overwrite a capture while its
@@ -1293,7 +1336,9 @@ ExportGameResult CoDAssets::ExportAsset(const CoDAsset_t* Asset,
             // Export a rawfile
             case WraithAssetType::RawFile: {Result = ExportRawfileAsset((CoDRawFile_t*)Asset, ExportPath); break;}
             // Export a material
-            case WraithAssetType::Material: {Result = ExportMaterialAsset((CoDMaterial_t*)Asset, ExportPath, ImagesPath, ImageRelativePath, ImageExtension); break;}
+            case WraithAssetType::Material: {Result = static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal
+                ? ExportDecalAsset(static_cast<const CoDMaterial_t*>(Asset), ExportPath)
+                : ExportMaterialAsset((CoDMaterial_t*)Asset, ExportPath, ImagesPath, ImageRelativePath, ImageExtension); break;}
             // Export an opaque TerrainGfx header for the SuperTerrain decoder
             case WraithAssetType::Terrain: {Result = TerrainSourceOnly
                 ? ExportTerrainAsset((CoDTerrain_t*)Asset, TerrainSourcePath, ReportProgress)
@@ -1693,7 +1738,9 @@ std::string CoDAssets::BuildExportPath(const CoDAsset_t* Asset)
         break;
     case WraithAssetType::Material:
         // Directory with asset name
-        ApplicationPath = FileSystems::CombinePath(FileSystems::CombinePath(ApplicationPath, "xmaterials"), Asset->AssetName);
+        ApplicationPath = FileSystems::CombinePath(FileSystems::CombinePath(ApplicationPath,
+            static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal ? "decals" : "xmaterials"),
+            static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal ? ModelFileName(Asset->AssetName) : Asset->AssetName);
         break;
     case WraithAssetType::Terrain:
         // Keep every TerrainGfx asset and its metadata in a separate folder.
@@ -2555,6 +2602,8 @@ ExportGameResult CoDAssets::ExportRawfileAsset(const CoDRawFile_t* Rawfile, cons
 ExportGameResult CoDAssets::ExportBakedTerrain(const CoDTerrain_t* Terrain, const std::string& ExportPath,
     const std::function<void(uint32_t)>& ReportProgress)
 {
+    const auto Problem = TerrainExportProblem(false);
+    if (!Problem.empty()) throw std::runtime_error(Problem);
     namespace fs = std::filesystem;
     using json = nlohmann::json;
     const fs::path Root = fs::absolute(ExportPath), Work = Root / "_work";
@@ -2641,11 +2690,8 @@ ExportGameResult CoDAssets::ExportTerrainAsset(const CoDTerrain_t* Terrain, cons
         return ExportGameResult::UnknownError;
     }
 
-    // Black Ops 4 is the only other game that has a terraingfx pool, and no
-    // BO4 TerrainGfx structure has been reversed.  It gets the probe rather
-    // than this capture path: the Cold War offsets below are measured against
-    // a BOCW build and must not be replayed against a BO4 header as if they
-    // were known.  Scoring one against the other is done offline.
+    // BO4 has its own measured capture layouts and offline terrain tools.
+    // Keep it on that route; the Cold War offsets below do not describe BO4.
     if (CoDAssets::GameID == SupportedGames::BlackOps4)
     {
         return GameBlackOps4::ExportTerrainProbe(Terrain, ExportPath, ReportProgress)
@@ -6203,6 +6249,32 @@ ExportGameResult CoDAssets::ExportTerrainAsset(const CoDTerrain_t* Terrain, cons
     return ExportGameResult::Success;
 }
 
+ExportGameResult CoDAssets::ExportDecalAsset(const CoDMaterial_t* Material, const std::string& ExportPath)
+{
+    const auto Problem = DecalExportProblem(Material);
+    if (!Problem.empty()) throw std::runtime_error(Problem);
+    const bool Placements = SettingsManager::GetSetting("decalplacements", "false") == "true";
+    // Reserve a fresh run: a failed conversion must never leave an older BO3
+    // package looking like the result of this request.
+    const auto Run = TerrainLayout::CreateRun(ExportPath);
+    if (Run.empty()) throw std::runtime_error("Could not reserve a new decal export folder");
+    LatestExportPath = Run;
+    const auto Source = FileSystems::CombinePath(Run, "source");
+    const auto Package = FileSystems::CombinePath(Run, "bo3_root");
+    FileSystems::CreateDirectory(Source);
+    std::string Error;
+    if (!GameBlackOps4::ExportDecalSource(Material->AssetPointer, Placements, Source, Error))
+        throw std::runtime_error("Could not capture the selected decal: " + Error);
+    std::vector<std::string> Arguments{ "--capture", FileSystems::CombinePath(Source, "decal_capture.json"),
+        "--output", Package };
+    if (Placements) Arguments.push_back("--placements");
+    const int Result = RunCaptureScript("black_ops_4/decals/export_bo3.py", Arguments, Run);
+    if (Result != 0)
+        throw std::runtime_error("Decal conversion did not complete (exit " + std::to_string(Result) +
+            "). See terrain_pipeline.log and any conversion report in " + Run);
+    return ExportGameResult::Success;
+}
+
 ExportGameResult CoDAssets::ExportMaterialAsset(const CoDMaterial_t* Material, const std::string& ExportPath, const std::string& ImagesPath, const std::string& ImageRelativePath, const std::string& ImageExtension)
 {
     // Grab the image format type
@@ -6733,11 +6805,11 @@ void CoDAssets::ExportSelectedAssets(void* Caller, const std::unique_ptr<std::ve
     // Clamp it, no less than 1, no more than 3
     auto DegreeOfConverter = VectorMath::Clamp<uint32_t>(NumberOfCores, 1, 3);
 #endif
-    // Terrain post-processing owns one shared progress bar and can run for
-    // several minutes. Keep terrain batches ordered so concurrent workers do
-    // not make the bar jump backwards between assets.
+    // Map capture and its child converters share process/progress state.
+    // Keep terrain and decal batches ordered, including mixed selections.
     if (std::any_of(Assets->begin(), Assets->end(), [](const CoDAsset_t* Asset)
-        { return Asset != nullptr && Asset->AssetType == WraithAssetType::Terrain; }))
+        { return Asset != nullptr && (Asset->AssetType == WraithAssetType::Terrain ||
+            (Asset->AssetType == WraithAssetType::Material && static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal)); }))
         DegreeOfConverter = 1;
     // Prepare to convert the assets in async
     CoDXConverter([&AssetIndex, &Caller, &Assets, &AssetsToConvert]

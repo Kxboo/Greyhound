@@ -569,6 +569,11 @@ public:
     // The number of images
     size_t ImageCount;
 
+    // BO4 materials referenced by the loaded world's volume decal table.
+    bool IsVolumeDecal = false;
+    uint32_t VolumeDecalInstances = 0;
+    bool VolumeDecalSupported = false;
+
     // Compares the asset to this one, if compare details is enabled, they are used if the assets are the same type.
     bool Compare(const CoDAsset_t* candidate, const AssetCompareMethod compareMethod) const;
 };

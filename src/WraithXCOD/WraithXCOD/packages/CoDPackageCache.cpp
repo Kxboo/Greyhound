@@ -67,6 +67,8 @@ void CoDPackageCache::LoadPackageCache(const std::string& BasePath)
     // Verify we've successfully opened it.
     if (!FileSystem->IsValid())
     {
+        fprintf(stderr, "Could not open game package storage '%s' (error %zu).\n",
+            BasePath.c_str(), FileSystem->GetLastError());
         FileSystem = nullptr;
     }
 }

@@ -65,6 +65,7 @@ const TYPES = {
   image: { label: "Images", one: "Image", c: "var(--t-image)" },
   sound: { label: "Sounds", one: "Sound", c: "var(--t-sound)" },
   material: { label: "Materials", one: "Material", c: "var(--t-material)" },
+  decal: { label: "Decals", one: "Decal", c: "var(--t-material)" },
   rawfile: { label: "Raw files", one: "Raw file", c: "var(--t-raw)" },
   effect: { label: "Effects", one: "Effect", c: "var(--t-effect)" },
   terrain: { label: "Terrain", one: "TerrainGfx", c: "var(--t-terrain)" },
@@ -151,6 +152,7 @@ function applyState(st) {
   }
   renderFilters();
   updateGates();
+  refreshSettingsUI();
   updateBar();
 }
 
@@ -237,6 +239,7 @@ function fetchPage(p) {
     S.inflight.delete(p);
     S.cache.set(p, rows);
     scheduleRender();
+    if (Math.floor(S.cursor / PAGE) === p) Preview.request();
   }).catch(() => S.inflight.delete(p));
 }
 
@@ -320,7 +323,7 @@ $$("#rowMenu button").forEach(b => b.addEventListener("click", () => {
 
 function select(i, ctrl, shift, keepIfSelected) {
   if (S.cursor !== i) Preview.cancelPending();
-  if (keepIfSelected && isSel(i)) { S.cursor = i; renderRows(); updateBar(); return; }
+  if (keepIfSelected && isSel(i)) { S.cursor = i; renderRows(); updateBar(); Preview.request(); return; }
   if (S.selAll) { S.selAll = false; if (ctrl) for (let k = 0; k < S.view; k++) S.sel.add(k); }
   if (shift && S.anchor >= 0) {
     if (!ctrl) S.sel.clear();
@@ -334,6 +337,7 @@ function select(i, ctrl, shift, keepIfSelected) {
   }
   S.cursor = i;
   renderRows(); updateBar();
+  Preview.request();
 }
 function selectAll() { if (!S.view) return; S.selAll = true; S.sel.clear(); if (S.cursor < 0) S.cursor = 0; renderRows(); updateBar(); }
 function selectedCount() { return S.selAll ? S.view : S.sel.size; }
@@ -551,6 +555,7 @@ const SCHEMA = [
           ["showxmodel", "Models", "", true], ["showxanim", "Anims", "", true], ["showximage", "Images", "", false],
           ["showxsounds", "Sounds", "", false], ["showxmtl", "Materials", "", false], ["showxrawfiles", "Raw files", "", false],
           ["showxterrain", "TerrainGfx", "BO4 · CW", true],
+          ["showxdecals", "Decals", "BO4", false],
         ]
       },
       { type: "seg", key: "assetsortmethod", def: "Name", label: "Initial sort", hint: "Order after loading. Click a column header to re-sort any time.", options: [["Name", "Name"], ["Details", "Details"], ["None", "Game order"]] },
@@ -609,11 +614,22 @@ const SCHEMA = [
   },
   {
     id: "terrain", title: "Terrain",
-    sub: "Cold War terrain is baked into model packages with textures and material info. Whole maps are split into sections with placement coordinates.",
+    sub: "Cold War exports terrain model packages. Black Ops 4 uses its separate raw source capture in Diagnostics.",
     rows: [
-      { type: "seg", key: "terrainarea", def: "whole", label: "Area", options: [["whole", "Whole map"], ["nearby", "5 × 5 tiles near the camera"]] },
-      { type: "seg", key: "terrainmodelformats", def: "cast", label: "Format", options: [["cast", "CAST"], ["selected", "My model formats"]] },
-      { type: "folder", key: "terrainoutputroot", label: "Terrain output folder", hint: "Empty uses the export folder above.", empty: "Same as export folder" },
+      { type: "note", label: "Terrain and decals", hintFn: () => GAMES_BO4.includes(S.game?.id)
+        ? "BO4: use Diagnostics → Terrain source capture. The terrain probe keeps decal data separate. Load Decals in the Library to export supported BO3 assets independently."
+        : "Cold War: terrain material layers are included; separate decals are omitted. Raw source capture remains available in Diagnostics. Native BO3 conversion of Cold War decals is not supported yet." },
+      { type: "seg", key: "terrainarea", def: "whole", label: "Cold War area", when: () => !S.loaded || GAMES_CW.includes(S.game?.id), options: [["whole", "Whole map"], ["nearby", "5 × 5 tiles near the camera"]] },
+      { type: "seg", key: "terrainmodelformats", def: "cast", label: "Cold War format", when: () => !S.loaded || GAMES_CW.includes(S.game?.id), options: [["cast", "CAST"], ["selected", "My model formats"]] },
+      { type: "folder", key: "terrainoutputroot", label: "Terrain output folder", hint: "Used by terrain model exports and raw source captures for both games. Empty uses the export folder above.", empty: "Same as export folder" },
+    ],
+  },
+  {
+    id: "decals", title: "Decals",
+    sub: "Select a decal in the Library and export a folder to copy into Black Ops 3 Mod Tools. Enable Decals under Library, then reload the game.",
+    rows: [
+      { type: "note", label: "Supported decals", hint: "BO4 color/reveal grunge materials are supported. Other shader families are listed with their support status. Cold War decals use a different format and are not converted yet." },
+      { type: "seg", key: "decalplacements", def: "false", label: "Decal output", options: [["false", "Reusable asset"], ["true", "Asset + original placements"]], hint: "Placements add a Radiant prefab at the source map coordinates. Unsupported placements are reported; terrain export stays independent." },
     ],
   },
   {
@@ -651,7 +667,7 @@ const SCHEMA = [
       {
         type: "chips", label: "Map data sections", hint: "Used by the Map data and Deep probe modes.",
         when: s => s.cwmapdata === "true" || s.cwdeepProbe === "true",
-        items: [["cwcaptureplacements", "Model placements", "", true], ["cwcaptureentities", "Entities / triggers", "", true], ["cwcapturecollision", "Collision payloads", "", true], ["cwcapturesplines", "Splined model inputs", "", false]],
+        items: [["cwcaptureplacements", "Placements", "", true], ["cwcaptureentities", "Entities / triggers", "", true], ["cwcapturecollision", "Collision payloads", "", true], ["cwcapturesplines", "Splined model inputs", "", false]],
       },
       { type: "toggle", key: "cwcollisioncodeprobe", def: "false", label: "Capture collision reader code instead of pool data", hint: "Research only. Needs the researched CW build." },
     ],
@@ -700,6 +716,8 @@ function rowHTML(r, i) {
   const id = `r${i}`;
   const lbl = `<div class="lbl"><div class="t">${esc(r.label)}${r.badge ? ` <span class="tag muted">${esc(r.badge)}</span>` : ""}</div>${r.hint || r.hintFn ? `<div class="h" data-hint="${id}">${esc(r.hint || "")}</div>` : ""}</div>`;
   switch (r.type) {
+    case "note":
+      return `<div class="row" data-row="${id}">${lbl}</div>`;
     case "toggle":
       return `<div class="row" data-row="${id}">${lbl}<label class="switch"><input type="checkbox" data-id="${id}"><span class="track"></span></label></div>`;
     case "seg":
@@ -872,10 +890,10 @@ async function loadBo4Modes() {
 // ---------------------------------------------------------------- boot
 
 function updatePreviewButton() {
-  const row = rowAt(S.cursor), available = S.loaded && !S.loading && row && ["model", "image"].includes(row.type);
+  const row = rowAt(S.cursor), available = S.loaded && !S.loading && row && ["model", "image", "terrain"].includes(row.type);
   $("#btnPreview").disabled = !available;
   $("#menuPreview").disabled = !available;
-  $("#btnPreview").title = available ? `Preview ${row.name}` : "Focus a model or image to preview it";
+  $("#btnPreview").title = available ? `Preview ${row.name}` : "Focus a model, image, or terrain to preview it";
 }
 
 const Preview = (() => {
@@ -894,6 +912,7 @@ const Preview = (() => {
       $("#previewName").textContent = m.name || "Asset preview"; $("#previewName").title = m.name || "";
       $("#previewStage").classList.toggle("image", m.kind === "image");
       $("#previewInfo").textContent = m.kind === "image" ? `${fmt(m.textures[0].width)} × ${fmt(m.textures[0].height)}${m.textures[0].firstSlice ? " · first slice" : ""}` :
+        m.kind === "terrain" ? `${fmt(m.triangleCount)} triangles · coarse preview · ${m.sectorCount ? "BO4 layer colors" : "source color"}` :
         `${fmt(m.triangleCount ?? m.meshes.reduce((n, p) => n + p.indexCount / 3, 0))} triangles · LOD ${m.lod ?? 0} · ${fmt(m.missingTextures || 0)} missing textures`;
       $("#previewHint").textContent = m.kind === "image" ? "Drag to pan · Scroll to zoom · Checkerboard shows transparency" : "Drag to orbit · Shift-drag or right-drag to pan · Scroll to zoom";
       message("");
@@ -902,13 +921,13 @@ const Preview = (() => {
   const same = (a, b) => a && a.requestId === b.requestId && a.generation === b.generation;
   function clear() {
     pending = null; retained = null; assembler.cancel(); renderer?.clear();
-    $("#previewName").textContent = "Asset preview"; $("#previewInfo").textContent = "Preview loads only when requested.";
-    $("#previewStage").classList.remove("image"); message("Focus a model or image, then choose Preview.");
+    $("#previewName").textContent = "Asset preview"; $("#previewInfo").textContent = "Preview loads automatically on selection.";
+    $("#previewStage").classList.remove("image"); message("Select a model, image, or terrain to preview it.");
   }
   function cancelPending() {
     if (!pending) return;
     pending = null; assembler.cancel(); Bridge.call("preview.cancel").catch(() => {});
-    if (retained) message(""); else message("Focus a model or image, then choose Preview.");
+    if (retained) message(""); else message("Select a model, image, or terrain to preview it.");
   }
   function setLayout(value, persist = true) {
     layout = ["list", "split", "viewer"].includes(value) ? value : "list";
@@ -927,7 +946,11 @@ const Preview = (() => {
     scheduleRender(); renderer?.schedule();
   }
   async function request() {
-    const row = rowAt(S.cursor); if (!row || !["model", "image"].includes(row.type)) return;
+    if (!S.loaded || S.loading || PREVIEW_WINDOW || S.cursor < 0) return;
+    const row = rowAt(S.cursor);
+    // Keyboard navigation or a click can focus a row before its page arrives.
+    if (!row) { fetchPage(Math.floor(S.cursor / PAGE)); return; }
+    if (!["model", "image", "terrain"].includes(row.type)) return;
     cancelPending(); if (layout === "list") setLayout("split");
     const key = { requestId: ++serial, generation: S.hostGeneration }; pending = key; assembler.expect(key.requestId, key.generation);
     message(`Loading ${row.name}…`); $("#previewInfo").textContent = "Reading preview…";
@@ -944,7 +967,7 @@ const Preview = (() => {
     if (!same(pending, data)) return;
     if (data.status === "loading") message(data.message || `Loading ${data.name || "preview"}…`);
     if (data.status === "error") error(Error(data.message || data.error || "Preview unavailable"));
-    if (data.status === "cancelled") { pending = null; assembler.cancel(); message(retained ? "" : "Choose Preview to load an asset."); }
+    if (data.status === "cancelled") { pending = null; assembler.cancel(); message(retained ? "" : "Select a model, image, or terrain to preview it."); }
   });
   Bridge.on("preview.begin", begin);
   Bridge.on("preview.chunk", d => assembler.accept("chunk", d));

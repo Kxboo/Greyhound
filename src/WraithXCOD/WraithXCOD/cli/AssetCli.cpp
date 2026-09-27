@@ -74,6 +74,9 @@ namespace
         bool UpdateNames = false;
         // Which capture a Black Ops 4 terrain export runs; "0" is the terrain probe.
         std::string BO4CaptureMode = "0";
+        bool BO4CaptureModeExplicit = false;
+        std::string BO3Root;
+        bool DecalPlacements = false;
         uint32_t Limit = 0;
 
         std::set<std::string> ModelFormats;
@@ -170,6 +173,12 @@ namespace
         }
     }
 
+    std::string TypeName(const CoDAsset_t* Asset)
+    {
+        return Asset->AssetType == WraithAssetType::Material && static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal
+            ? "decal" : TypeName(Asset->AssetType);
+    }
+
     bool IsExportable(WraithAssetType Type)
     {
         switch (Type)
@@ -215,7 +224,8 @@ namespace
             Require(Textures.size() == 1, "selected image count");
             return;
         }
-        Require(Meta.at("kind") == "model" && Meta.at("vertexStride") == 36, "model vertex format");
+        Require((Meta.at("kind") == "model" || Meta.at("kind") == "terrain") &&
+            Meta.at("vertexStride") == 36, "mesh vertex format");
         uint64_t Vertices = 0, Indices = 0, Missing = 0;
         for (const auto& Mesh : Meta.at("meshes"))
         {
@@ -233,7 +243,7 @@ namespace
             }
             const auto Texture = Mesh.at("texture").get<int64_t>();
             Require(Texture == -1 || (Texture >= 0 && uint64_t(Texture) < Textures.size()), "texture binding");
-            Missing += Texture == -1 ? 1 : 0;
+            Missing += Meta.at("kind") == "model" && Texture == -1 ? 1 : 0;
             Vertices += Count;
             Indices += IndexCount;
         }
@@ -320,7 +330,7 @@ namespace
     bool ValidType(const std::string& Value)
     {
         static const std::set<std::string> Types{
-            "model", "animation", "image", "material", "sound", "rawfile",
+            "model", "animation", "image", "material", "decal", "sound", "rawfile",
             "terrain", "effect", "custom", "unknown" };
         return Types.find(Value) != Types.end();
     }
@@ -404,6 +414,12 @@ namespace
                 Options.Globs.push_back(Value);
             }
             else if (Argument == "--all") Options.All = true;
+            else if (Argument == "--bo3-root") {
+                // Legacy compatibility: exports now use the bundled BO3 template.
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.BO3Root = Value; Options.ExportOptionsUsed = true;
+            }
+            else if (Argument == "--decal-placements") { Options.DecalPlacements = true; Options.ExportOptionsUsed = true; }
             else if (Argument == "--terrain-source") { Options.TerrainSource = true; Options.ExportOptionsUsed = true; }
             else if (Argument == "--terrain-output") {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
@@ -463,6 +479,8 @@ namespace
             {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
                 Options.BO4CaptureMode = Value;
+                Options.BO4CaptureModeExplicit = true;
+                Options.ExportOptionsUsed = true;
                 if (Options.BO4CaptureMode.size() != 1 ||
                     Options.BO4CaptureMode[0] < '0' || Options.BO4CaptureMode[0] > '7')
                 { Error = "--bo4-capture-mode must be 0-7 (0 = terrain source probe)"; return false; }
@@ -543,10 +561,11 @@ namespace
         { Error = "--file is supported by assets preview only"; return false; }
         if (Options.Action == "preview")
         {
-            if (Options.Types.size() != 1 || (!Options.Types.count("model") && !Options.Types.count("image")) ||
+            if (Options.Types.size() != 1 || (!Options.Types.count("model") && !Options.Types.count("image") &&
+                !Options.Types.count("terrain")) ||
                 Options.Names.size() != 1 || !Options.Globs.empty() || Options.All || Options.DryRun ||
                 Options.Limit || Options.ExportOptionsUsed || !Options.ModelBatchRoot.empty())
-            { Error = "preview requires one --type model|image and one --name EXACT; export options are not used"; return false; }
+            { Error = "preview requires one --type model|image|terrain and one --name EXACT; export options are not used"; return false; }
             if (!Options.PreviewFile.empty() && !Options.Types.count("image"))
             { Error = "--file previews image package entries only"; return false; }
         }
@@ -622,6 +641,12 @@ namespace
         { Error = "xanim-v17 and xanim-v19 cannot be exported in the same run"; return false; }
         if ((Options.TerrainSource || Options.TerrainAreaExplicit || !Options.TerrainOutput.empty()) && !Options.Types.count("terrain"))
         { Error = "Terrain options require --type terrain"; return false; }
+        if (Options.BO4CaptureModeExplicit && (!Options.TerrainSource || !Options.Types.count("terrain")))
+        { Error = "--bo4-capture-mode requires --type terrain --terrain-source"; return false; }
+        if (Options.TerrainSource && Options.TerrainAreaExplicit)
+        { Error = "--terrain-area applies to Cold War baked terrain, not raw source capture"; return false; }
+        if ((!Options.BO3Root.empty() || Options.DecalPlacements) && !Options.Types.count("decal"))
+        { Error = "--bo3-root and --decal-placements require --type decal"; return false; }
         if (Options.ModelFormatExplicit && !Options.Types.count("model") && (!Options.Types.count("terrain") || Options.TerrainSource))
         { Error = "--model-format requires model assets or baked terrain"; return false; }
         if (!Options.ModelBatchRoot.empty() && (Options.Action != "export" || Options.Types.size()!=1 || !Options.Types.count("model")))
@@ -650,7 +675,7 @@ namespace
             {"schema", "greyhound-cli-capabilities-v1"},
             {"commands", {"assets capabilities", "assets list", "assets preview", "assets export", "assets export-splines", "superterrain", "placements"}},
             {"preview_command", {
-                {"syntax", "assets preview --type model|image --name EXACT [--file PACKAGE] [--json]"},
+                {"syntax", "assets preview --type model|image|terrain --name EXACT [--file PACKAGE] [--json]"},
                 {"writes_export_files", false}, {"output", "preview metadata and binary buffer size"}
             }},
             {"placement_command", {
@@ -678,6 +703,7 @@ namespace
                 {{"name", "animation"}, {"exportable", true}},
                 {{"name", "image"}, {"exportable", true}},
                 {{"name", "material"}, {"exportable", true}},
+                {{"name", "decal"}, {"exportable", true}, {"games", {"black_ops_4"}}},
                 {{"name", "sound"}, {"exportable", true}},
                 {{"name", "rawfile"}, {"exportable", true}},
                 {{"name", "terrain"}, {"exportable", true}},
@@ -691,6 +717,16 @@ namespace
                 {"image", {"png", "dds", "tga", "tiff"}},
                 {"sound", {"wav", "flac"}}
             }},
+            {"terrain_support", {
+                {"black_ops_cw", {{"model_packages", true}, {"source_capture", true},
+                    {"terrain_material_layers", "included"}, {"separate_decals_in_model_packages", "omitted"}}},
+                {"black_ops_4", {{"model_packages", false}, {"source_capture", true},
+                    {"source_option", "--terrain-source"}, {"separate_decals", "raw_source_in_terrain_probe"}}}
+            }},
+            {"decal_support", {{"black_ops_4", {{"format", "bo3_root_overlay"},
+                {"shader_families", {"6e0a762e671e6047"}}, {"placements", "optional_validated_subset"},
+                {"template", "bundled"}, {"requires_bo3_installation", false}}},
+                {"black_ops_cw", {{"native_bo3", false}}}}},
             {"options", {
                 {"selection", {"--type", "--name", "--glob", "--all", "--limit", "--dry-run"}},
                 {"existing_files", {"--skip-existing", "--overwrite"}},
@@ -700,7 +736,8 @@ namespace
                     "--global-images", "--local-images"}},
                 {"image", {"--patch-normals", "--no-patch-normals", "--patch-color", "--no-patch-color"}},
                 {"sound", {"--keep-sound-path", "--flat-sound-path", "--skip-blank-audio", "--include-blank-audio"}},
-                {"terrain", {"--terrain-source", "--terrain-area", "--terrain-output"}}
+                {"terrain", {"--terrain-source", "--terrain-area", "--terrain-output"}},
+                {"decal", {"--decal-placements"}}
             }},
             {"stable_defaults", {
                 {"model_format", {"semodel"}}, {"animation_format", {"seanim"}},
@@ -708,7 +745,8 @@ namespace
                 {"lod", "largest"}, {"reverse_lod_numbering", false}, {"model_images", true},
                 {"material_folders", true}, {"global_images", false},
                 {"patch_normals", true}, {"patch_color", true},
-                {"existing_files", "skip"}, {"terrain_export", "baked_model_packages"}, {"terrain_area", "whole"}, {"terrain_model_format", "cast"}
+                {"existing_files", "skip"}, {"terrain_export", "baked_model_packages"},
+                {"terrain_export_games", {"black_ops_cw"}}, {"terrain_area", "whole"}, {"terrain_model_format", "cast"}
             }},
             {"selection", {
                 {"exact", "repeat --name"}, {"glob", "repeat --glob"},
@@ -725,7 +763,7 @@ namespace
             "Greyhound agent asset CLI\r\n\r\n"
             "  Greyhound-cli.exe assets capabilities [--json|--jsonl]\r\n"
             "  Greyhound-cli.exe assets list [--type TYPE] [--name EXACT] [--glob PATTERN] [--limit N] [--json|--jsonl]\r\n"
-            "  Greyhound-cli.exe assets preview --type model|image --name EXACT [--file PACKAGE] [--json]\r\n"
+            "  Greyhound-cli.exe assets preview --type model|image|terrain --name EXACT [--file PACKAGE] [--json]\r\n"
             "      Builds the viewer's in-memory data and reports metadata; creates no export files.\r\n"
             "  Greyhound-cli.exe assets export --type TYPE (--name EXACT|--glob PATTERN|--all) [options]\r\n\r\n"
             "  Greyhound-cli.exe assets export-splines --placements JSON --spline-controls splined_models.json --output NEW_FOLDER [--model-format FORMAT ...]\r\n"
@@ -758,6 +796,9 @@ namespace
             "      implies non-static; a discrepancy is reported, the export is kept)\r\n"
             "  --bo4-name-database bundled|echo000\r\n"
             "  --name-db-folder PATH    Supplement unresolved names using Saluki CDB / CSV\r\n"
+            "  --type decal            BO4 native BO3 decal asset; uses bundled BO3 defaults\r\n"
+            "  --bo3-root PATH         Legacy option; accepted but no longer required or read\r\n"
+            "  --decal-placements      Add validated original placements as a Radiant prefab\r\n"
             "  --update-names           Download / update Saluki names directly from GitHub\r\n"
             "  --export-root PATH       Export folder for this run (default: the saved\r\n"
             "      exportroot setting, else exported_files beside Greyhound.exe)\r\n"
@@ -768,8 +809,10 @@ namespace
             "  --material-folders|--flat-materials --global-images|--local-images\r\n"
             "  --patch-normals|--no-patch-normals --patch-color|--no-patch-color\r\n"
             "  --keep-sound-path|--flat-sound-path --skip-blank-audio|--include-blank-audio\r\n\r\n"
-            "Terrain exports baked model packages (CAST default). --terrain-area whole|nearby.\r\n"
-            "Use --terrain-output FOLDER to choose the destination; --terrain-source for raw capture.\r\n";
+            "Cold War terrain exports baked model packages (CAST default), without separate decals.\r\n"
+            "--terrain-area whole|nearby applies to Cold War baked terrain only.\r\n"
+            "BO4 terrain requires --terrain-source and uses its own raw capture; no baked models.\r\n"
+            "Use --terrain-output FOLDER to choose the destination; --terrain-source also supports CW.\r\n";
     }
 
     json OptionsJson(const AssetOptions& Options)
@@ -806,6 +849,7 @@ namespace
             {"patch_color", Options.PatchColor}, {"keep_sound_path", Options.KeepSoundPath},
             {"skip_blank_audio", Options.SkipBlankAudio},
             {"existing_files", Options.Overwrite ? "overwrite" : "skip"},
+            {"decal", {{"template", "bundled"}, {"include_placements", Options.DecalPlacements}, {"format", "bo3_root_overlay"}}},
             {"terrain", {{"mode", Options.TerrainSource ? "source_data_only" : "baked_model_packages"}, {"area", Options.TerrainArea}, {"output_root", Options.TerrainOutput}, {"model_formats", Options.TerrainSource ? std::set<std::string>{} : (Options.ModelFormatExplicit ? Options.ModelFormats : std::set<std::string>{"cast"})}}}
         };
     }
@@ -832,7 +876,7 @@ namespace
         // pools. A headless inventory must not inherit the historical defaults
         // that hide images, materials, sounds, effects, and raw files.
         const char* VisibilityKeys[] = { "showxmodel", "showxanim", "showximage",
-            "showxmtl", "showxsounds", "showxrawfiles", "showefx", "showxterrain",
+            "showxmtl", "showxdecals", "showxsounds", "showxrawfiles", "showefx", "showxterrain",
             "showcwcollision", "showcwworld", "showcwnav", "showcwfx",
             "showcwentities", "showcwtriggers", "showcwai" };
         for (const auto Key : VisibilityKeys)
@@ -881,6 +925,7 @@ namespace
         SetBool("skipprevimg", !Options.Overwrite);
         SetBool("skipprevsound", !Options.Overwrite);
         SetBool("skipprevterrain", !Options.Overwrite);
+        SetBool("decalplacements", Options.DecalPlacements);
 
         return true;
     }
@@ -889,7 +934,7 @@ namespace
     {
         if (Asset == nullptr)
             return false;
-        const std::string Type = TypeName(Asset->AssetType);
+        const std::string Type = TypeName(Asset);
         if (!Options.Types.empty() && !Options.Types.count(Type))
             return false;
         if (Options.All || (Options.Names.empty() && Options.Globs.empty()))
@@ -912,8 +957,8 @@ namespace
         }
         std::stable_sort(Result.begin(), Result.end(), [](const CoDAsset_t* Left, const CoDAsset_t* Right)
         {
-            const std::string LeftType = TypeName(Left->AssetType);
-            const std::string RightType = TypeName(Right->AssetType);
+            const std::string LeftType = TypeName(Left);
+            const std::string RightType = TypeName(Right);
             if (LeftType != RightType) return LeftType < RightType;
             const std::string LeftName = Lower(Left->AssetName);
             const std::string RightName = Lower(Right->AssetName);
@@ -927,7 +972,7 @@ namespace
 
     json AssetDescription(const CoDAsset_t* Asset)
     {
-        const std::string Type = TypeName(Asset->AssetType);
+        const std::string Type = TypeName(Asset);
         return {
             {"id", Type + ":" + Asset->AssetName}, {"type", Type},
             {"name", Asset->AssetName}, {"exportable", IsExportable(Asset->AssetType)},
@@ -1152,6 +1197,11 @@ int AssetCli::Run(int argc, char** argv)
         if (CoDAssets::BeginGameFileMode(Options.PreviewFile) != LoadGameFileResult::Success)
             return EmitError(Options, "could not read the preview image package", 2);
     }
+    if (Options.BO4CaptureModeExplicit && CoDAssets::GameID != SupportedGames::BlackOps4)
+    {
+        CoDAssets::CleanUpGame();
+        return EmitError(Options, "--bo4-capture-mode requires a loaded Black Ops 4 map", 1);
+    }
     if (Options.Action == "export-splines")
     {
         bool Okay = false;
@@ -1234,10 +1284,45 @@ int AssetCli::Run(int argc, char** argv)
         if (Options.Action == "list")
         {
             Record["status"] = IsExportable(Asset->AssetType) ? "loaded" : "unsupported";
+            if (Asset->AssetType == WraithAssetType::Terrain)
+                Record["terrain_support"] = {{"model_packages", CoDAssets::TerrainExportProblem(false).empty()},
+                    {"source_capture", CoDAssets::TerrainExportProblem(true).empty()}};
+            if (TypeName(Asset) == "decal")
+            {
+                const auto Material = static_cast<const CoDMaterial_t*>(Asset);
+                Record["decal_support"] = {{"bo3_shader_supported", Material->VolumeDecalSupported},
+                    {"placements", Material->VolumeDecalInstances}};
+            }
             AppendAssetResult(Result, Options, Record);
             continue;
         }
 
+        if (Asset->AssetType == WraithAssetType::Terrain)
+        {
+            const auto Problem = CoDAssets::TerrainExportProblem(Options.TerrainSource);
+            if (!Problem.empty())
+            {
+                Record["status"] = "unsupported";
+                Record["error"] = Problem;
+                Record["generated_files"] = json::array();
+                Unsupported++;
+                AppendAssetResult(Result, Options, Record);
+                continue;
+            }
+        }
+        if (TypeName(Asset) == "decal")
+        {
+            const auto Problem = CoDAssets::DecalExportProblem(static_cast<const CoDMaterial_t*>(Asset));
+            if (!Problem.empty())
+            {
+                Record["status"] = "unsupported";
+                Record["error"] = Problem;
+                Record["generated_files"] = json::array();
+                Unsupported++;
+                AppendAssetResult(Result, Options, Record);
+                continue;
+            }
+        }
         const std::string OutputPath = !Options.ModelBatchRoot.empty() ? Options.ModelBatchRoot :
             (Asset->AssetType == WraithAssetType::Terrain && Options.TerrainSource ?
                 FileSystems::CombinePath(Options.TerrainOutput.empty() ? CoDAssets::BuildMapExportPath("dev_tools/terrain_sources") : FileSystems::CombinePath(Options.TerrainOutput,"dev_tools/terrain_sources"), ModelExportNaming::FileStem(Asset->AssetName)) : CoDAssets::GetExportPath(Asset));
@@ -1259,7 +1344,7 @@ int AssetCli::Run(int argc, char** argv)
             continue;
         }
 
-        Diagnostic("exporting " + TypeName(Asset->AssetType) + ":" + Asset->AssetName);
+        Diagnostic("exporting " + TypeName(Asset) + ":" + Asset->AssetName);
         const auto Before = Snapshot(OutputPath);
         const auto Started = std::chrono::steady_clock::now();
         auto ExportResult = ExportGameResult::UnknownError;

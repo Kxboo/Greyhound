@@ -80,7 +80,7 @@ BEGIN
     LTEXT           "Image Settings",IDC_IMAGEPANEL,0,87,117,29,SS_NOTIFY
     LTEXT           "Sound Settings",IDC_SOUNDPANEL,0,116,117,29,SS_NOTIFY
     LTEXT           "Terrain Settings",IDC_TERRAINPANEL,0,145,117,29,SS_NOTIFY
-    LTEXT           "Map & Model Export",IDC_CW_MAP_PANEL,0,174,117,29,SS_NOTIFY
+    LTEXT           "Placements",IDC_CW_MAP_PANEL,0,174,117,29,SS_NOTIFY
     LTEXT           "Dev Tools",IDC_CW_RESEARCH_PANEL,0,232,117,29,SS_NOTIFY
     LTEXT           "Radiant Brushes",IDC_CW_RADIANT_PANEL,0,203,117,29,SS_NOTIFY
 END
@@ -109,7 +109,7 @@ BEGIN
     CONTROL         "Splined model inputs",IDC_CW_CAPTURE_SPLINES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,190,310,12
     CONTROL         "Collision reader code span",IDC_CW_CODE_PROBE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,202,310,12
     CONTROL         "Verify the finished export",IDC_CW_VERIFY_PLACEMENTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,214,310,12
-    CONTROL         "Model placements",IDC_CW_CAPTURE_PLACEMENTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,124,180,105,11
+    CONTROL         "Placements",IDC_CW_CAPTURE_PLACEMENTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,124,180,105,11
     CONTROL         "Collision payloads",IDC_CW_CAPTURE_COLLISION,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,236,180,107,11
     LTEXT           "",IDC_CW_EXPORT_HINT,17,197,326,33
     LTEXT           "Asset group changes require Load Game. Export mode applies immediately.",IDC_TIP,17,233,326,10
@@ -129,7 +129,7 @@ BEGIN
     PUSHBUTTON      "Use default",IDC_EXPORT_ROOT_DEFAULT,255,62,65,16
     CONTROL "Automatically build brushes during Cold War pool exports",IDC_CW_RADIANT_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,40,310,14
     PUSHBUTTON "Export brushes now",IDC_EXPORT_BRUSHES,17,66,155,20
-    PUSHBUTTON "Export Model Placements JSON",IDC_EXPORT_PLACEMENTS,17,48,220,24
+    PUSHBUTTON "Export Placements JSON",IDC_EXPORT_PLACEMENTS,17,48,220,24
     CONTROL "Include non-static placements and entity classes (CW)",IDC_CW_NONSTATIC_PLACEMENTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,78,310,14
     PUSHBUTTON "Export Models from JSON",IDC_EXPORT_JSON_MODELS,17,124,220,24
     PUSHBUTTON "Spline models from JSON (CW)",IDC_EXPORT_SPLINE_MODELS,17,188,220,24

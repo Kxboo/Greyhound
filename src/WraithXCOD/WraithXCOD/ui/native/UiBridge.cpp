@@ -34,9 +34,11 @@ namespace
         return Value.dump(-1, ' ', false, json::error_handler_t::replace);
     }
 
-    const char* TypeKey(WraithAssetType Type)
+    const char* TypeKey(const CoDAsset_t* Asset)
     {
-        switch (Type)
+        if (Asset->AssetType == WraithAssetType::Material && static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal)
+            return "decal";
+        switch (Asset->AssetType)
         {
         case WraithAssetType::Model: return "model";
         case WraithAssetType::Animation: return "anim";
@@ -92,7 +94,13 @@ namespace
             return Sound->Length > 0 ? Strings::DurationToReadableTime(std::chrono::milliseconds(Sound->Length)) : "N/A";
         }
         case WraithAssetType::Material:
-            return Strings::Format("Images: %llu", (unsigned long long)((const CoDMaterial_t*)Asset)->ImageCount);
+        {
+            const auto Material = static_cast<const CoDMaterial_t*>(Asset);
+            if (Material->IsVolumeDecal)
+                return Strings::Format("Placements: %u | %s", Material->VolumeDecalInstances,
+                    Material->VolumeDecalSupported ? "BO3 color/reveal" : "BO3 shader unsupported");
+            return Strings::Format("Images: %llu", (unsigned long long)Material->ImageCount);
+        }
         case WraithAssetType::RawFile:
             return Strings::Format("Size: 0x%llx", (unsigned long long)Asset->AssetSize);
         case WraithAssetType::Terrain:
@@ -514,6 +522,19 @@ json UiBridge::Dispatch(const std::string& Command, const json& Args, const std:
         if (!CanStart()) return false;
         const auto Assets = Selection(Args);
         if (Assets.empty()) return false;
+        if (Assets.size() == 1 && Assets[0]->AssetType == WraithAssetType::Material &&
+            static_cast<const CoDMaterial_t*>(Assets[0])->IsVolumeDecal)
+        {
+            const auto Problem = CoDAssets::DecalExportProblem(static_cast<const CoDMaterial_t*>(Assets[0]));
+            if (!Problem.empty()) { Notice("Decal export", Problem); return false; }
+        }
+        if (std::all_of(Assets.begin(), Assets.end(), [](const CoDAsset_t* Asset) {
+            return Asset->AssetType == WraithAssetType::Terrain;
+        }))
+        {
+            const auto Problem = CoDAssets::TerrainExportProblem(false);
+            if (!Problem.empty()) { Notice("Terrain export", Problem); return false; }
+        }
         const auto Title = Assets.size() == 1 ? std::string("Exporting ") + Assets[0]->AssetName : "Exporting " + WithCommas(Assets.size()) + " assets";
         StartJob(Title, "Preparing...", true, [Assets](JobSink&)
         {
@@ -530,6 +551,13 @@ json UiBridge::Dispatch(const std::string& Command, const json& Args, const std:
                 : "Exported " + WithCommas(Assets.size() - Failed) + " assets" + (Failed ? ", " + WithCommas(Failed) + " failed." : ".");
             const auto GamePath = FileSystems::CombinePath(CoDAssets::ExportRoot(), CoDAssets::GameFolderName());
             Result.Path = IsDirectory(GamePath) ? GamePath : CoDAssets::ExportRoot();
+            if (Assets.size() == 1 && Assets[0]->AssetType == WraithAssetType::Material &&
+                static_cast<const CoDMaterial_t*>(Assets[0])->IsVolumeDecal && !Result.Cancelled)
+            {
+                Result.Status = Failed ? "Decal conversion incomplete. Open the output folder for its log and report."
+                    : "Exported BO3 package. Copy bo3_root contents into BO3, then convert the assets in APE.";
+                if (IsDirectory(CoDAssets::LatestExportPath)) Result.Path = CoDAssets::LatestExportPath;
+            }
             return Result;
         }, true);
         return true;
@@ -644,8 +672,9 @@ json UiBridge::RequestPreview(const json& Args)
     if (Generation != ViewGeneration || Index >= View.size())
         return {{"status", "stale"}, {"requestId", Request}};
     auto Asset = View[Index];
-    if (Asset->AssetType != WraithAssetType::Model && Asset->AssetType != WraithAssetType::Image)
-        return {{"status", "unsupported"}, {"message", "Preview supports models and images."}, {"requestId", Request}};
+    if (Asset->AssetType != WraithAssetType::Model && Asset->AssetType != WraithAssetType::Image &&
+        Asset->AssetType != WraithAssetType::Terrain)
+        return {{"status", "unsupported"}, {"message", "Preview supports models, images, and terrain."}, {"requestId", Request}};
 
     CancelPreview(false);
     const uint64_t Sequence = PreviewSequence;
@@ -764,7 +793,7 @@ json UiBridge::State(bool Reset)
     if (Loaded)
     {
         std::map<std::string, size_t> Tally;
-        for (auto Asset : CoDAssets::GameAssets->LoadedAssets) Tally[TypeKey(Asset->AssetType)]++;
+        for (auto Asset : CoDAssets::GameAssets->LoadedAssets) Tally[TypeKey(Asset)]++;
         for (auto& Item : Tally) Counts[Item.first] = Item.second;
         Total = CoDAssets::GameAssets->LoadedAssets.size();
 
@@ -776,6 +805,8 @@ json UiBridge::State(bool Reset)
             {"id", CoDAssets::GameFolderName()},
             {"name", File ? FileSystems::GetFileName(LastLoadedFile) : std::string(GameName(CoDAssets::GameID))},
             {"path", Path}, {"icon", GameIcon}, {"file", File},
+            {"terrain", {{"modelPackages", !File && CoDAssets::TerrainExportProblem(false).empty()},
+                         {"sourceCapture", !File && CoDAssets::TerrainExportProblem(true).empty()}}},
         };
     }
     json Result = {
@@ -861,7 +892,7 @@ void UiBridge::Query(const json& Args)
     auto& All = CoDAssets::GameAssets->LoadedAssets;
     std::vector<CoDAsset_t*> Found = Strings::IsNullOrWhiteSpace(Text) ? All : AssetSearch::Filter(Text, All);
     if (Type != "all")
-        Found.erase(std::remove_if(Found.begin(), Found.end(), [&](CoDAsset_t* A) { return Type != TypeKey(A->AssetType); }), Found.end());
+        Found.erase(std::remove_if(Found.begin(), Found.end(), [&](CoDAsset_t* A) { return Type != TypeKey(A); }), Found.end());
 
     if (!Sort.empty())
     {
@@ -870,7 +901,7 @@ void UiBridge::Query(const json& Args)
         Keyed.reserve(Found.size());
         for (auto Asset : Found)
         {
-            std::string Key = Sort == "type" ? TypeKey(Asset->AssetType)
+            std::string Key = Sort == "type" ? TypeKey(Asset)
                 : Sort == "status" ? StatusKey(Asset->AssetStatus)
                 : Sort == "details" ? Details(Asset) : Asset->AssetName;
             Keyed.emplace_back(std::move(Key), Asset);
@@ -892,7 +923,7 @@ json UiBridge::Rows(size_t Start, size_t Count)
     for (size_t i = Start; i < View.size() && i < Start + Count; i++)
     {
         auto Asset = View[i];
-        Out.push_back({ {"name", Asset->AssetName}, {"type", TypeKey(Asset->AssetType)},
+        Out.push_back({ {"name", Asset->AssetName}, {"type", TypeKey(Asset)},
             {"status", StatusKey(Asset->AssetStatus)}, {"details", Details(Asset)} });
     }
     return Out;
@@ -1001,7 +1032,7 @@ void UiBridge::RunTool(const std::string& Tool)
 {
     if (!CanStart()) return;
     if (Tool == "placements")
-        StartJob("Model placements", "Reading model placements...", false, ExportJobs::ModelPlacements);
+        StartJob("Placements", "Reading placements...", false, ExportJobs::ModelPlacements);
     else if (Tool == "brushes")
     {
         const auto Problem = ExportJobs::CheckRadiantBrushes();
