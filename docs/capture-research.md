@@ -14,7 +14,7 @@ BO4 diagnostics, and export workflows/checks. Enable the pools you need, then
 
 | Workflow | Route | Output and limits |
 | --- | --- | --- |
-| CW terrain source | Dev Tools > Terrain source capture and checks | Raw source data with a sealed inventory. Main terrain Export creates baked model packages. |
+| CW terrain source | Dev Tools > Terrain source capture and checks | Sealed raw evidence; [CW terrain](cw-terrain.md) traces discovery and the separate detailed decoding path. |
 | CW placements | Map & Model Export | Rigid placements and optional entities, FX, lights and probes; [Spline models from JSON](cw-placements.md#static-spline-model-export) bakes each instance in the selected model formats, with per-model images and material info. |
 | CW brushes | Radiant Brushes | Supported collision hulls and trigger/volume prefabs; unresolved material/layout decisions remain in reports. |
 | CW pool diagnostics | Dev Tools, then export `cw_pool_` RawFile rows | Headers, bounded prefixes or supported counted arrays, depending on mode. |
@@ -142,8 +142,10 @@ separate output directory.
 The source layout and finalizer live in
 [shared core](../tools/shared/core/layout.py) and
 [shared capture tools](../tools/shared/capture/finalize_research_capture.py).
-Greyhound owns discovery/capture and supported brush conversion. Terrain
-reconstruction and OMPV baking belong to a separate consumer.
+The sealed source inventory is an evidence boundary, not a decoded
+surface. The installed CW terrain path separately captures focused live
+inputs and decodes height, holes, and material composition. See
+[CW terrain discovery and decoding](cw-terrain.md).
 
 BO4 probes use their own layouts and completeness reports. Do not apply CW
 finalization or offsets to a BO4 capture.

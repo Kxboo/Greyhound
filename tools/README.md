@@ -11,7 +11,7 @@ tools/
       templates/      # script templates consumed by the CW helpers
     placements/       # model placement counts, budgets and source splitting
     brushes/          # CW collision decoding, hulls and Radiant conversion
-    terrain/          # native-shader terrain bake and package validation
+    terrain/          # saved CW terrain decoding and shader composition
     research/         # development investigations and capture comparisons
   black_ops_4/
     capture/          # terrain packaging and GDT intake verification
@@ -36,7 +36,7 @@ tools/
 | --- | --- |
 | Organize CW placements | [organize_cw_placements.py](cold_war/capture/organize_cw_placements.py) |
 | Decode saved CW entities | [decode_cw_entitylist.py](cold_war/capture/decode_cw_entitylist.py) |
-| Bake saved CW terrain inputs | [bake.py](cold_war/terrain/bake.py) |
+| Decode saved CW height, holes and material inputs | [bake.py](cold_war/terrain/bake.py) · [terrain research guide](../docs/cw-terrain.md) |
 | Audit CW placement counts | [audit_cw_placement_counts.py](cold_war/placements/audit_cw_placement_counts.py) |
 | Offline CW spline bake with per-model images and material info | [bake_cw_splines.py](cold_war/placements/bake_cw_splines.py) |
 | Audit BO4 placements | [audit_bo4_placements.py](black_ops_4/placements/audit_bo4_placements.py) |

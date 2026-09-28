@@ -61,10 +61,11 @@ binaries, local virtual environments or machine-specific runtime paths. Use
 small artificial records for tests. Keep copyright/license and attribution files.
 Do not claim a live test from a synthetic test or a byte audit from a screenshot.
 
-Write reusable documentation with repository-relative paths and explicit input
-variables. Keep the docs set to 5–10 Markdown pages, each at most 500 lines.
-Update an existing topic instead of adding a session diary. Label map-specific
-research tools and list inputs that are not included in the repository.
+Write reusable documentation with repository-relative paths and explicit
+input variables. Add findings to the relevant topic guide and update the
+[research map](README.md#research-map) when an entry point changes.
+Preserve measured offsets, provenance, and limits; avoid session diaries.
+Label map-specific tools and list inputs not included in the repository.
 
 ## Extending CW, BO4, or another game
 
@@ -91,7 +92,9 @@ unresolved names, nonfinite transforms and unsupported layouts as applicable.
 For brushes, preserve one-to-one source accounting and report added/omitted
 collision categories. For placements, keep separate instances and distinguish
 render placement from collision placement, proxies, splines and dynamic state.
-For terrain, keep sealed Dev Tools captures immutable. The main Cold War exporter uses a focused capture and the bundled terrain bake; see cw-terrain.md.
+For terrain, keep sealed Dev Tools captures immutable. Trace the live
+TerrainGfx record, focused capture, and decoder separately; see
+[CW terrain discovery and decoding](cw-terrain.md).
 
 ## Working with an AI assistant
 

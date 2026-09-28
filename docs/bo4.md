@@ -6,12 +6,12 @@ BO4 supports static placements, model batches, supported brush exports and
 diagnostic captures. Its terrain probe and binary layouts are separate from
 Cold War's. Start with [build and CLI usage](README.md).
 
-BO4 terrain currently uses **Diagnostics > Terrain source capture**, or
-`assets export --type terrain --all --terrain-source` with an explicit output
-folder. The normal terrain model exporter is Cold War-only; BO4 selections are
-rejected before output folders are reserved. Offline BO4 terrain tools remain
-separate and support decal omission through `--no-decals`.
-See [BO4 terrain research](bo4-terrain-research.md).
+To locate BO4 TerrainGfx and inspect its measured sector layout, start with
+[BO4 terrain research](bo4-terrain-research.md) and the
+[CW/BO4 comparison](terraingfx-reference.md). Capture a loaded terrain
+through **Diagnostics > Terrain source capture**, or use
+`assets export --type terrain --all --terrain-source` with an explicit
+output folder. Offline BO4 tools consume that probe separately.
 
 ## Native BO3 decals
 

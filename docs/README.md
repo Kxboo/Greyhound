@@ -1,21 +1,24 @@
 # Greyhound documentation
 
-Build and use this fork, understand its exports, or find a place to contribute.
+Use this index to locate measured layouts, decoder entry points, and
+saved evidence. For building and running Greyhound, see [Build on Windows](#build-on-windows)
+and [Run Greyhound](#run-greyhound).
 
-| Task | Guide |
-| --- | --- |
-| Build and run Greyhound | This page |
-| Review code, contribute, or use an AI assistant | [Contributing](contributing.md) |
-| Find scripts by game and task | [Script directory guide](../tools/README.md) |
-| Cold War static/non-static placements, lights and probes | [CW placements](cw-placements.md) |
-| Cold War FX, animation references and entity properties | [CW effects and entities](cw-effects-entities.md) |
-| Cold War navigation and progression research | [CW navigation](cw-navigation.md) |
-| Cold War brushes and collision | [CW collision](cw-collision.md) |
-| TerrainGfx findings, live preview and source references | [TerrainGfx reference](terraingfx-reference.md) |
-| Capture contracts, diagnostic pools and audits | [Capture research](capture-research.md) |
-| Black Ops 4 placements, names and brushes | [BO4](bo4.md) |
-| Download Saluki names or use a local name database | [Saluki names](saluki-names.md) |
-| Black Ops 4 terrain and collision layouts | [BO4 research](bo4-terrain-research.md) |
+## Research map
+
+| Question | Findings | Code or evidence |
+| --- | --- | --- |
+| How is Cold War terrain found and decoded? | [CW terrain](cw-terrain.md) · [TerrainGfx comparison](terraingfx-reference.md) | [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp) · [terrain capture](../src/WraithXCOD/WraithXCOD/games/cold_war/terrain/CWTerrainBake.h) |
+| How does BO4 TerrainGfx differ? | [BO4 terrain and collision](bo4-terrain-research.md) · [TerrainGfx comparison](terraingfx-reference.md) | [BO4 reader](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp) · [source packager](../tools/black_ops_4/capture/package_bo4_terrain.py) |
+| Where are placements and scene objects? | [CW placements](cw-placements.md) · [CW effects and entities](cw-effects-entities.md) · [BO4](bo4.md) | [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp) · [BO4 reader](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp) |
+| Where are collision and navigation decoded? | [CW collision](cw-collision.md) · [CW navigation](cw-navigation.md) · [BO4 research](bo4-terrain-research.md) | [Script directory](../tools/README.md) · [BO4 brush workflow](bo4-radiant-export.md) |
+| Which names and preview data are reliable? | [Saluki names](saluki-names.md) · [Library preview](library-preview.md) · [reader audit](preview-reader-audit.md) | [Preview builder](../src/WraithXCOD/WraithXCOD/assets/preview/PreviewData.cpp) |
+| How should captures be checked? | [Capture contracts](capture-research.md) · [contribution guide](contributing.md) | [Saved map-data audit](cw-map-data-validation.json) · [probe bounds](cw-probe-bounds-evidence.json) |
+
+For implementation paths, use the [source walkthrough](contributing.md#walk-through-the-source)
+and [script directory](../tools/README.md). [Code organization](code-organization.md)
+records the repository move; [model LOD numbering](model-lod-numbering.md)
+documents that separate model setting.
 
 ## Paths used in these guides
 

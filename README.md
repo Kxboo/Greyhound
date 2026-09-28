@@ -1,7 +1,7 @@
 # Greyhound — Kxboo fork
 
-A Call of Duty asset exporter with additional Cold War and Black Ops 4 map
-export and research tools.
+A Call of Duty asset exporter with Cold War and Black Ops 4 map research,
+capture, decoding, and conversion tools.
 
 ## Build and use
 
@@ -20,19 +20,18 @@ testing instructions, other-game support and working with an AI assistant.
 The **[script directory guide](tools/README.md)** groups tools by game and task.
 Bug reports should include the game/build, map, steps and relevant export report.
 
-## More guides
+## Research guides
 
-| Topic | Documentation |
+| Question | Start here |
 | --- | --- |
-| Cold War placements | [Placements](docs/cw-placements.md) |
-| Cold War effects and entities | [FX, animation and entity data](docs/cw-effects-entities.md) |
-| Cold War brushes and navigation | [Collision](docs/cw-collision.md) · [Navigation](docs/cw-navigation.md) |
-| Black Ops 4 | [Workflows](docs/bo4.md) · [Terrain and collision research](docs/bo4-terrain-research.md) |
-| Cold War terrain models | [Baked terrain export](docs/cw-terrain.md) |
-| Source captures and validation | [Capture research](docs/capture-research.md) |
+| Where is TerrainGfx found and how is it decoded? | [CW terrain](docs/cw-terrain.md) · [CW/BO4 TerrainGfx reference](docs/terraingfx-reference.md) |
+| Where are map placements and scene objects found? | [CW placements](docs/cw-placements.md) · [CW effects and entities](docs/cw-effects-entities.md) · [BO4 placements](docs/bo4.md) |
+| Where are collision and navigation records decoded? | [CW collision](docs/cw-collision.md) · [CW navigation](docs/cw-navigation.md) · [BO4 terrain and collision](docs/bo4-terrain-research.md) |
+| What proves a capture or preview? | [Capture contracts](docs/capture-research.md) · [Preview reader audit](docs/preview-reader-audit.md) |
 
-Support varies by game. The guides describe supported exports and experimental
-data. Cold War terrain exports baked model packages; raw source capture is in Dev Tools.
+The [documentation index](docs/README.md) maps each topic to its reader,
+decoder, and saved evidence. These guides distinguish measured layouts
+from preview assumptions and conversion output.
 
 ## Credits and license
 

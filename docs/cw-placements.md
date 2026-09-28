@@ -38,7 +38,7 @@ JSONs. See [effects and entities](cw-effects-entities.md).
 
 Normal placement exports contain **rigid static placements only**. Rows marked
 `RequiresSplineDeformation`, or carrying a valid `SplineInstanceIndex`, are
-excluded from that rigid workflow. The separate [offline spline bake](#offline-static-spline-bake)
+excluded from that rigid workflow. The separate [offline spline bake](#static-spline-model-export)
 uses captured controls and exported source meshes. The complete capture
 remains in `diagnostics/static_models.json`; `placement_report.json` records
 captured, published and deferred counts. The completion dialog reports the
