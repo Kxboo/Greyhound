@@ -1,6 +1,6 @@
 # TerrainGfx reference: Cold War and Black Ops 4
 
-[Documentation index](README.md) | [Cold War terrain export](cw-terrain.md) | [BO4 terrain research](bo4-terrain-research.md) | [Library preview](library-preview.md)
+[Documentation index](README.md) | [Cold War terrain decoding](cw-terrain.md) | [BO4 terrain research](bo4-terrain-research.md) | [Library preview](library-preview.md)
 
 This page is a map of the TerrainGfx findings in this repository. It separates
 what the game data and saved captures establish from what the lightweight
@@ -23,7 +23,7 @@ payloads a BSP contains. See [CW map-name lookup](../src/WraithXCOD/WraithXCOD/s
 | Route | Cold War | Black Ops 4 |
 | --- | --- | --- |
 | TerrainGfx pool | `0xB1`; measured header size `0x128` | `0x98`; live headers in the examples below are 184 bytes |
-| Normal Terrain export | Baked model packages with separate material images | No baked model package route; use source capture |
+| Detailed source decoding | Mapping roots, height and hole masks, and captured material composition | Sector heights, cutouts and weights; shader parity remains unverified |
 | Raw source | Terrain source capture and sealed evidence | Mode 0 TerrainGfx measurement probe |
 | Library Preview | One coarse map grid using the live combined color and R16 height images | A coarse grid per sector, with source layer color maps and weights |
 
@@ -78,13 +78,12 @@ independently checked against an in-game reference render.** A person viewing
 the preview could not confidently judge whether it was mapped correctly.
 Treat this route as a coarse study preview, not verified color/height parity.
 
-For a high-fidelity CW output, [the separate baked-model workflow](cw-terrain.md)
-uses the captured composition shader, native material records, controls and
-distortion. Its raw source path records evidence and integrity separately.
-The [native export](../src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp),
-[research capture](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp),
-[bake](../tools/cold_war/terrain/bake.py) and
-[finalizer](../tools/cold_war/terrain/finalize.py) are the main entry points.
+For the fuller CW decode, [the terrain guide](cw-terrain.md) traces the
+TerrainGfx mapping roots, height and hole masks, image bindings, and captured
+material composition shader. The [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp),
+[capture validation](../src/WraithXCOD/WraithXCOD/games/cold_war/terrain/CWTerrainBake.h),
+and [saved-input decoder](../tools/cold_war/terrain/bake.py) show the
+corresponding code paths.
 
 ## Black Ops 4 layout and preview
 
@@ -134,7 +133,8 @@ shader hashes, equations, caveats and capture-specific counts.
   independent capture. The first and second BC3/BC5 pairs may have different
   roles; the preview currently selects the first when their names are unknown.
 - The CW coarse preview does not apply cutout masks or replay the material
-  composition shader. The baked export has a separate, more detailed path.
+  composition shader. The detailed capture and composition path decodes those
+  inputs separately.
 - The BO4 coarse preview does not match the full shader pipeline. A valid
   packet and a recognizable map shape do not prove pixel or displacement parity.
 - TerrainGfx alone does not supply placed models or a complete map scene.
@@ -153,7 +153,7 @@ $gh = '.\bin\cli\Greyhound-cli.exe'
 `packet_verified: true` confirms the packed preview is structurally valid.
 Inspect `preview.bounds`, `meshes`, `triangleCount`, `sourceLayerCount` and
 `colorSource`, then compare the on-screen view with a known map reference.
-The preview is live and does not require a saved terrain export.
+The preview is live and does not require a saved source capture.
 
 For archived evidence, use [CW raw source capture](cw-terrain.md#raw-source-and-diagnostics)
 or [BO4 mode 0](bo4.md#capture-modes). BO4's
@@ -173,6 +173,6 @@ that the coarse viewer reproduces the game's shader. See
 | How are TerrainGfx assets found? | [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp), [BO4 reader](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp) |
 | How is a live preview constructed? | [PreviewData.cpp](../src/WraithXCOD/WraithXCOD/assets/preview/PreviewData.cpp), [PreviewImage.cpp](../src/WraithXCOD/WraithXCOD/assets/preview/PreviewImage.cpp) |
 | How does the viewer receive and draw it? | [UiBridge.cpp](../src/WraithXCOD/WraithXCOD/ui/native/UiBridge.cpp), [preview.js](../src/WraithXCOD/WraithXCOD/ui/preview.js), [Library preview contract](library-preview.md) |
-| Where is CW source captured and baked? | [CoDAssets.cpp](../src/WraithXCOD/WraithXCOD/assets/CoDAssets.cpp), [GameBlackOpsCW.cpp](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp), [CW terrain guide](cw-terrain.md) |
+| Where is CW terrain found and decoded? | [GameBlackOpsCW.cpp](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp), [CWTerrainBake.h](../src/WraithXCOD/WraithXCOD/games/cold_war/terrain/CWTerrainBake.h), [CW terrain guide](cw-terrain.md) |
 | Where is BO4 measured and packaged? | [GameBlackOps4.cpp](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp), [BO4 research guide](bo4-terrain-research.md), [package_bo4_terrain.py](../tools/black_ops_4/capture/package_bo4_terrain.py) |
 | What tests cover the saved decoders? | [CW terrain tests](../tests/cold_war/terrain/), [BO4 capture tests](../tests/black_ops_4/capture/) |
