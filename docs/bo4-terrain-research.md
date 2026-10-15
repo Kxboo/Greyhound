@@ -23,7 +23,7 @@ python tools/black_ops_4/capture/package_bo4_terrain.py $probe $output
 python tools/black_ops_4/capture/verify_bo4_terrain_package.py $output --placements '<placements run>\static_models.json'
 ```
 
-Neither tool runs automatically as part of Greyhound's terrain export.
+The packager runs for the [BO4 terrain export versions](bo4-terrain-export.md). The verifier remains an explicit offline check; the legacy raw diagnostic route does not package its output.
 
 ### Finding each sector's files
 
@@ -213,6 +213,114 @@ layer_color = albedo.rgb · lerp(1, tint, a)
   - It still refuses metal and untextured layers rather than approximating
     them, since neither map uses them.
   - The shader replay below runs every path.
+
+### Expanded layer parameters (2026-10-12 verification)
+
+`bo4_terrain_layer_source.py` reconstructs the 112-byte shader record from the
+captured 264-byte layer, rather than inferring a material constant-buffer layout.
+The native preparation routine at RVA `0x3CB4450` copies a 196-byte block from
+layer `+0x40`, inserts the sector weight slice, and resolves eight texture
+descriptors through `0x3CBFDF0`. The packer is `0x3CBF0B0`. Their saved bytes
+were verified against the running executable and executed only in an offline
+CPU emulator. All 17 Mansion and six IX captured records match all 112 bytes.
+The Python decoder also matches 24 native prepared Mansion layers and 64 native
+packing boundary vectors. Ground-cover overrides require an additional runtime
+setting and are explicitly unsupported by this source reconstruction path.
+
+Flags at layer `+0x60` belong to the individual layer. In Mansion, the same
+material has different `0x400` far-tiling flags in different sectors. Copying
+flags from a material or technique-set donor is therefore invalid. The four
+corrected donor records are (sector,slot) `(3,1)`, `(3,2)`, `(4,0)`, `(4,1)`.
+Their missing uploads are reconstructed from their own captured expanded inputs
+and image descriptors; they are not claimed as observed runtime uploads.
+
+Half conversion truncates mantissa bits and clamps the exponent as BO4 does;
+it must not use IEEE round-to-nearest conversion. Albedo sRGB conversion applies
+only to RGB; alpha remains linear. Keep per-layer source values and native mips.
+Selected shader path, bound sampler/filter/MaxLOD state, and in-game frame parity
+remain distinct verification questions. Regression vectors are in `tests/black_ops_4/capture/fixtures/terrain_expanded_native_oracle.json`.
+
+### Captured terrain texture views (2026-10-12)
+
+Read-only Mansion D3D11 object metadata establishes texture/SRV mip counts:
+BC1 sRGB 1024/2 slices/9 mips; BC4 1024/39/9; BC7 UNORM
+2048/17/10; BC7 sRGB 2048/12/10. These resources end at 4x4.
+The unused 8x8 BC3 fallback is a separate 2D view with four mips to 1x1.
+Texture descriptions and SRV descriptions agree; all MostDetailedMip values
+are zero. Original DDS files may retain additional 2x2/1x1 package tails.
+
+`capture/terrain_sampling.json` is optional evidence for a particular asset
+and SHA-256 of its ordered 112-byte layer records. The replay validates those
+inputs and applies the recorded view mip counts before subtracting each image's
+array mip offset. Source texture files are preserved. A missing profile retains
+legacy behavior; these Mansion counts must not be imposed on other maps.
+
+The engine sampler cache at RVA 0xBFEA920 and constructor at 0x34F1580 were
+identified. Twenty-nine cache entries have byte-exact offline descriptor
+reconstruction. This identifies available filter/address/anisotropy/LOD settings,
+but does not identify a terrain draw's bound sampler slots. The replay's sampler
+binding assumptions and anisotropic-filter approximation remain limitations.
+No graphics API is invoked inside BO4 to read these descriptions.
+
+### Terrain material sampler and GPU verification (2026-10-12)
+
+The eight captured terrain material recipes bind PS/DS `s1` through native
+argument hash lookup: raw word `0x4012 & 0x3fff` becomes sampler state `0x12`,
+trilinear wrap with zero bias. Offline native binder execution checked 160
+methods and 96 sampler calls. The graph connects the created G-buffer PS
+`d437ccb01fe95d61` with DS `89585f99be39cd7f` in the tessellated recipes.
+These are recipe/header links, not proof of a selected frame draw. Grid `s0`
+and later overrides remain unverified; a short command-state sample did not
+catch a matching terrain material. Existing texture-view mip limits still apply.
+
+The first near-only mismatch was traced to the CPU replay's inactive-lane UV
+and derivative/LOD handling. A standalone D3D11 program, using the original
+compressed DDS resources and original shaders, gives bit-identical outputs for
+both variants at that four-pixel group on Intel and NVIDIA. It uses its own
+device, with no game process access, injection or RenderDoc. This is a finite
+numeric check, not game-frame parity. CPU/GPU differences still require isolation;
+the other earlier sample points have not been declared resolved. No blend
+formula or export default was changed to hide the discrepancy.
+
+The original captures and standalone GPU probe are not distributed here. The bundled replay remains approximate; choosing baked output does not certify frame parity.
+
+### Created terrain shader variants (2026-10-12)
+
+Read-only shader-cache metadata identifies 43 of the 76 saved terrain bytecode
+files as created D3D11 shader objects: 34 vertex, 6 pixel, 1 hull and 2 domain.
+The bytecode-content hash routine (RVA 0x520C30), cache lookup (0x35F98A0), and
+creation dispatcher (0x35F9CA0) match current BO4 code. Offline native execution
+validates all 76 hashes plus 17 boundary-length inputs. Creation is not proof of
+a particular draw binding.
+
+The existing replay's structured-buffer G-buffer PS `457b8be2b884842c` and DS
+`8b5368bcb0ce612f` are absent from the captured creation cache. Created variants include PS `d437ccb01fe95d61`, G-buffer DS
+`89585f99be39cd7f`, and the separate depth DS `45d57ac01db7bed8`. The
+captured technique graph establishes the G-buffer pairing.
+They read the same 112-byte layer layout as seven CB1 float4 rows per layer;
+texture registers shift when the structured layer buffer is removed. The
+comparison script records the explicit register mapping. The main replay still
+uses its original variant and register taps; no export default was switched.
+
+This exposed a replay bug: four-operand `imul` wrote the low result to destHI
+and never wrote destLO. The created PS uses `imul null, index, layer, 7` for
+CB1 indexing. Signed and unsigned multiply now preserve both halves, null
+destinations, masks, inactive lanes and aliased sources. Four new regressions
+and the 33 existing focused tests pass. Microsoft instruction references:
+https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/imul--sm4---asm-
+https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/umul--sm4---asm-
+
+Offline probes use original native textures and the verified texture-view
+limits at four derivative scales. For the original source far-tiling flags,
+all three targets and discard masks agree bit-for-bit at 736 surviving points
+out of 1,280 tested across all five sectors. This is finite shader-variant
+validation, not in-game visual parity. Clearing far flags for the existing
+near-only approximation leaves a sector-0 discrepancy at three sampled points;
+maximum RT0 difference is 0.001323 and RT1 is 0.007479. That discrepancy remains
+open. Sampler bindings, anisotropic filtering and a draw-selected path remain
+unverified. These numeric comparisons do not validate exported geometry or lighting.
+
+See `tests/black_ops_4/capture/test_bo4_integer_multiply.py` and `test_bo4_sampling_views.py` for the reusable regression checks. Historical game captures are not included in this repository.
 
 ### Shader replay
 

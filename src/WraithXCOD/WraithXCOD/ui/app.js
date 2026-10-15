@@ -614,11 +614,12 @@ const SCHEMA = [
   },
   {
     id: "terrain", title: "Terrain",
-    sub: "Cold War exports terrain model packages. Black Ops 4 uses its separate raw source capture in Diagnostics.",
+    sub: "Choose a BO4 source package, original-material CASTs, or baked CASTs. Build Radiant patches in TerrainReconstructor.",
     rows: [
       { type: "note", label: "Terrain and decals", hintFn: () => GAMES_BO4.includes(S.game?.id)
-        ? "BO4: use Diagnostics → Terrain source capture. The terrain probe keeps decal data separate. Load Decals in the Library to export supported BO3 assets independently."
+        ? "BO4: export the Terrain asset using the version below. Source is for TerrainReconstructor; original-material CASTs retain source images; baked CASTs composite layers and decals."
         : "Cold War: terrain material layers are included; separate decals are omitted. Raw source capture remains available in Diagnostics. Native BO3 conversion of Cold War decals is not supported yet." },
+      { type: "seg", key: "bo4terrainversion", def: "source", label: "BO4 export", when: () => !S.loaded || GAMES_BO4.includes(S.game?.id), options: [["source", "Source package"], ["native", "Original materials"], ["baked", "Baked CAST"]], hint: "Source: open the package in TerrainReconstructor for patches and collision controls. Original materials: CAST + _mat_info + _images. Baked: 1024 textures; large maps can take a long time." },
       { type: "seg", key: "terrainarea", def: "whole", label: "Cold War area", when: () => !S.loaded || GAMES_CW.includes(S.game?.id), options: [["whole", "Whole map"], ["nearby", "5 × 5 tiles near the camera"]] },
       { type: "seg", key: "terrainmodelformats", def: "cast", label: "Cold War format", when: () => !S.loaded || GAMES_CW.includes(S.game?.id), options: [["cast", "CAST"], ["selected", "My model formats"]] },
       { type: "folder", key: "terrainoutputroot", label: "Terrain output folder", hint: "Used by terrain model exports and raw source captures for both games. Empty uses the export folder above.", empty: "Same as export folder" },

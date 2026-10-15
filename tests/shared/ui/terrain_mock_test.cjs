@@ -22,6 +22,7 @@ const server = http.createServer((req, res) => {
     const area = page.locator("#set-terrain .row").filter({ hasText: "Cold War area" });
     const format = page.locator("#set-terrain .row").filter({ hasText: "Cold War format" });
     const note = page.locator("#set-terrain .row").filter({ hasText: "Terrain and decals" });
+    const bake = page.locator("#set-terrain .row").filter({ hasText: "BO4 export" });
     const setGame = async (id, extra = {}) => {
       await page.evaluate(({ id, extra }) => GreyhoundMock.receive("state", {
         loaded: true, game: { id, name: id, ...extra }, total: 1,
@@ -36,7 +37,11 @@ const server = http.createServer((req, res) => {
     await setGame("black_ops_4");
     assert(!(await area.isVisible()), "CW area cannot imply BO4 nearby support");
     assert(!(await format.isVisible()), "CW formats cannot imply a BO4 baked exporter");
-    assert.match(await note.textContent(), /BO4: use Diagnostics/);
+    assert.match(await note.textContent(), /BO4: export the Terrain asset/);
+    assert(await bake.isVisible());
+    assert.equal(await page.evaluate(() => S.settings.bo4terrainversion), "source");
+    await bake.getByRole("button", { name: "Original materials", exact: true }).click();
+    assert.equal(await page.evaluate(() => S.settings.bo4terrainversion), "native");
     const decals = page.locator("#set-decals");
     const output = decals.locator(".row").filter({ hasText: "Decal output" });
     assert(await output.getByRole("button", { name: "Reusable asset", exact: true }).evaluate(b => b.classList.contains("on")), "placements must be opt-in");
@@ -51,6 +56,7 @@ const server = http.createServer((req, res) => {
     assert(!(await capture.isDisabled()), "CW source route remains available");
     await page.locator('[data-page="settings"]').click();
     assert(await area.isVisible());
+    assert(!(await bake.isVisible()));
     assert.equal(await page.evaluate(() => S.settings.decalplacements), "true", "game switching preserves the independent decal choice");
     assert(await area.locator('button[data-v="nearby"]').evaluate(b => b.classList.contains("on")), "switching games must preserve CW settings");
     await setGame("black_ops_3");

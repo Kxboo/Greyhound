@@ -266,7 +266,8 @@ class Translator:
             img = IMAGES[path, colorspace] = bpy.data.images.load(path, check_existing=False)
             img.colorspace_settings.name = colorspace
             img.alpha_mode = "CHANNEL_PACKED"
-        tex = self.new("ShaderNodeTexImage", image=img, interpolation="Linear",
+        tex = self.new("ShaderNodeTexImage", image=img,
+                       interpolation="Closest" if self.input(shader, "filtertype") == "closest" else "Linear",
                        extension={"clamp": "EXTEND", "mirror": "MIRROR"}.get(self.input(shader, "uaddressmode"), "REPEAT"))
         self.feed(tex.inputs["Vector"], self.input(shader, "texcoord"))
         if ident == "ND_image_float":

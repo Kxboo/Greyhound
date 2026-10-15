@@ -1,33 +1,12 @@
-"""The terrain layer record (t14) of every layer material, captured or rebuilt from the material.
+"""Legacy material-level terrain estimates and per-layer record selection.
 
-A capture holds the 112-byte runtime records only for the sectors streamed
-near the player. Every other layer is rebuilt from its material:
-
-- Flags. Materials that share a technique set share every flag bit the terrain
-  pixel shader tests (0x1, 0x2, 0x4, 0x10, 0x80, 0x100, 0x200, 0x400) except
-  0x8, the gloss mask, which is clear exactly when the gloss map is
-  $white_gloss (25 of 25 captured materials). The technique set comes from
-  read_bo4_terrain_techsets. A technique set no capture reached takes 0x1 and
-  0x2, 0x4 from a real reveal map, 0x80 from a detail map, and soft light and
-  far tiling (0x100, 0x200, 0x400) from a captured material with the same
-  colour map, if there is one.
-- Values. The material's constant buffer holds them in HLSL packing order
-  (a field never straddles a float4), fields present by the bound textures:
-
-      0 unused, 1-3 tint, 4 normal strength, 5 gloss lo, 6 gloss hi,
-      [reveal map:  contrast, exponent, reveal uv scale (2)]
-      [height map:  displacement (3); the amount is the third, x3]
-      [detail map:  detail uv scale (2), detail strength]
-
-  Materials that bind the coal texture (semantic 0xBA68F89F) use their own
-  order (COAL_LAYOUT). The record stores them quantized: tint as floats
-  truncated to 4 mantissa bits; strengths, contrast and exponent as u8/255
-  truncated; gloss, uv scales and displacement as halves truncated.
-
-Both rules reproduce 23 of the 25 captured Blackout records exactly (check()).
-The other two share one technique set (flags 0xCB) whose constant buffer is
-empty apart from two 128s: its values live elsewhere, so its uncaptured
-members take a captured member's values.
+Use each layer's captured/reconstructed runtime record whenever available.
+The former technique-set and bound-texture layout heuristics below are retained
+for inspecting older incomplete packages only. They are not generally accurate:
+Mansion disproves shared technique-set flags and the constant-layout inference,
+and the same material can use different far-tiling flags in different layers.
+New packages reconstruct missing records from the captured expanded 264-byte
+layer and native image registry via bo4_terrain_layer_source instead.
 """
 
 # Support direct execution and the isolated packaged Python runtime.
@@ -175,7 +154,8 @@ def records(package):
 
 def layer_runtime(layer, record):
     """A sector layer's record: the material's, with this sector's uv rows and weight slice."""
-    rt = dict(record["runtime"])
+    # Flags such as 0x400 belong to the layer. A material-level donor loses them.
+    rt = dict(layer.get("runtime") or record["runtime"])
     rt["uv_rows"] = layer["uv_matrix_2x4"]
     rt["weight_slice"] = layer["weight_source_slice"]
     return rt

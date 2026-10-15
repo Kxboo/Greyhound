@@ -1198,12 +1198,8 @@ LoadGameFileResult CoDAssets::LoadFile(const std::string& FilePath)
 
 std::string CoDAssets::TerrainExportProblem(bool SourceOnly)
 {
-    if (GameID == SupportedGames::BlackOpsCW ||
-        (SourceOnly && GameID == SupportedGames::BlackOps4)) return {};
-    if (GameID == SupportedGames::BlackOps4)
-        return "Black Ops 4 terrain uses its own source capture. Use Diagnostics > Terrain source capture "
-            "(CLI: --terrain-source). Baked terrain model export currently supports Cold War only.";
-    return "Terrain export supports Black Ops 4 source capture and Cold War terrain only.";
+    if (GameID == SupportedGames::BlackOpsCW || GameID == SupportedGames::BlackOps4) return {};
+    return "Terrain export supports Black Ops 4 and Cold War only.";
 }
 
 std::string CoDAssets::DecalExportProblem(const CoDMaterial_t* Material)
@@ -1223,6 +1219,8 @@ ExportGameResult CoDAssets::ExportAsset(const CoDAsset_t* Asset,
     void* ProgressCaller, uint32_t ProgressStart, uint32_t ProgressSpan, bool TerrainSourceOnly)
 {
     LatestTerrainFinalizationFailed = false;
+    // Direct CLI calls do not pass through ExportSelectedAssets' wait.
+    if (GamePackageCache) GamePackageCache->WaitForPackageCacheLoad();
     if (Asset->AssetType == WraithAssetType::Material && static_cast<const CoDMaterial_t*>(Asset)->IsVolumeDecal)
     {
         const auto Problem = DecalExportProblem(static_cast<const CoDMaterial_t*>(Asset));
@@ -2607,6 +2605,26 @@ ExportGameResult CoDAssets::ExportBakedTerrain(const CoDTerrain_t* Terrain, cons
     namespace fs = std::filesystem;
     using json = nlohmann::json;
     const fs::path Root = fs::absolute(ExportPath), Work = Root / "_work";
+    if (GameID == SupportedGames::BlackOps4)
+    {
+        const fs::path Source = Root / "source";
+        fs::create_directories(Source);
+        if (!GameBlackOps4::ExportTerrainProbe(Terrain, Source.string(),
+                [&](uint32_t Percent) { if (ReportProgress) ReportProgress(5 + Percent / 3); }, true))
+            throw std::runtime_error("BO4 terrain source capture failed; see the export log");
+        const auto Probe = Source / "terraingfx_probe.json";
+        if (!fs::is_regular_file(Probe))
+            throw std::runtime_error("BO4 terrain capture did not produce a full terrain probe");
+        if (ReportProgress) ReportProgress(40);
+        const auto Progress = (Root / "logs" / "terrain_bake.progress").string();
+        if (RunTerrainPython("black_ops_4/capture/export_terrain.py",
+                {Probe.string(), Root.string(), "--mode",
+                    SettingsManager::GetSetting("bo4terrainversion", "source"), "--progress", Progress}, Progress,
+                [&](uint32_t Percent) { if (ReportProgress) ReportProgress(40 + Percent * 59 / 100); }) != 0)
+            throw std::runtime_error("BO4 terrain export failed; see logs/terrain_pipeline.log");
+        if (ReportProgress) ReportProgress(100);
+        return ExportGameResult::Success;
+    }
     const bool CastOnly = SettingsManager::GetSetting("terrainmodelformats", "cast") == "cast";
     std::vector<std::string> Extensions;
     if (CastOnly) Extensions.push_back(".cast");

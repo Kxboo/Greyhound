@@ -33,6 +33,7 @@ import struct
 from pathlib import Path
 
 from bo4_volume_decals import decode_blend_word, decode_d3d11_packed, parse_decals
+from bo4_terrain_layer_source import SourceUnavailable, image_registry, source_layer_records
 
 
 SCHEMA = "superterrain-bo4-source-package-v1"
@@ -335,6 +336,39 @@ def raw_image_file(image, exports):
     return exports.get(image["image"], {}).get("raw_file")
 
 
+def reconstruct_layer_sources(root, doc, runtime):
+    """Rebuild captured expanded layer inputs and verify available native uploads."""
+    report = {"method": "expanded source layers + captured terrain image descriptors",
+              "captured_uploads_verified": 0, "derived_layers": 0, "unavailable": [],
+              "scope": "Derived inputs are not observed GPU bindings or game-frame verification."}
+    rebuilt = {}
+    try:
+        descriptors, registry = image_registry(root, doc)
+    except SourceUnavailable as exc:
+        report["unavailable"].append({"reason": str(exc)})
+        return rebuilt, report
+    report["image_registry"] = registry
+    for sector in doc["sectors"]:
+        index = sector["sector"]
+        try:
+            records = source_layer_records(root, sector, descriptors)
+        except SourceUnavailable as exc:
+            report["unavailable"].append({"sector": index, "reason": str(exc)})
+            continue
+        captured = runtime.get(index)
+        raw = contained(root, captured["file"]).read_bytes() if captured else None
+        for slot, record in records.items():
+            if raw is not None:
+                expected = raw[slot * RUNTIME_LAYER_BYTES:(slot + 1) * RUNTIME_LAYER_BYTES]
+                if record["packed"] != expected:
+                    raise ValueError(f"Sector {index} layer {slot}: expanded source reconstruction differs from captured runtime bytes")
+                report["captured_uploads_verified"] += 1
+            else:
+                report["derived_layers"] += 1
+        rebuilt[index] = records
+    return rebuilt, report
+
+
 def package(probe_path, output, names_dir=None):
     probe_path, output = probe_path.resolve(), output.resolve()
     root = probe_path.parent
@@ -349,6 +383,7 @@ def package(probe_path, output, names_dir=None):
     # v46: the terrain pixel shader's per-layer records, found by content in live memory.
     runtime = {r["sector"]: r for r in doc.get("runtime_layer_records", {}).get("sectors", [])
                if r.get("status") == "found"}
+    source_records, source_report = reconstruct_layer_sources(root, doc, runtime)
     if output.exists():
         raise ValueError("Output must be new; refusing to mix capture runs")
     sectors = [s for s in doc["sectors"] if s.get("status") == "walked" or "side_arrays" in s]
@@ -488,6 +523,12 @@ def package(probe_path, output, names_dir=None):
                 if raw_file:
                     record["raw_png_file"] = copy(contained(root, raw_file),
                                                   "materials/images/" + safe_name(Path(raw_file).name))
+                native = exports[im["image"]].get("native_mips", {})
+                if native.get("status") == "captured":
+                    native_file = native["file"]
+                    record["native_dds_file"] = copy(contained(root, native_file),
+                        "materials/images/" + safe_name(Path(native_file).name))
+                    record["native_mips"] = native
             else:
                 record["status"] = "missing"
                 missing.append({"material": name, "image": image_name})
@@ -555,12 +596,26 @@ def package(probe_path, output, names_dir=None):
             source_slice = table[layer["layer"]]
             extra = {"weight_source_slice": source_slice,
                      "weight_constant": {ALWAYS_ONE: 1, ALWAYS_ZERO: 0}.get(source_slice)} if sector["_shared"] else {}
+            expanded = source_records.get(idx, {}).get(layer["layer"])
+            decoded_runtime = runtime_record(raw_records, layer["layer"]) if raw_records else None
+            if decoded_runtime is None and expanded:
+                decoded_runtime = runtime_record(expanded["packed"], 0)
+                decoded_runtime["provenance"] = {
+                    "status": "reconstructed_from_expanded_layer", "observed_upload": False,
+                    "source_file": expanded["file"], "source_byte_offset": expanded["byte_offset"],
+                    "source_sha256": expanded["source_sha256"],
+                    "method": source_report["method"]}
+            expanded_fields = {"expanded_source": {
+                "raw_hex": expanded["source"].hex(), "prepared_hex": expanded["prepared"].hex(),
+                "file": expanded["file"], "byte_offset": expanded["byte_offset"],
+                "sha256": expanded["source_sha256"],
+                "matches_captured_upload": raw_records is not None}} if expanded else {}
             layer_rows.append({"slot": layer["layer"], "material": material["name"],
                 "weight_slice": source_slice - wt["base"] if source_slice not in (ALWAYS_ONE, ALWAYS_ZERO) else None,
                 **extra,
                 "uv_matrix_2x4": layer["uv"],
                 "constants_uninterpreted": layer.get("constants"),
-                "runtime": runtime_record(raw_records, layer["layer"]) if raw_records else None,
+                "runtime": decoded_runtime, **expanded_fields,
                 "source_binding": {k: v for k, v in layer.items()
                                    if k not in ("images", "material_dump", "techset", "constants")}})
         finest = next(t for t in sector["tile_masks"] if t["level"] == 0)
@@ -655,12 +710,14 @@ def package(probe_path, output, names_dir=None):
              **({"excluded_sectors": excluded} if excluded else {}),
              "volume_decals": decals,
              "terrain_shaders": shaders,
+             "layer_source_reconstruction": source_report,
              "layer_bindings": sum(len(s["layers"]) for s in sector_records),
              "materials": len(material_records), "images": sum(r["file"].endswith(".png") for r in inventory),
              "missing_images": missing, "unresolved_semantics": warnings,
              "copied_files": inventory,
              "unfinished": ["Weight-aware control fitting for faithful BO3 interpolation between samples",
-                            *([] if runtime else ["Per-layer runtime records (height-blend enable, contrast, exponent, tint): capture with probe v46+"]),
+                            *([] if all(l.get("runtime") for s in sector_records for l in s["layers"]) else
+                              ["Some terrain layers have neither verified runtime records nor complete expanded source inputs"]),
                             *([] if shaders else ["Terrain pixel and domain shaders for --emulate: capture with probe v48+"]),
                             "Brush/clip outputs are separate Greyhound pipeline artifacts"]}
     write_json(output / "package_audit.json", audit)

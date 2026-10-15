@@ -299,7 +299,7 @@ def rel(path, base):
     return Path(os.path.relpath(path, base)).as_posix()
 
 
-def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir):
+def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir, include_displacement=False):
     g = Graph()
     world = g.node("ND_position_vector3", "float3", space=("string", "object"))
     normal = g.node("ND_normal_vector3", "float3", space=("string", "world"))
@@ -313,8 +313,33 @@ def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir)
     base = lw.get("array_slice_base", 0)
     (out_dir / sector_dir / "weights").mkdir(parents=True, exist_ok=True)
 
+    # Reconstruct the pixel shader's height normal at the shading point. A
+    # vertex-normal interpolation loses detail even with a dense domain mesh.
+    hd = s["height"]
+    height_path = out_dir / sector_dir / "weights" / "native_height.png"
+    if not height_path.exists():
+        texels = np.fromfile(package / hd["file"], "<u2").reshape(hd["height"], hd["width"])
+        Image.fromarray(texels).save(height_path)
+    def sample_height(dx, dy):
+        hu = g.div(g.add(g.div(g.sub(g.add(sc.px, dx), ox), ups), .5), hd["width"])
+        hv = g.sub(1., g.div(g.add(g.div(g.sub(g.add(sc.py, dy), oy), ups), .5), hd["height"]))
+        return g.image(rel(height_path, out_dir), g.uv(hu, hv), "float", clamp=True)
+    sx, sy = ups * s["grid_samples"] / hd["width"], ups * s["grid_samples"] / hd["height"]
+    scale = hd["scale"] * 65535
+    normal = g.normalize(g.vec("float3", [
+        g.mul(g.sub(sample_height(-sx, 0), sample_height(sx, 0)), scale / (2*sx)),
+        g.mul(g.sub(sample_height(0, -sy), sample_height(0, sy)), scale / (2*sy)), 1.]))
+    sc.N = normal
+    # Layer membership is a nearest-sampled per-node bit mask, independent
+    # of the bilinear weight array. Keep both tests, including constant layers.
+    masks = np.fromfile(package / s["tile_layer_mask"]["file"],
+                        "<" + s["tile_layer_mask"].get("dtype", "u2")).reshape(s["tiles_across"], -1)
+    span = (s["grid_samples"] - 1) * ups
+    mask_uv = g.uv(g.div(g.sub(sc.px, ox), span), g.sub(1., g.div(g.sub(sc.py, oy), span)))
+
     material_table = material_images(package)
     color = normal_acc = gloss_acc = None
+    displaced = 0.0
     drawn = 0.0
     report = []
     for L in layers:
@@ -334,6 +359,14 @@ def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir)
                 texels = load_weights(package, s, k)
                 Image.fromarray(np.round(texels * 65535).astype(np.uint16)).save(path)
             w = g.image(rel(path, out_dir), grid_uv, "float", clamp=True)
+        slot_mask = ((masks >> L["slot"]) & 1).astype(np.uint8) * 255
+        if not np.all(slot_mask == 255):
+            mask_path = out_dir / sector_dir / "weights" / ("mask_%02d.png" % L["slot"])
+            Image.fromarray(slot_mask).save(mask_path)
+            mask = g.node("ND_image_float", "float", file=("asset", rel(mask_path, out_dir), "raw"),
+                          texcoord=("float2", mask_uv), uaddressmode=("string", "clamp"),
+                          vaddressmode=("string", "clamp"), filtertype=("string", "closest"))
+            w = g.mul(w, mask)
         images = material_table[L["material"]]
         rows = r["uv_rows"]
         u, v = sc.affine(rows[0:4]), sc.affine(rows[4:8])
@@ -342,6 +375,20 @@ def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir)
             return g.uv(g.mul(u, su), g.sub(1.0, g.mul(v, sv)))
 
         uv = layer_uv()
+        if include_displacement and flags & 0x2:
+            amount = r["displacement_amount"]
+            if amount:
+                # DS UVs use pre-displacement Z; PS layers use the rendered
+                # world position. Mansion's rows are planar, but keep this
+                # distinction for other captured terrain materials.
+                base_z = g.add(g.mul(sample_height(0, 0), scale), s["world_height_bias"])
+                dz = g.sub(base_z, sc.pz)
+                height_uv = g.uv(g.add(u, g.mul(dz, rows[2])),
+                                 g.sub(1., g.add(v, g.mul(dz, rows[6]))))
+                h = g.image(rel(images["heightMap"], out_dir), height_uv, "float")
+                displaced = g.max(g.mul(g.mul(w, h), amount), g.mul(g.sub(1., w), displaced))
+            else:
+                displaced = g.max(0., g.mul(g.sub(1., w), displaced))
         active = 1.0 if not isinstance(w, Ref) else g.ifgt(w, 0.0, 1.0, 0.0)
         first = drawn == 0.0
         if first and not isinstance(active, Ref):
@@ -376,7 +423,7 @@ def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir)
             else:
                 factor = g.vec("color3f", [g.add(1.0, g.mul(tc - 1.0, a)) for tc in tint])
                 layer_color = g.vop("multiply", "color3f", rgb, factor)
-            color = layer_color if color is None else g.vmix("color3f", color, layer_color, wp)
+            color = g.vmix("color3f", (0., 0., 0.), layer_color, wp) if color is None else g.vmix("color3f", color, layer_color, wp)
         else:
             if color is None:
                 color = tuple(0.05 * t for t in tint)
@@ -439,7 +486,10 @@ def build_material(package, out_dir, s, layers, decals, decal_scene, sector_dir)
     color = g.vec("color3f", albedo)
     final_normal = g.normalize(g.vec("float3", n))
     rough = g.sqrt(g.sqrt(g.div(2.0, g.add(g.exp2(g.mul(gloss, 17.0)), 2.0))))
-    return g, {"base_color": color, "specular_roughness": rough, "normal": final_normal}, report, decal_report
+    outputs = {"base_color": color, "specular_roughness": rough, "normal": final_normal}
+    if include_displacement:
+        outputs["bo4_target_height"] = g.add(g.add(g.mul(sample_height(0, 0), scale), s["world_height_bias"]), displaced)
+    return g, outputs, report, decal_report
 
 
 # ------------------------------------------------------------------ usda
@@ -461,7 +511,7 @@ def write_usda(path, name, geometry, g, outputs):
              '                uniform token info:id = "ND_standard_surface_surfaceshader"',
              '                float inputs:base = 1', '                float inputs:specular = 1',
              '                float inputs:specular_IOR = 1.5']
-    kinds = {"base_color": "color3f", "specular_roughness": "float", "normal": "float3"}
+    kinds = {"base_color": "color3f", "specular_roughness": "float", "normal": "float3", "bo4_target_height": "float"}
     for key, value in outputs.items():
         kind = "vector3f" if kinds[key] == "float3" else kinds[key]
         if isinstance(value, Ref):

@@ -82,6 +82,9 @@ class Texture:
             self.levels = [l[None] for l in self.levels]
         self.address = address
         self.lut = lut if lut is not None else (UNORM8 if self.levels[0].dtype == np.uint8 else None)
+        # D3D sRGB texture views transform RGB only. The alpha channel is a
+        # linear mask, including the tint mask in BO4 terrain color textures.
+        self.srgb = self.lut is not None and np.array_equal(self.lut, srgb_decode_table())
 
     @classmethod
     def from_image(cls, image, address="wrap", mips=True, srgb=False):
@@ -101,6 +104,8 @@ class Texture:
         levels = [image]
         if mips:
             linear = lut[image]
+            if srgb and image.shape[-1] == 4:
+                linear[..., 3] = UNORM8[image[..., 3]]
             for level in _box_mips(linear):
                 out = level
                 if srgb:
@@ -127,7 +132,10 @@ class Texture:
     def _fetch(self, level, s, x, y, address=None):
         raw = self._raw(level, s, x, y, address)
         if self.lut is not None:
-            return _pad4(self.lut[raw])
+            decoded = self.lut[raw]
+            if self.srgb and raw.shape[-1] == 4:
+                decoded[..., 3] = UNORM8[raw[..., 3]]
+            return _pad4(decoded)
         return _pad4(raw.astype(np.float32, copy=False))
 
     def bilinear(self, u, v, s, level, address=None, point=False):
@@ -242,11 +250,16 @@ class VirtualArray:
     `slices` maps a slice index to a single-slice Texture; `base` is the
     array's (width, height) at mip 0.  Reading a slice that was not supplied
     raises, so a mis-routed index cannot silently sample something else.
+    Optional `mip_levels` limits the view without discarding original texels.
     """
 
-    def __init__(self, slices, base, count=None):
+    def __init__(self, slices, base, count=None, mip_levels=None):
         self.slices = dict(slices)
         self.base = tuple(int(b) for b in base)
+        full_mips = int(np.log2(max(self.base))) + 1
+        self.view_mip_levels = full_mips if mip_levels is None else int(mip_levels)
+        if not 1 <= self.view_mip_levels <= full_mips:
+            raise ValueError("array view mip count is outside the texture dimensions")
         self.count = count if count is not None else (max(self.slices) + 1 if self.slices else 0)
         self.offsets = {}
         for index, texture in self.slices.items():
@@ -257,7 +270,7 @@ class VirtualArray:
             self.offsets[index] = shift
 
     def mip_count(self):
-        return int(np.log2(max(self.base))) + 1
+        return self.view_mip_levels
 
     def size(self, level=0):
         return max(1, self.base[0] >> level), max(1, self.base[1] >> level), self.count
@@ -268,6 +281,9 @@ class VirtualArray:
         return self.slices[index]
 
     def sample(self, u, v, s, lod, sampler=None):
+        # Clamp in array mip coordinates before subtracting a slice offset.
+        # Source DDS files can contain tail levels absent from the GPU view.
+        lod = np.clip(np.asarray(lod), 0, self.view_mip_levels - 1)
         out = np.zeros((u.shape[0], 4), np.float32)
         for index in np.unique(s):
             k = s == index
@@ -277,6 +293,9 @@ class VirtualArray:
         return out
 
     def load(self, x, y, s, level, raw=False):
+        if not 0 <= int(level) < self.view_mip_levels:
+            dtype = next(iter(self.slices.values())).levels[0].dtype if raw and self.slices else np.float32
+            return np.zeros((len(x), 4), dtype=dtype)
         out = None
         for index in np.unique(s):
             k = s == index
@@ -695,6 +714,14 @@ class Shader:
                 w(np.log2(F(a[1])))
             elif op == "exp":
                 w(np.exp2(F(a[1])))
+            elif op == "sincos":
+                # SM4/5: sine destination first, cosine second; angles are
+                # radians. Read both results before either destination writes.
+                x = F(a[2])
+                sine, cosine = np.sin(x), np.cos(x)
+                for dst, value in ((a[0], sine), (a[1], cosine)):
+                    if dst.kind != "null":
+                        self._write(dst, value, live, ins.sat)
             elif op == "frc":
                 x = F(a[1])
                 w(x - np.floor(x))
@@ -735,10 +762,23 @@ class Shader:
                 w(~U(a[1]))
             elif op == "iadd":
                 w((I(a[1]) + I(a[2])).view(np.uint32))
-            elif op == "imul":
-                w((I(a[2]) * I(a[3])).view(np.uint32) if len(a) == 4 else (I(a[1]) * I(a[2])).view(np.uint32))
-            elif op == "umul":
-                self._write(a[1], (U(a[2]) * U(a[3])), live)
+            elif op in ("imul", "umul"):
+                if len(a) == 3 and op == "imul":
+                    # Retain the historical low-only shorthand for synthetic inputs.
+                    w((I(a[1]) * I(a[2])).view(np.uint32))
+                else:
+                    # SM4/5 operand order is high destination, low destination,
+                    # then sources. Either destination may be null. Read the full
+                    # product before writing, since a destination can alias a source.
+                    if op == "imul":
+                        product = (I(a[2]).astype(np.int64) * I(a[3]).astype(np.int64)).view(np.uint64)
+                    else:
+                        product = U(a[2]).astype(np.uint64) * U(a[3]).astype(np.uint64)
+                    high = (product >> np.uint64(32)).astype(np.uint32)
+                    low = product.astype(np.uint32)
+                    for dst, value in ((a[0], high), (a[1], low)):
+                        if dst.kind != "null":
+                            self._write(dst, value, live)
             elif op == "ishl":
                 w(U(a[1]) << (U(a[2]) & 31))
             elif op == "ushr":

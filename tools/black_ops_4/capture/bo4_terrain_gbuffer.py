@@ -1,7 +1,12 @@
 """Run the BO4 terrain G-buffer pixel shader over a top-down grid of a sector.
 
-One pixel shader decides how BO4 terrain looks (457b8be2b884842c on
-zm_towers). It:
+This replay uses the captured structured-buffer G-buffer variant
+457b8be2b884842c. The live Mansion shader cache instead contains the CB1 variant
+d437ccb01fe95d61; the structured-buffer variant is not created in that snapshot.
+The two agree on the tested original-flag material probes after correcting the
+emulator's integer multiply, but draw selection and sampler bindings remain open.
+This module's resource layout and register taps still target the first variant.
+It:
 
 - tests the cutout;
 - builds the surface normal from four height-array samples;
@@ -24,10 +29,12 @@ render targets and the values they pack:
 The resources are rebuilt from a source package the way the shader addresses
 them:
 
-- t9 holds one 124-byte node record per 256-unit tile. The game draws
+- The replay builds one 124-byte t9 node record per finest source tile;
+  tile size is sector-specific (512 or 1024 units on zm_mansion). The game draws
   quadtree quadrants, and a quadrant's layer mask is the OR of its tiles'
   masks. All 124 live records on zm_towers match that rule. The finest
-  quadrant is one tile, which is what a close camera draws. The uv rows are
+  quadrant is one tile. This replay does not capture the selected draw LOD,
+  vertex morph or hull tessellation. The uv rows are
   (1/(ups*n), 0, (ups/2 - origin)/(ups*n)), matching the live records with
   the camera at 0: the uv puts sample i at texel centre i.
 - t14 holds the captured 112-byte layer records.
@@ -39,14 +46,28 @@ them:
   slice and first mip of its albedo, normal, detail, reveal and gloss image,
   and every image's width shifted by that mip is checked against the array
   size.
+- If a package preserves native_dds_file, the original compressed mip chain
+  is decoded instead of regenerating it from a PNG. material_mips="native"
+  requires it; "generated" explicitly selects the old box-filtered reference.
+  "auto" keeps compatibility with older packages and records the source of
+  every texture in material_mip_sources. Package tail padding and the game's
+  actual sampler mip limits remain separate evidence; a DDS partition alone
+  does not prove that every stored level is sampled by BO4.
+- Optional capture/terrain_sampling.json records observed texture-view mip
+  counts. When its asset and original layer bytes match, the replay clamps
+  each material array to its recorded view. Original DDS tails are retained.
+  A sampler cache snapshot alone does not establish terrain draw bindings.
 
 The terrain is tessellated, and its domain shader (8b5368bcb0ce612f on
 zm_towers) moves every vertex up along +Z. `displaced_height` runs that shader
 on any set of points. Per vertex it:
 
 - samples the height array;
-- walks the node's displacement layer mask (t9 +8; equal to the layer mask
-  +4 on every live zm_towers node);
+- walks the layer mask (t9 +4), testing the separate displacement mask (+8).
+  The displacement mask is restricted to layers with record flag 0x20:
+  all 36 content-matched zm_mansion node records captured on 2026-10-12
+  match this rule, and all differ from their full layer mask. These CPU
+  upload copies do not prove which records were bound in a GPU draw;
 - keeps acc = max(w * h * amount, (1 - w) * acc) in layer order, where w is the
   raw weight, h the layer's heightMap (record +80 slice and first mip) and
   amount the half in record +52 bits 16-31. A layer outside the displacement
@@ -82,6 +103,7 @@ import tool_bootstrap as _tool_bootstrap
 _tool_bootstrap.activate(__file__)
 import argparse
 import ctypes
+import hashlib
 import json
 import struct
 import time
@@ -150,19 +172,47 @@ def decode_tetra_normal(rt1):
     return n * signs[face]
 
 
+def sampling_profile(package, doc):
+    """Load a capture-specific texture-view profile; absence retains legacy replay.
+
+    Layer bytes bind it to the validated source inputs. This profile describes
+    existing resources, not an observed terrain draw or its sampler bindings.
+    """
+    path = Path(package) / "capture/terrain_sampling.json"
+    if not path.is_file():
+        return None
+    profile = json.loads(path.read_text())
+    if profile.get("schema") != "superterrain-bo4-terrain-sampling-v1":
+        raise ValueError("Unsupported terrain sampling profile schema")
+    records = b"".join(bytes.fromhex(layer["runtime"]["raw_hex"])
+                       for sector in sorted(doc["sectors"], key=lambda s: s["sector"])
+                       for layer in sorted(sector["layers"], key=lambda l: l["slot"]))
+    if (profile.get("asset") != doc["asset"]["name"] or
+            profile.get("layer_records_sha256") != hashlib.sha256(records).hexdigest()):
+        raise ValueError("Terrain sampling profile belongs to different source inputs")
+    return profile
+
+
 class TerrainScene:
     """A sector's shader resources, rebuilt from a source package."""
 
-    def __init__(self, package, sector_index=0, shader_path=None, domain_path=None, far_tiling="near"):
+    def __init__(self, package, sector_index=0, shader_path=None, domain_path=None, far_tiling="near", material_mips="auto"):
         self.package = package = Path(package)
         self.domain_path, self._domain = domain_path, None
         sector_dir = package / "capture" / "sectors" / f"sector_{sector_index}"
         self.sector = s = json.loads((sector_dir / "sector.json").read_text())
+        from bo4_terrain_validation import require_runtime_layers
+        require_runtime_layers([s])
         if s.get("local_to_world"):
             # The node uv rows built below are the unrotated ones; a rotated sector needs its rotation in them.
             raise NotImplementedError(f"sector {sector_index} is rotated; the shader bake only builds unrotated nodes")
         doc = json.loads((package / "capture" / "terraingfx.json").read_text())
+        self.sampling_profile = sampling_profile(package, doc)
         self.materials = {m["name"]: m for m in doc["materials"]}
+        if material_mips not in ("auto", "native", "generated"):
+            raise ValueError("material_mips must be auto, native or generated")
+        self.material_mips = material_mips
+        self.material_mip_sources = {}
         self.shader = load_shader(shader_path or self.default_shader())
 
         self.n, self.ups = s["grid_samples"], s["units_per_sample"]
@@ -244,13 +294,16 @@ class TerrainScene:
         s, span = self.sector, self.ups * self.n
         count = len(self.layers)
         flags = [struct.unpack_from("<I", r, 52)[0] for r in self.records]
+        displacement_layers = sum(1 << k for k, flag in enumerate(flags) if flag & 0x20)
         out = bytearray()
         for j in range(self.tiles):
             for i in range(self.tiles):
                 mask = int(self.masks[j, i])
-                displacement = max((half(f >> 16) for k, f in enumerate(flags) if mask >> k & 1), default=0.0)
+                displacement_mask = mask & displacement_layers
+                displacement = max((half(f >> 16) for k, f in enumerate(flags)
+                                    if displacement_mask >> k & 1), default=0.0)
                 r = bytearray(NODE_RECORD_BYTES)
-                struct.pack_into("<3I", r, 0, 8, mask, mask)
+                struct.pack_into("<3I", r, 0, 8, mask, displacement_mask)
                 struct.pack_into("<4f", r, 20, self.tile_size, self.tile_size,
                                  -0.5 * (self.n - 1) * self.ups + i * self.tile_size,
                                  -0.5 * (self.n - 1) * self.ups + j * self.tile_size)
@@ -314,20 +367,51 @@ class TerrainScene:
                 inert.add(u[20] & 0xFFFF)
 
         arrays = {}
+        native_files = {}
+        for material in self.materials.values():
+            for binding in material["bindings"]:
+                if binding.get("native_dds_file"):
+                    for key in ("png_file", "raw_png_file"):
+                        if binding.get(key):
+                            native_files[str(self.package / binding[key])] = self.package / binding["native_dds_file"]
         for register, table in slots.items():
             if len(bases[register]) > 1:
                 raise ValueError(f"t{register}: images disagree on the array size {sorted(bases[register])}")
             base = bases[register].pop() if bases[register] else 2048
+            view_mips = count = None
+            if self.sampling_profile:
+                view = self.sampling_profile["material_arrays"][str(register)]
+                srv = view["srv"]
+                if srv["most_detailed_mip"] != 0 or srv["first_array_slice"] != 0:
+                    raise ValueError("Rebased terrain texture views need explicit coordinate remapping")
+                if srv["view_dimension"] not in (4, 5) or (table and srv["view_dimension"] != 5):
+                    raise ValueError(f"t{register}: populated material array has an incompatible view")
+                if view["width"] != view["height"] or (table and base != view["width"]):
+                    raise ValueError(f"t{register}: source images disagree with the captured texture view")
+                base = view["width"]
+                view_mips = srv["mip_levels"]
+                count = srv["array_size"] if srv["view_dimension"] == 5 else 1
+                if view_mips > view["texture_mip_levels"] or any(i >= count for i in table):
+                    raise ValueError(f"t{register}: source slice or mip count exceeds the captured resource")
             textures = {}
             for index, (path, kind) in table.items():
+                native = native_files.get(path)
+                if native and self.material_mips != "generated":
+                    from bo4_native_mips import load_texture
+                    textures[index] = load_texture(native, kind)
+                    self.material_mip_sources[path] = "native_dds"
+                    continue
+                if self.material_mips == "native":
+                    raise ValueError(f"Missing original native mip chain: {path}")
                 texels = rgba(path)
                 if kind == "r":
                     texels = np.ascontiguousarray(texels[:, :, :1])
                 textures[index] = Texture.from_image(texels, srgb=kind == "srgb")
+                self.material_mip_sources[path] = "generated_box_mips"
             if register == 26:
                 for index in inert - set(table):
                     textures[index] = Texture([np.zeros((1, 1, 1), np.float32)])
-            arrays[register] = VirtualArray(textures, (base, base))
+            arrays[register] = VirtualArray(textures, (base, base), count=count, mip_levels=view_mips)
         return arrays
 
     # ---------------------------------------------------------------- run
@@ -348,12 +432,13 @@ class TerrainScene:
         return tj * self.tiles + ti
 
     def displaced_height(self, x, y, chunk=1 << 18):
-        """World z of the tessellated surface at (x, y), from the game's domain shader.
+        """Near-camera shader-surface z at (x, y), from the game's domain shader.
 
         Each point is a domain point of a patch whose three control points all
         sit at (x, y). The patch record names the point's tile node and an
         identity sector transform, so the shader's local frame is the world.
         cb2 rows 8-11 are an identity view-projection, so o0 is the world point.
+        This evaluates supplied points, not the game's selected tessellation topology.
         """
         shader = self.domain_shader()
         x = np.asarray(x, np.float64)

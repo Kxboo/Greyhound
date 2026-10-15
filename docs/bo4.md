@@ -11,7 +11,11 @@ To locate BO4 TerrainGfx and inspect its measured sector layout, start with
 [CW/BO4 comparison](terraingfx-reference.md). Capture a loaded terrain
 through **Diagnostics > Terrain source capture**, or use
 `assets export --type terrain --all --terrain-source` with an explicit
-output folder. Offline BO4 tools consume that probe separately.
+output folder. The raw diagnostic route remains available. The terrain version selector packages source or exports models directly.
+
+## Terrain output versions
+
+Use **Settings > Terrain > BO4 export** to choose a source package, original-material CASTs, or baked CASTs. See [terrain export versions](bo4-terrain-export.md) for commands, files and implementation entry points. Patch generation and collision/non-colliding control limits belong to the separate TerrainReconstructor application.
 
 ## Native BO3 decals
 

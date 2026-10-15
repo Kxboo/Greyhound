@@ -4,6 +4,7 @@
 // The class we are implementing
 #include "games/black_ops_4/reader/GameBlackOps4.h"
 #include "games/black_ops_4/capture/BO4DecalCapture.h"
+#include "games/black_ops_4/capture/BO4TerrainRuntime.h"
 #include <fstream>
 
 // We need the CoDAssets class
@@ -1215,6 +1216,135 @@ namespace
         return true;
     }
 
+    // Preserve the original compressed mip chain, including the tail packed in
+    // the smallest stream group. LoadXImage intentionally exports only mip zero.
+    nlohmann::json BO4ExportTerrainNativeMips(uint64_t ImagePtr,
+        const BO4GfxImage& Info, const std::string& Directory, const std::string& Name)
+    {
+        nlohmann::json Result = {{"schema", "bo4-native-material-mips-v1"},
+            {"format", Info.ImageFormat}, {"source", Info.GfxMipMaps ? "xpak" : "resident"}};
+        try
+        {
+            const auto Require = [](bool Condition, const char* Message)
+            { if (!Condition) throw std::runtime_error(Message); };
+            const auto LevelBytes = [&](uint32_t W, uint32_t H) -> uint32_t
+            {
+                Require(W && H && W <= 16384 && H <= 16384, "Invalid mip dimensions");
+                switch (Info.ImageFormat)
+                {
+                case 71: case 72: case 80: case 81: return ((W + 3) / 4) * ((H + 3) / 4) * 8;
+                case 74: case 75: case 77: case 78: case 83: case 84:
+                case 95: case 96: case 98: case 99: return ((W + 3) / 4) * ((H + 3) / 4) * 16;
+                case 24: case 28: case 29: case 42: return W * H * 4;
+                case 56: return W * H * 2;
+                case 61: case 62: return W * H;
+                default: throw std::runtime_error("Unsupported native mip format");
+                }
+            };
+            const auto ChainBytes = [&](uint32_t W, uint32_t H)
+            {
+                uint64_t Total = 0;
+                for (;;)
+                {
+                    Total += LevelBytes(W, H);
+                    if (W == 1 && H == 1) return Total;
+                    W = std::max(1u, W >> 1); H = std::max(1u, H >> 1);
+                }
+            };
+            Require(Info.GfxMipMaps <= 16, "Too many native stream groups");
+            std::vector<uint8_t> Descriptors, Payload;
+            auto Groups = nlohmann::json::array();
+            if (Info.GfxMipMaps)
+            {
+                Require(CoDAssets::GamePackageCache != nullptr, "Package cache unavailable");
+                Require(BO4ReadExact(Info.GfxMipsPtr, size_t(Info.GfxMipMaps) * sizeof(BO4GfxMip), Descriptors),
+                    "Cannot read stream descriptors");
+                std::vector<std::vector<uint8_t>> Parts;
+                uint32_t Previous = 0, PreviousW = 0, PreviousH = 0;
+                for (uint32_t I = 0; I < Info.GfxMipMaps; ++I)
+                {
+                    BO4GfxMip Group;
+                    std::memcpy(&Group, Descriptors.data() + I * sizeof Group, sizeof Group);
+                    const uint32_t Cumulative = Group.Size >> 4;
+                    Require(Group.HashID && Cumulative > Previous && Cumulative <= 64 * 1024 * 1024,
+                        "Invalid stream group size/hash");
+                    Require(Group.Width >= PreviousW && Group.Height >= PreviousH &&
+                        (Group.Width > PreviousW || Group.Height > PreviousH), "Invalid stream group order");
+                    Require(Cumulative == ChainBytes(Group.Width, Group.Height),
+                        "Stream cumulative size does not match a complete native mip chain");
+                    const uint32_t Expected = Cumulative - Previous;
+                    uint32_t Got = 0;
+                    auto Bytes = CoDAssets::GamePackageCache->ExtractPackageObject(Group.HashID, Expected, Got);
+                    Require(Bytes && Got == Expected, "Incomplete native mip package object");
+                    Parts.emplace_back(Bytes.get(), Bytes.get() + Got);
+                    Groups.push_back({{"hash", Strings::Format("0x%llX", Group.HashID)},
+                        {"width", Group.Width}, {"height", Group.Height}, {"packed_size", Group.Size},
+                        {"bytes", Got}, {"cumulative_bytes", Cumulative}});
+                    Previous = Cumulative; PreviousW = Group.Width; PreviousH = Group.Height;
+                }
+                Require(PreviousW == Info.LoadedMipWidth && PreviousH == Info.LoadedMipHeight,
+                    "Stream chain and image dimensions differ");
+                Payload.reserve(Previous);
+                for (auto I = Parts.rbegin(); I != Parts.rend(); ++I)
+                    Payload.insert(Payload.end(), I->begin(), I->end());
+                std::vector<uint8_t> After;
+                Require(BO4ReadExact(Info.GfxMipsPtr, Descriptors.size(), After) && Descriptors == After,
+                    "Stream descriptors changed during capture");
+            }
+            else
+            {
+                Require(Info.LoadedMipSize && Info.LoadedMipSize <= 64 * 1024 * 1024,
+                    "Resident mip payload exceeds limit");
+                Require(BO4ReadExact(Info.LoadedMipPtr, Info.LoadedMipSize, Payload),
+                    "Resident mip payload unreadable");
+                std::vector<uint8_t> After;
+                Require(BO4ReadExact(Info.LoadedMipPtr, Info.LoadedMipSize, After) && Payload == After,
+                    "Resident mip payload changed during capture");
+            }
+            uint32_t W = Info.LoadedMipWidth, H = Info.LoadedMipHeight;
+            size_t Offset = 0;
+            auto Levels = nlohmann::json::array();
+            for (;;)
+            {
+                const auto Bytes = LevelBytes(W, H);
+                Require(Offset + Bytes <= Payload.size(), "Partial native mip level");
+                Levels.push_back({{"level", Levels.size()}, {"width", W}, {"height", H},
+                    {"offset", Offset}, {"bytes", Bytes}});
+                Offset += Bytes;
+                if (Offset == Payload.size()) break;
+                Require(W > 1 || H > 1, "Trailing bytes after native mip tail");
+                W = std::max(1u, W >> 1); H = std::max(1u, H >> 1);
+            }
+            std::vector<uint8_t> HeaderAfter;
+            Require(BO4ReadExact(ImagePtr, sizeof(BO4GfxImage), HeaderAfter) &&
+                std::memcmp(HeaderAfter.data(), &Info, sizeof Info) == 0, "Image header changed during capture");
+            auto Buffer = std::make_unique<uint8_t[]>(Payload.size());
+            std::memcpy(Buffer.get(), Payload.data(), Payload.size());
+            auto DDS = CoDRawImageTranslator::TranslateBC(Buffer, static_cast<uint32_t>(Payload.size()),
+                Info.LoadedMipWidth, Info.LoadedMipHeight, static_cast<uint8_t>(Info.ImageFormat),
+                static_cast<uint8_t>(Levels.size()));
+            Require(DDS && DDS->DataSize > Payload.size(), "Native DDS header creation failed");
+            const std::string File = Name + "_native.dds";
+            std::ofstream Writer(FileSystems::CombinePath(Directory, File), std::ios::binary | std::ios::trunc);
+            Writer.write(reinterpret_cast<const char*>(DDS->DataBuffer), DDS->DataSize);
+            Writer.close();
+            Require(!Writer.fail(), "Native DDS write failed");
+            Result["status"] = "captured"; Result["file"] = File;
+            Result["width"] = Info.LoadedMipWidth; Result["height"] = Info.LoadedMipHeight;
+            Result["mip_count"] = Levels.size(); Result["complete_to_1x1"] = W == 1 && H == 1;
+            Result["payload_bytes"] = Payload.size(); Result["dds_bytes"] = DDS->DataSize;
+            Result["payload_sha1"] = Hashing::HashSHA1String(
+                std::string(reinterpret_cast<const char*>(Payload.data()), Payload.size()));
+            Result["levels"] = Levels; Result["stream_groups"] = Groups;
+        }
+        catch (const std::exception& E)
+        {
+            Result["status"] = "not_captured"; Result["error"] = E.what();
+        }
+        return Result;
+    }
+
+
     bool BO4ReadDecalRecords(std::vector<uint8_t>& World, std::vector<uint8_t>& Records,
         uint64_t& WorldPtr, std::string& Error)
     {
@@ -1968,7 +2098,8 @@ bool GameBlackOps4::LoadAssets()
 // without guessing at field meanings.  Cold War offsets are never replayed
 // here; the candidate pairs are derived from the BO4 header's own shape.
 bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
-    const std::string& ExportPath, const std::function<void(uint32_t)>& ReportProgress)
+    const std::string& ExportPath, const std::function<void(uint32_t)>& ReportProgress,
+    bool ForceTerrainProbe)
 {
     if (CoDAssets::GameID != SupportedGames::BlackOps4 ||
         CoDAssets::GameInstance == nullptr || Terrain == nullptr ||
@@ -2039,7 +2170,9 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
     // existing headless scripts keep working without being edited.  A value
     // outside 1-7 from either source means the full terrain probe below.
     wchar_t WorldProbeMode[2] = {};
-    if (GetEnvironmentVariableW(L"GREYHOUND_BO4_WORLD_PROBE", WorldProbeMode, 2) != 1)
+    if (ForceTerrainProbe)
+        WorldProbeMode[0] = 0;
+    else if (GetEnvironmentVariableW(L"GREYHOUND_BO4_WORLD_PROBE", WorldProbeMode, 2) != 1)
     {
         WorldProbeMode[0] = 0;
         const auto Selected = SettingsManager::GetSetting("bo4capturemode", "0");
@@ -2996,6 +3129,8 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
                                                 {
                                                     Ex["status"] = "not_in_package";
                                                 }
+                                                Ex["native_mips"] = BO4ExportTerrainNativeMips(
+                                                    Entry.ImagePtr, Image, ExportPath, TexName);
                                                 Ex["name"] = TexName;
                                                 Row["export"] = Ex;
                                                 if (Entry.SemanticHash == BO4ColorMapSemantic)
@@ -4454,16 +4589,31 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
     // height-blend flag and its contrast/exponent live only there.  Nothing in
     // the terrain asset points at the renderer's upload copies, so find them by
     // content: record +0/+16 are the layer's uv rows exactly as bound in the
-    // asset, and +32 is the weight slice (slot 0 = 4094, "always 1"; slot k =
-    // slice k-1).  A sector's layers are consecutive records.
+    // asset, and +32 is the shared weight-array slice from side table +0x138.
+    // Several sectors share an array, so slot k is not generally slice k-1.
+    // A sector's layers are consecutive records.
     {
         nlohmann::json Runtime = nlohmann::json::array();
-        struct Wanted { size_t Sector; std::vector<std::array<uint32_t, 8>> UV; };
+        struct Wanted { size_t Sector; std::vector<std::array<uint32_t, 8>> UV; std::vector<uint32_t> WeightSlices; };
         std::vector<Wanted> Targets;
         for (const auto& SectorRow : Document["sectors"])
         {
             if (!SectorRow.contains("side_arrays"))
                 continue;
+            std::vector<uint32_t> WeightSlices;
+            for (const auto& Array : SectorRow["side_arrays"])
+            {
+                if (Array.value("count_offset", std::string()) != "0x138" ||
+                    Array.value("status", std::string()) != "dumped")
+                    continue;
+                const uint64_t Pointer = std::stoull(Array.value("pointer", std::string("0")), nullptr, 0);
+                const size_t Count = Array.value("count", size_t(0));
+                if (Pointer < 0x10000 || Pointer >= 0x0000800000000000ull || Count == 0 || Count > BO4LayerCeiling)
+                    continue;
+                for (size_t L = 0; L < Count; ++L)
+                    WeightSlices.push_back(CoDAssets::GameInstance->Read<uint16_t>(Pointer + L * sizeof(uint16_t)));
+                break;
+            }
             for (const auto& Array : SectorRow["side_arrays"])
             {
                 if (!Array.contains("layers") || Array["layers"].empty())
@@ -4479,20 +4629,16 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
                     }
                     Target.UV.push_back(Bits);
                 }
+                if (WeightSlices.size() != Target.UV.size())
+                {
+                    Runtime.push_back({{"sector", Target.Sector}, {"status", "weight_slices_missing"},
+                        {"layers_expected", Target.UV.size()}});
+                    continue;
+                }
+                Target.WeightSlices = WeightSlices;
                 Targets.push_back(Target);
             }
         }
-
-        const auto Matches = [&](const uint8_t* Record, const std::array<uint32_t, 8>& UV,
-                                 size_t Slot) -> bool
-        {
-            if (std::memcmp(Record, UV.data(), sizeof(uint32_t) * 8) != 0)
-                return false;
-            uint32_t Slice = 0;
-            std::memcpy(&Slice, Record + 32, sizeof(Slice));
-            return Slot == 0 ? (Slice == BO4RuntimeLayerAlwaysOne || Slice < 64)
-                             : Slice == Slot - 1;
-        };
 
         // Content -> addresses, per target.  The renderer keeps several ring
         // copies; identical content is reported once with every address.
@@ -4531,11 +4677,11 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
                     {
                         const auto& Layers = Targets[t].UV;
                         const SIZE_T Span = Layers.size() * BO4RuntimeLayerBytes;
-                        if (i + Span > Got || !Matches(Buffer.data() + i, Layers[0], 0))
+                        if (i + Span > Got || !BO4TerrainRuntime::Matches(Buffer.data() + i, Layers[0], Targets[t].WeightSlices[0]))
                             continue;
                         bool All = true;
                         for (size_t L = 1; L < Layers.size() && All; L++)
-                            All = Matches(Buffer.data() + i + L * BO4RuntimeLayerBytes, Layers[L], L);
+                            All = BO4TerrainRuntime::Matches(Buffer.data() + i + L * BO4RuntimeLayerBytes, Layers[L], Targets[t].WeightSlices[L]);
                         if (All)
                             Found[t][std::string(reinterpret_cast<const char*>(Buffer.data() + i), Span)]
                                 .push_back(Base + Offset + i);
@@ -4554,6 +4700,7 @@ bool GameBlackOps4::ExportTerrainProbe(const CoDTerrain_t* Terrain,
         {
             nlohmann::json Row = {{"sector", Targets[t].Sector},
                                   {"layers_expected", Targets[t].UV.size()},
+                                  {"expected_weight_slices", Targets[t].WeightSlices},
                                   {"distinct_contents", Found[t].size()}};
             // The ring copy seen most often is the settled one.
             const std::pair<const std::string, std::vector<uint64_t>>* Best = nullptr;

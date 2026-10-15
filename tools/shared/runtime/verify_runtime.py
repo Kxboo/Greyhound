@@ -34,6 +34,9 @@ def verify(bundle):
         required = {'shared/runtime/export_brushes.py', 'shared/runtime/verify_runtime.py', 'shared/runtime/verify_saved_export.py', 'black_ops_3/reference/bo3_reference.json',
                     'black_ops_4/brushes/bo4_brush_export.py',
                     'black_ops_4/decals/export_bo3.py',
+                    'black_ops_4/capture/export_terrain.py',
+                    'black_ops_4/capture/export_baked_terrain.py',
+                    'black_ops_4/capture/build_bo4_terrain_cast.py',
                     'black_ops_4/decals/bo3_stock_template_v1.json',
                     'black_ops_4/brushes/bo4_brush_geometry.py', 'black_ops_4/brushes/verify_bo4_brush_geometry.py',
                     'black_ops_4/brushes/bo4_brush_visual_materials.py', 'shared/brushes/certified_brush_partition.py',
@@ -79,6 +82,8 @@ def verify(bundle):
     # These are the entry points actually launched by the native terrain exporter.
     for helper in ('shared/capture/organize_export.py', 'shared/capture/finalize_research_capture.py',
                    'black_ops_4/decals/export_bo3.py',
+                   'black_ops_4/capture/export_terrain.py',
+                    'black_ops_4/capture/export_baked_terrain.py',
                    'cold_war/terrain/bake.py', 'cold_war/terrain/finalize.py'):
         def help_check(helper=helper):
             path = bundle / helper

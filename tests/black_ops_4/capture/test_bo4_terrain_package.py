@@ -38,8 +38,10 @@ class SectorPairingTests(unittest.TestCase):
     def probe(self, *grids):
         images = [image for g in grids for image in g]
         # zm_white lists every sector's triple in one sector's side arrays, twice.
-        return {"sectors": [{"sector": 0, "side_arrays": []},
-                            {"sector": 1, "side_arrays": [{"images": images}, {"images": images}]}]}
+        sectors = [{"sector": i, "finest_width": g[0]["tiles_across"], "side_arrays": []}
+                   for i, g in enumerate(grids)]
+        sectors[-1]["side_arrays"] = [{"images": images}, {"images": images}]
+        return {"sectors": sectors}
 
     def test_pairs_each_sector_by_name_across_shared_arrays(self):
         result = package.grid_images(self.probe(grid(0, 128, 0x100, "A"), grid(1, 32, 0x200, "B")))
@@ -126,7 +128,8 @@ class TerrainCastTests(unittest.TestCase):
             return levels[0]
 
     def sector(self):
-        return {"world_xy_origin": [0.0, 0.0], "units_per_sample": 1.0, "grid_samples": 3}
+        return {"world_xy_origin": [0.0, 0.0], "units_per_sample": 1.0, "grid_samples": 3,
+                "layer_weights": {"array_slice_base": 0}}
 
     def blend(self, layers, weights):
         x = np.array([[0.5]]); return terrain_cast.blend(layers, weights, self.sector(), x, x, 1.0)[0, 0]

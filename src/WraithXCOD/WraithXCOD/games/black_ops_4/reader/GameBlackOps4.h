@@ -61,7 +61,7 @@ public:
     // only: it records the pool descriptor and the raw header, and never
     // asserts a field meaning carried over from Cold War.
     static bool ExportTerrainProbe(const CoDTerrain_t* Terrain, const std::string& ExportPath,
-        const std::function<void(uint32_t)>& ReportProgress);
+        const std::function<void(uint32_t)>& ReportProgress, bool ForceTerrainProbe = false);
 
 private:
     // -- Game offsets databases

@@ -5,6 +5,7 @@ BEGIN_MESSAGE_MAP(TerrainSettings, WraithWindow)
     ON_COMMAND(IDC_SHOWXTERRAIN, OnShowTerrains)
     ON_CBN_SELENDOK(IDC_TERRAIN_AREA, OnArea)
     ON_CBN_SELENDOK(IDC_TERRAIN_FORMATS, OnFormats)
+    ON_CBN_SELENDOK(IDC_BO4_TERRAIN_VERSION, OnBO4Version)
     ON_EN_KILLFOCUS(IDC_TERRAIN_OUTPUT, OnOutput)
 END_MESSAGE_MAP()
 void TerrainSettings::OnBeforeLoad()
@@ -13,6 +14,10 @@ void TerrainSettings::OnBeforeLoad()
         DEFAULT_QUALITY,DEFAULT_PITCH | FF_SWISS,L"Microsoft Sans Serif");
     GetDlgItem(IDC_TITLE)->SetFont(&TitleFont);
     ((CButton*)GetDlgItem(IDC_SHOWXTERRAIN))->SetCheck(SettingsManager::GetSetting("showxterrain","true")=="true");
+    auto Version=(CComboBox*)GetDlgItem(IDC_BO4_TERRAIN_VERSION);
+    Version->AddString(L"BO4: Source package"); Version->AddString(L"BO4: Original-material CAST"); Version->AddString(L"BO4: Baked CAST");
+    const auto Mode=SettingsManager::GetSetting("bo4terrainversion","source");
+    Version->SetCurSel(Mode=="baked"?2:Mode=="native"?1:0);
     ::SetWindowTextA(GetDlgItem(IDC_TERRAIN_OUTPUT)->GetSafeHwnd(),SettingsManager::GetSetting("terrainoutputroot", "").c_str());
     auto Area=(CComboBox*)GetDlgItem(IDC_TERRAIN_AREA);
     Area->AddString(L"Whole map");Area->AddString(L"5 x 5 tiles near the current view (test)");
@@ -32,6 +37,12 @@ void TerrainSettings::OnArea()
 void TerrainSettings::OnFormats()
 {
     SettingsManager::SetSetting("terrainmodelformats",((CComboBox*)GetDlgItem(IDC_TERRAIN_FORMATS))->GetCurSel()==1?"selected":"cast");
+}
+
+void TerrainSettings::OnBO4Version()
+{
+    const auto Selected=((CComboBox*)GetDlgItem(IDC_BO4_TERRAIN_VERSION))->GetCurSel();
+    SettingsManager::SetSetting("bo4terrainversion",Selected==2?"baked":Selected==1?"native":"source");
 }
 
 void TerrainSettings::OnOutput()

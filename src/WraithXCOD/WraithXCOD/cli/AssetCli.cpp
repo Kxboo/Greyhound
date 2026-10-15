@@ -48,6 +48,8 @@ namespace
         bool All = false;
         bool DryRun = false;
         bool TerrainSource = false;
+        bool TerrainBakeDecals = false;
+        std::string TerrainVersion;
         bool TerrainAreaExplicit = false;
         std::string TerrainArea = "whole";
         std::string TerrainOutput;
@@ -421,6 +423,13 @@ namespace
             }
             else if (Argument == "--decal-placements") { Options.DecalPlacements = true; Options.ExportOptionsUsed = true; }
             else if (Argument == "--terrain-source") { Options.TerrainSource = true; Options.ExportOptionsUsed = true; }
+            else if (Argument == "--terrain-bake-decals") { Options.TerrainBakeDecals = true; Options.ExportOptionsUsed = true; }
+            else if (Argument == "--terrain-version") {
+                Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
+                Options.TerrainVersion = Value; Options.ExportOptionsUsed = true;
+                if (Options.TerrainVersion != "source" && Options.TerrainVersion != "native" && Options.TerrainVersion != "baked")
+                { Error = "--terrain-version must be source, native, or baked"; return false; }
+            }
             else if (Argument == "--terrain-output") {
                 Value = NeedValue(Index, argc, argv, Error); if (!Value) return false;
                 Options.TerrainOutput = Value; Options.ExportOptionsUsed = true;
@@ -639,8 +648,18 @@ namespace
         { Error = "unsupported sound format '" + Options.SoundFormat + "'"; return false; }
         if (Options.AnimationFormats.count("xanim-v17") && Options.AnimationFormats.count("xanim-v19"))
         { Error = "xanim-v17 and xanim-v19 cannot be exported in the same run"; return false; }
-        if ((Options.TerrainSource || Options.TerrainAreaExplicit || !Options.TerrainOutput.empty()) && !Options.Types.count("terrain"))
+        if ((Options.TerrainSource || !Options.TerrainVersion.empty() || Options.TerrainBakeDecals || Options.TerrainAreaExplicit || !Options.TerrainOutput.empty()) && !Options.Types.count("terrain"))
         { Error = "Terrain options require --type terrain"; return false; }
+        if (!Options.TerrainVersion.empty() && (Options.TerrainSource || Options.TerrainBakeDecals))
+        { Error = "Choose --terrain-version or a legacy terrain flag, not both"; return false; }
+        if (!Options.TerrainVersion.empty() && Options.ModelFormatExplicit &&
+            (Options.ModelFormats.size()!=1 || !Options.ModelFormats.count("cast")))
+        { Error = "BO4 terrain versions export CAST models only"; return false; }
+        if (Options.TerrainSource && Options.TerrainBakeDecals)
+        { Error = "--terrain-bake-decals requires model export, not --terrain-source"; return false; }
+        if (Options.TerrainBakeDecals && Options.ModelFormatExplicit &&
+            (Options.ModelFormats.size() != 1 || !Options.ModelFormats.count("cast")))
+        { Error = "BO4 terrain decal bake currently exports CAST models only"; return false; }
         if (Options.BO4CaptureModeExplicit && (!Options.TerrainSource || !Options.Types.count("terrain")))
         { Error = "--bo4-capture-mode requires --type terrain --terrain-source"; return false; }
         if (Options.TerrainSource && Options.TerrainAreaExplicit)
@@ -720,8 +739,10 @@ namespace
             {"terrain_support", {
                 {"black_ops_cw", {{"model_packages", true}, {"source_capture", true},
                     {"terrain_material_layers", "included"}, {"separate_decals_in_model_packages", "omitted"}}},
-                {"black_ops_4", {{"model_packages", false}, {"source_capture", true},
-                    {"source_option", "--terrain-source"}, {"separate_decals", "raw_source_in_terrain_probe"}}}
+                {"black_ops_4", {{"model_packages", true}, {"source_capture", true},
+                    {"source_option", "--terrain-source"}, {"baked_decals_option", "--terrain-bake-decals"},
+                    {"version_option", "--terrain-version"}, {"versions", {"source", "native", "baked"}},
+                    {"patch_generation", "TerrainReconstructor"}, {"baked_model_format", "cast"}, {"baked_model_limit", 4096}, {"baked_texture_limit", 1024}}}
             }},
             {"decal_support", {{"black_ops_4", {{"format", "bo3_root_overlay"},
                 {"shader_families", {"6e0a762e671e6047"}}, {"placements", "optional_validated_subset"},
@@ -736,7 +757,7 @@ namespace
                     "--global-images", "--local-images"}},
                 {"image", {"--patch-normals", "--no-patch-normals", "--patch-color", "--no-patch-color"}},
                 {"sound", {"--keep-sound-path", "--flat-sound-path", "--skip-blank-audio", "--include-blank-audio"}},
-                {"terrain", {"--terrain-source", "--terrain-area", "--terrain-output"}},
+                {"terrain", {"--terrain-source", "--terrain-version", "--terrain-bake-decals", "--terrain-area", "--terrain-output"}},
                 {"decal", {"--decal-placements"}}
             }},
             {"stable_defaults", {
@@ -745,8 +766,10 @@ namespace
                 {"lod", "largest"}, {"reverse_lod_numbering", false}, {"model_images", true},
                 {"material_folders", true}, {"global_images", false},
                 {"patch_normals", true}, {"patch_color", true},
-                {"existing_files", "skip"}, {"terrain_export", "baked_model_packages"},
-                {"terrain_export_games", {"black_ops_cw"}}, {"terrain_area", "whole"}, {"terrain_model_format", "cast"}
+                {"existing_files", "skip"}, {"terrain_export", "game_specific"},
+                {"bo4_terrain_version", "source"}, {"cw_terrain_export", "baked_model_packages"},
+                {"terrain_export_games", {"black_ops_cw", "black_ops_4"}}, {"terrain_area", "whole"},
+                {"terrain_model_format", "cast"}, {"terrain_bake_decals", false}
             }},
             {"selection", {
                 {"exact", "repeat --name"}, {"glob", "repeat --glob"},
@@ -799,6 +822,8 @@ namespace
             "  --type decal            BO4 native BO3 decal asset; uses bundled BO3 defaults\r\n"
             "  --bo3-root PATH         Legacy option; accepted but no longer required or read\r\n"
             "  --decal-placements      Add validated original placements as a Radiant prefab\r\n"
+            "  --terrain-version source|native|baked  BO4 export version\r\n"
+            "  --terrain-bake-decals   Alias for BO4 baked CAST with decals\r\n"
             "  --update-names           Download / update Saluki names directly from GitHub\r\n"
             "  --export-root PATH       Export folder for this run (default: the saved\r\n"
             "      exportroot setting, else exported_files beside Greyhound.exe)\r\n"
@@ -811,7 +836,8 @@ namespace
             "  --keep-sound-path|--flat-sound-path --skip-blank-audio|--include-blank-audio\r\n\r\n"
             "Cold War terrain exports baked model packages (CAST default), without separate decals.\r\n"
             "--terrain-area whole|nearby applies to Cold War baked terrain only.\r\n"
-            "BO4 terrain requires --terrain-source and uses its own raw capture; no baked models.\r\n"
+            "BO4 terrain: --terrain-version source, native (original materials), or baked.\r\n"
+            "Use the packaged source in TerrainReconstructor for patches and collision budgets.\r\n"
             "Use --terrain-output FOLDER to choose the destination; --terrain-source also supports CW.\r\n";
     }
 
@@ -850,7 +876,10 @@ namespace
             {"skip_blank_audio", Options.SkipBlankAudio},
             {"existing_files", Options.Overwrite ? "overwrite" : "skip"},
             {"decal", {{"template", "bundled"}, {"include_placements", Options.DecalPlacements}, {"format", "bo3_root_overlay"}}},
-            {"terrain", {{"mode", Options.TerrainSource ? "source_data_only" : "baked_model_packages"}, {"area", Options.TerrainArea}, {"output_root", Options.TerrainOutput}, {"model_formats", Options.TerrainSource ? std::set<std::string>{} : (Options.ModelFormatExplicit ? Options.ModelFormats : std::set<std::string>{"cast"})}}}
+            {"terrain", {{"mode", Options.TerrainSource ? "source_data_only" :
+                (CoDAssets::GameID == SupportedGames::BlackOps4 ? "bo4_selected_version" : "baked_model_packages")},
+                {"bo4_version", Options.TerrainVersion.empty() ? (Options.TerrainBakeDecals ? "baked" : "source") : Options.TerrainVersion}, {"bake_decals", Options.TerrainBakeDecals}, {"area", Options.TerrainArea},
+                {"output_root", Options.TerrainOutput}, {"model_formats", Options.TerrainSource ? std::set<std::string>{} : (Options.ModelFormatExplicit ? Options.ModelFormats : std::set<std::string>{"cast"})}}}
         };
     }
 
@@ -926,6 +955,9 @@ namespace
         SetBool("skipprevsound", !Options.Overwrite);
         SetBool("skipprevterrain", !Options.Overwrite);
         SetBool("decalplacements", Options.DecalPlacements);
+        SetBool("terrainbakedecals", Options.TerrainBakeDecals);
+        SettingsManager::SetSetting("bo4terrainversion", Options.TerrainVersion.empty() ?
+            (Options.TerrainBakeDecals ? "baked" : "source") : Options.TerrainVersion);
 
         return true;
     }
@@ -1299,6 +1331,8 @@ int AssetCli::Run(int argc, char** argv)
 
         if (Asset->AssetType == WraithAssetType::Terrain)
         {
+            if ((!Options.TerrainVersion.empty() || Options.TerrainBakeDecals) && CoDAssets::GameID != SupportedGames::BlackOps4)
+                return EmitError(Options, "--terrain-version is for Black Ops 4", 1);
             const auto Problem = CoDAssets::TerrainExportProblem(Options.TerrainSource);
             if (!Problem.empty())
             {

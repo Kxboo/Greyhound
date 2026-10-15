@@ -20,6 +20,7 @@ private:
     void OnShowTerrains();
     void OnArea();
     void OnFormats();
+    void OnBO4Version();
     void OnOutput();
 
 protected:

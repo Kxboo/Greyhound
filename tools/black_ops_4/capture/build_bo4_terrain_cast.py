@@ -366,17 +366,34 @@ def cast_node(ident, hash_value, props, children=()):
 
 
 def write_cast(path, name, geometry, textures):
-    """One mesh and one PBR material. textures maps CAST slots (albedo, normal,
+    """One static mesh and one PBR material. textures maps CAST slots (albedo, normal,
     roughness, specular, ...) to image paths; a bare string is the albedo."""
     if isinstance(textures, str):
         textures = {"albedo": textures}
     material_hash, mesh_hash = 0x2000, 0x3000
+    # Match Greyhound's native CAST layout: converters expect a skeleton even
+    # for static models. Identity bind transforms preserve the world positions.
+    bone_node = cast_node(b"bone", 0x4001, [
+        cast_property("n", "s", "tag_origin"),
+        cast_property("p", "i", np.array([0xFFFFFFFF], "<u4")),
+        cast_property("lr", "4v", np.array([[0, 0, 0, 1]], "<f4")),
+        cast_property("lp", "3v", np.array([[0, 0, 0]], "<f4")),
+        cast_property("wr", "4v", np.array([[0, 0, 0, 1]], "<f4")),
+        cast_property("wp", "3v", np.array([[0, 0, 0]], "<f4")),
+        cast_property("s", "3v", np.array([[1, 1, 1]], "<f4")),
+    ])
+    skeleton_node = cast_node(b"skel", 0x4000, [], [bone_node])
+    vertex_count = len(geometry["positions"])
     faces = geometry["faces"]
     face_kind, face_dtype = ("i", "<u4") if len(geometry["positions"]) > 0xFFFF else ("h", "<u2")
     mesh_node = cast_node(b"mesh", mesh_hash, [
         cast_property("n", "s", name),
         cast_property("vp", "3v", (geometry["positions"] * CM_PER_INCH).astype("<f4")),
         cast_property("vn", "3v", geometry["normals"].astype("<f4")),
+        cast_property("vc", "i", np.full(vertex_count, 0xFFFFFFFF, "<u4")),
+        cast_property("mi", "b", np.array([1], "<u1")),
+        cast_property("wb", "b", np.zeros(vertex_count, "<u1")),
+        cast_property("wv", "f", np.ones(vertex_count, "<f4")),
         cast_property("u0", "2v", geometry["uv"].astype("<f4")),
         cast_property("ul", "b", np.array([1], "<u1")),
         cast_property("f", face_kind, faces.astype(face_dtype).ravel()),
@@ -388,7 +405,8 @@ def write_cast(path, name, geometry, textures):
     material_node = cast_node(b"matl", material_hash, [
         cast_property("n", "s", name), cast_property("t", "s", "pbr")]
         + [cast_property(slot, "l", np.array([files[slot]], "<u8")) for slot in textures], file_nodes)
-    model = cast_node(b"modl", 0x100, [cast_property("n", "s", name)], [mesh_node, material_node])
+    model = cast_node(b"modl", 0x100, [cast_property("n", "s", name)],
+                      [skeleton_node, material_node, mesh_node])
     root = cast_node(b"root", 0x1, [], [model])
     path.write_bytes(struct.pack("<4sIII", b"cast", 1, 1, 0) + root)
 
@@ -419,14 +437,36 @@ def build(package, output, sector_index=0, box=None, texels_per_unit=0.5, name=N
 CAST_SLOTS = ("albedo", "normal", "roughness", "specular")
 
 
+def write_baked_material(output, name, maps):
+    """Package a generated terrain material using Greyhound's normal layout."""
+    output = Path(output)
+    image_dir = output / "_images" / name
+    info_dir = output / "_mat_info"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    info_dir.mkdir(parents=True, exist_ok=True)
+    files = {}
+    semantics = {"albedo": "colorMap", "normal": "normalMap", "gloss": "glossMap",
+                 "roughness": "roughnessMap", "specular": "specularMap"}
+    rows = [f"Name: {name}", "", "semantic,image_name"]
+    for key, image in maps.items():
+        path = image_dir / f"{name}_{key}.png"
+        Image.fromarray(image).save(path)
+        files[key] = path.relative_to(output).as_posix()
+        rows.append(f"{semantics[key]},{path.stem}")
+    info = info_dir / f"{name}.txt"
+    info.write_text("\n".join(rows) + "\n", encoding="utf8")
+    return files, info.relative_to(output).as_posix()
+
+
 def build_emulated(package, output, sector_index=0, box=None, texels_per_unit=1.0, name=None, subdivide=2,
-                   pixel_shader=None, domain_shader=None, decals=True, tile=1024, block=128, progress=None):
+                   pixel_shader=None, domain_shader=None, decals=True, tile=1024, block=128, progress=None,
+                   terrain_scene=None, decal_scene=None, solid_grid=None):
     """The CAST model from the game's own terrain, domain and decal shaders (see module notes)."""
     from bo4_decal_composite import DecalScene, bake_surface
     from bo4_terrain_gbuffer import TerrainScene
 
     package, output = Path(package), Path(output)
-    terrain = TerrainScene(package, sector_index, pixel_shader, domain_shader)
+    terrain = terrain_scene or TerrainScene(package, sector_index, pixel_shader, domain_shader)
     s = terrain.sector
     ox, oy = s["world_xy_origin"]
     ups = s["units_per_sample"]
@@ -440,18 +480,17 @@ def build_emulated(package, output, sector_index=0, box=None, texels_per_unit=1.
     name = name or f"bo4_terrain_sector{sector_index}"
     output.mkdir(parents=True, exist_ok=True)
 
-    _, solid = load_grid(package, s)
+    solid = solid_grid if solid_grid is not None else load_grid(package, s)[1]
     geometry = displaced_mesh(terrain, solid, box, subdivide, bake_box)
-    maps, changed = bake_surface(terrain, DecalScene(package) if decals else None, bake_box, tpu,
+    maps, changed = bake_surface(terrain, (decal_scene or DecalScene(package)) if decals else None, bake_box, tpu,
                                  tile, block, progress)
-    files = {}
-    for key, image in maps.items():
-        files[key] = f"{name}_{key}.png"
-        Image.fromarray(image).save(output / files[key])
+    files, material_info = write_baked_material(output, name, maps)
     del maps
     write_cast(output / f"{name}.cast", name, geometry, {slot: files[slot] for slot in CAST_SLOTS})
     displacement = geometry["displacement"]
-    report = {"cast": f"{name}.cast", "maps": files, "units": "centimetres (game inches x 2.54)",
+    report = {"cast": f"{name}.cast", "maps": files, "material_info": material_info,
+              "material_kind": "generated_terrain_bake", "decals_baked": bool(decals),
+              "units": "centimetres (game inches x 2.54)",
               "world_box_inches": box, "texture_box_inches": bake_box, "texels_per_inch": tpu,
               "texture_size": [width, height], "subdivide": max(1, int(subdivide)),
               "vertices": len(geometry["positions"]), "triangles": len(geometry["faces"]),

@@ -9,6 +9,7 @@ and [Run Greyhound](#run-greyhound).
 | Question | Findings | Code or evidence |
 | --- | --- | --- |
 | How is Cold War terrain found and decoded? | [CW terrain](cw-terrain.md) · [TerrainGfx comparison](terraingfx-reference.md) | [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp) · [terrain capture](../src/WraithXCOD/WraithXCOD/games/cold_war/terrain/CWTerrainBake.h) |
+| Which BO4 terrain export should I use? | [Terrain export versions](bo4-terrain-export.md) | [Version dispatcher](../tools/black_ops_4/capture/export_terrain.py) |
 | How does BO4 TerrainGfx differ? | [BO4 terrain and collision](bo4-terrain-research.md) · [TerrainGfx comparison](terraingfx-reference.md) | [BO4 reader](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp) · [source packager](../tools/black_ops_4/capture/package_bo4_terrain.py) |
 | Where are placements and scene objects? | [CW placements](cw-placements.md) · [CW effects and entities](cw-effects-entities.md) · [BO4](bo4.md) | [CW reader](../src/WraithXCOD/WraithXCOD/games/cold_war/reader/GameBlackOpsCW.cpp) · [BO4 reader](../src/WraithXCOD/WraithXCOD/games/black_ops_4/reader/GameBlackOps4.cpp) |
 | Where are collision and navigation decoded? | [CW collision](cw-collision.md) · [CW navigation](cw-navigation.md) · [BO4 research](bo4-terrain-research.md) | [Script directory](../tools/README.md) · [BO4 brush workflow](bo4-radiant-export.md) |

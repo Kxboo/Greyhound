@@ -47,6 +47,62 @@ class SamplerStateTests(unittest.TestCase):
 
 
 class EmulatorTests(unittest.TestCase):
+    def test_sincos_scalar_source_and_aliased_destination(self):
+        shader = Shader("""ps_5_0
+dcl_input_ps linear v0.xyzw
+dcl_output o0.xyzw
+dcl_temps 8
+mov r2.xyzw, v0.xyzw
+sincos r2.w, r7.x, r2.w
+mov o0.x, r2.w
+mov o0.y, r7.x
+ret
+""")
+        angles = np.array([0, np.pi / 2, -np.pi / 2, np.pi, -0.0], np.float32)
+        inputs = np.zeros((len(angles), 4), np.float32)
+        inputs[:, 3] = angles
+        outs, _ = shader.run(len(angles), inputs={"v0": inputs})
+        self.assertEqual(outs[0].dtype, np.float32)
+        np.testing.assert_allclose(outs[0][:, 0], np.sin(angles), atol=1e-7)
+        np.testing.assert_allclose(outs[0][:, 1], np.cos(angles), atol=1e-7)
+        self.assertTrue(np.signbit(outs[0][-1, 0]))
+
+    def test_sincos_preserves_destination_components_and_inactive_lanes(self):
+        shader = Shader("""ps_5_0
+dcl_input_ps linear v0.xyzw
+dcl_output o0.xyzw
+dcl_output o1.xyzw
+dcl_temps 1
+mov o0.xyzw, l(9.0, 8.0, 7.0, 6.0)
+mov o1.xyzw, l(5.0, 4.0, 3.0, 2.0)
+lt r0.x, v0.x, l(0.0)
+if_nz r0.x
+sincos o0.xz, o1.yw, v0.wzyx
+endif
+ret
+""")
+        inputs = np.array([[-1.0, 0.3, -0.5, 0.7], [1.0, -0.2, 0.9, -0.4]], np.float32)
+        outs, _ = shader.run(2, inputs={"v0": inputs})
+        sine, cosine = np.sin(inputs[0, ::-1]), np.cos(inputs[0, ::-1])
+        np.testing.assert_allclose(outs[0], [[sine[0], 8, sine[2], 6], [9, 8, 7, 6]], atol=1e-7)
+        np.testing.assert_allclose(outs[1], [[5, cosine[1], 3, cosine[3]], [5, 4, 3, 2]], atol=1e-7)
+
+    def test_sincos_null_destinations_modifiers_and_saturation(self):
+        shader = Shader("""ps_5_0
+dcl_input_ps linear v0.xyzw
+dcl_output o0.xyzw
+dcl_output o1.xyzw
+sincos_sat null, o0.xyzw, -|v0.xyzw|
+sincos_sat o1.xyzw, null, -|v0.xyzw|
+sincos null, null, v0.xyzw
+ret
+""")
+        inputs = np.array([[0.0, -np.pi / 2, np.pi, -np.pi * 1.5]], np.float32)
+        outs, _ = shader.run(1, inputs={"v0": inputs})
+        angles = -np.abs(inputs)
+        np.testing.assert_allclose(outs[0], np.clip(np.cos(angles), 0, 1), atol=1e-7)
+        np.testing.assert_allclose(outs[1], np.clip(np.sin(angles), 0, 1), atol=1e-7)
+
     def test_discarded_lanes_keep_running_as_derivative_helpers(self):
         # Lanes in column 0 discard after r1.x was left stale. A GPU keeps them
         # running, so the coarse x derivative of column 1 sees their new value.
