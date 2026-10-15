@@ -3,14 +3,99 @@
 [Documentation index](README.md) | [BO4 workflows](bo4.md) | [Contributing](contributing.md)
 
 This page describes producer contracts, measured BO4 layouts and remaining
-decoder work. Most measurements originated from `zm_white`; validate them
-against the game build and map you are studying. Counts from a historical
-capture are not requirements for another map.
+decoder work. Early measurements used `zm_white` (Alpha Omega) and `zm_towers`
+(IX); `zm_mansion` (Dead of the Night) exposed additional mask, layer-packing
+and sampling distinctions. Validate each finding against the game build and map
+you are studying. Historical capture counts are evidence, not format limits.
+For export steps, start with [BO4 terrain export versions](bo4-terrain-export.md).
+
+## What Mansion added
+
+The Mansion work corrected assumptions that happened to hold on IX. The most
+useful discoveries for another decoder are:
+
+| Finding | Consequence for reconstruction | Implementation/evidence |
+| --- | --- | --- |
+| Painted layer weights are independent, ordered BC4 masks | Preserve each mask and layer order; do not normalize weights or fabricate a Cold War index map | [Mask reference](#mask-reference) and shader blend rule below |
+| Runtime weight indices address shared arrays | Match records using the sector's slice table, then translate to the packaged slice index | [BO4TerrainRuntime.h](../src/WraithXCOD/WraithXCOD/games/black_ops_4/capture/BO4TerrainRuntime.h), `package_bo4_terrain.py` |
+| Render-layer and displacement masks differ | Build node +8 from eligible displacement layers, not by copying node +4 | 36 content-matched Mansion upload records; [node masks](#mansion-node-mask-correction) |
+| Layer flags are per layer instance, not per material name | Recover missing records from their own expanded inputs; never borrow another sector's flags | [Expanded layer parameters](#expanded-layer-parameters-2026-10-12-verification) |
+| Albedo alpha is linear even when RGB is sRGB | Decode RGB only; gamma-transforming alpha changes tint/blend inputs | `test_bo4_texture_color.py` |
+| Original mip data and exposed texture-view levels are different evidence | Preserve native DDS mips and use matching captured view limits where available | [Texture views](#captured-terrain-texture-views-2026-10-12) |
+
+These fixes are in the decoder/export tools. They do not establish a selected
+in-game draw, exact tessellation LOD, or one-to-one final lighting. Historical
+Mansion captures are not shipped with the repository; the reusable synthetic
+checks live in [terrain capture tests](../tests/black_ops_4/capture/).
+
+### Mask reference
+
+Several different fields were previously easy to confuse:
+
+| Input | Meaning | Do not substitute |
+| --- | --- | --- |
+| R32 cutout bits | Whether the terrain surface exists: 0 hole, 1 solid | A painted layer weight or material alpha |
+| BC4 layer-weight slice | Independent spatial opacity for one layer, before reveal blending | A normalized weight or a discrete material index |
+| Tile/node layer bitmask (+4 in the 124-byte node) | Which layer slots the shader considers | Per-pixel opacity; a set bit is not weight 1 |
+| Node displacement bitmask (+8) | Which considered layers may contribute height displacement | The full render-layer mask |
+| Material `revealMap` red | Fine detail used to reshape opacity when flag 0x4 is set | Geometric `heightMap`, roughness, or the painted mask itself |
+| Albedo alpha | Linear tint interpolation input on the non-height-blend path | sRGB colour or the BC4 painted mask |
+
+The stored weights already represent the shipped painted/rule result. Preserve
+them rather than trying to re-run guessed slope/height authoring rules. BO4's
+shader consumes the stack in slot order, promotes the first nonzero layer and
+then performs sequential blending. Weight sums above one are valid. For example,
+two raw overlay weights of 0.5 are not mutually exclusive: ignoring reveal,
+sequential lerps leave 0.25 of the base, 0.25 of the first overlay and 0.5 of the
+last overlay. Normalizing those inputs would change the result.
+
+Cold War's OMPV/index-map path is a different representation. Reusing its output
+folder convention does not justify applying its alpha transforms or index-map
+decoder to BO4. A source-material CAST retains material inputs, but its consumer
+still needs the BO4 reveal rule to reproduce that shader's blending.
+
+### Mansion node-mask correction
+
+All 36 content-matched Mansion CPU upload records checked on 2026-10-12 satisfy:
+
+```text
+displacement_mask = layer_mask & bitset(layer.runtime.flags & 0x20 != 0)
+```
+
+All 36 differ from the full layer mask. Examples are render/displacement pairs
+`0x3f / 0x30` in sector 0 and `0x3f / 0x16` in sector 1. IX's observed equality
+was a property of its layers, not a format rule. `TerrainScene.node_records()`
+now uses the restricted mask. The domain shader separately checks flag 0x2;
+a layer outside the displacement mask can still attenuate accumulated relief
+through `(1 - w)`. Removing it from the render stack would therefore be wrong.
+These upload copies establish record contents, not which node a frame drew.
+
+### Diagnose a blend before changing a bake
+
+1. Verify sector placement, cutout orientation, layer order and source identities.
+   Tile width is `32 * units_per_sample`; Mansion uses 512- or 1024-unit tiles,
+   so the 256-unit IX example is not universal.
+2. Check each runtime +32 against the captured slice table. Treat 4094/4095 as
+   constant one/zero; subtract `array_slice_base` only for actual texture slices.
+3. Inspect BC4 weights, layer participation bits and reveal-map red separately.
+   Preserve zero-weight skipping, first-layer promotion and the ordered blend.
+4. Check the layer's own flags, UV rows, packed tint, reveal contrast/exponent
+   and linear alpha. Record whether each 112-byte record was captured or rebuilt.
+5. Compare native mip inputs and matching texture-view limits. Distinguish a
+   close-camera approximation from flag 0x400's distance-dependent behavior.
+6. Compare the same coordinates and shader outputs before evaluating a lit
+   Blender preview. CPU derivatives, sampler bindings, decals and lighting can
+   cause differences even when the layer data is correct.
+
+Increasing bake resolution cannot repair a wrong slice, mask, tint or layer
+order. Keep the source package for these checks. Radiant patch generation and
+collision/non-colliding control budgets belong to **TerrainReconstructor**, not
+Greyhound.
 
 ## Terrain source packaging
 
 [package_bo4_terrain.py](../tools/black_ops_4/capture/package_bo4_terrain.py)
-turns any map's mode 0 terrain probe (`terraingfx_probe.json`, schema v45–v48)
+turns any map's mode 0 terrain probe (`terraingfx_probe.json`, schema v45–v49)
 into a `superterrain-bo4-source-package-v1` package. Probe v46 adds the runtime
 layer records and v48 the terrain shaders; `--emulate` needs both.
 [verify_bo4_terrain_package.py](../tools/black_ops_4/capture/verify_bo4_terrain_package.py)
@@ -28,7 +113,7 @@ The packager runs for the [BO4 terrain export versions](bo4-terrain-export.md). 
 ### Finding each sector's files
 
 The packager reads per-sector files from the probe instead of fixed names. A
-sector's image table lists one triple per sector, in sector order:
+sector's image table can describe shared arrays grouped by sector size:
 
 | Image | Format | Size (n = tiles across) |
 | --- | --- | --- |
@@ -36,9 +121,13 @@ sector's image table lists one triple per sector, in sector order:
 | `terrain_cutout_maps_<i>` | R32 | (4n+1) × (8n+1) |
 | Layer weights (hash-named) | BC4, one slice per non-base layer | (32n+4)² |
 
-One sector's arrays can list every sector's triple; zm_white does. The
-packager pairs each triple by name and `tiles_across`. It rejects the capture
-if a dimension disagrees or a placement has a scale other than 1.
+The packager resolves height/cutout array slices from the sector's size group,
+and weight slices from its side array at +0x138. It writes sector-local files
+while retaining the shared-array mapping. Dimensions must agree. Probe v49
+preserves full transforms for supported right-angle rotations; sectors whose
+rotation cannot be recovered are excluded and reported, not silently exported
+unrotated. Source packaging support does not imply that every model consumer
+supports rotated sectors.
 
 ### Verified conventions
 
@@ -49,7 +138,7 @@ Measured on zm_white (2 sectors, n = 128 and 32) and zm_towers (1 sector, n = 32
   Rows run +Y and columns run +X.
 - **Padding:** only 32n+1 samples are used. On zm_white, rows and columns
   32n+1 to 32n+3 repeat 32n, which puts sample 0 at the origin.
-- **Layer weights:** BC4 slice k belongs to layer slot k+1. Slice k is nonzero
+- **Layer weights (these two maps):** BC4 slice k belongs to layer slot k+1. Slice k is nonzero
   in exactly the tiles whose layer mask has bit k+1: 99.9–100% agreement on
   every slice of every sector, and the declared slot always matches best.
 - **Surface props:** props within 40 units of the surface rest on it. That
@@ -156,8 +245,11 @@ content:
 - It scans writable memory for each sector's layers as consecutive 112-byte
   records.
 - A record matches when its uv rows (+0, +16) equal the asset's layer uv
-  bit-for-bit, and its +32 equals the weight slice: 4094 or < 64 for slot 0,
-  k−1 for slot k.
+  bit-for-bit, and its +32 equals the expected weight slice: 4094 for the base,
+  the sector's captured slice-table entry for slot k. The earlier `k-1`
+  assumption only held for the simple unshared arrays. +32 addresses the shared
+  BC4 array; a packaged sector-local file uses `slice - array_slice_base`.
+  4094/4095 remain constant one/zero, never array indices.
 - Ring copies are grouped by content. The most frequent is dumped to
   `sector<i>_runtime_layers.bin` and decoded under `runtime_layer_records` in
   `terraingfx_probe.json`.
@@ -341,12 +433,13 @@ pixel or domain point:
 rebuilds the terrain's shader resources from a package. It runs the terrain
 G-buffer pixel shader (`457b8be2b884842c` on zm_towers) over a top-down grid.
 
-- **Node records (t9).** There is one 124-byte record per 256-unit tile.
+- **Node records (t9).** The replay builds one 124-byte record per finest
+  source tile; its size is `32 * units_per_sample` (256 units on zm_towers).
   - The game draws quadtree quadrants. A quadrant's layer mask (+4) is the OR
     of its tiles' masks, and all 124 live records on zm_towers follow that
     rule.
-  - +8 is the displacement layer mask. It equals +4 on every live zm_towers
-    node.
+  - +8 is the displacement layer mask. It equals +4 on the checked zm_towers
+    nodes, but differs in Mansion. Use the [restricted mask rule](#mansion-node-mask-correction).
 - **Geometric normal.** A central difference of the undisplaced bilinear
   height, one height texel either side of the point:
   - the step is `s = span / cb2[30].x` (8200 / 1028 ≈ 7.977 on zm_towers);
@@ -761,8 +854,10 @@ unknown semantic bindings remain unknown.
 
 BO4's independently overlapping weights must not be replaced with a fabricated
 discrete index plane or silently normalized. A consumer needs a BO4-specific
-intake path. Terrain reconstruction and OMPV baking are external to Greyhound;
-this repository does not ship a configured consumer workspace.
+intake path. Radiant patch reconstruction and its control budgets are external to Greyhound.
+Greyhound now exports BO4 source, original-material CAST and baked CAST packages;
+see [export versions](bo4-terrain-export.md). It does not turn BO4 masks into OMPV
+or ship a configured TerrainReconstructor workspace.
 
 [verify_bo4_gdt_intake.cjs](../tools/black_ops_4/capture/verify_bo4_gdt_intake.cjs)
 requires a separately supplied GDT project and materials directory. It checks
@@ -1033,7 +1128,9 @@ Unsupported primitive instances stay out of the published brush geometry.
 - Trace bone-dependent collision and the per-map +0x2C0 pair table.
 - Confirm trigger associations through runtime dispatch.
 - Identify primitive types from BO4 consumers.
-- Generalize terrain packaging without losing independent weight fields.
+- Extend mask/slice regression coverage to more sector sizes and shared arrays,
+  preserving independent weights and explicit exclusions. Validate draw-selected
+  LOD and sampler state separately from offline shader agreement.
 - Test assembled brush outputs in Radiant and gameplay.
 
 Keep source accounting and rejected records in every report. Describe what a
