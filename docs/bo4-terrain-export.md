@@ -20,6 +20,10 @@ Original-material CASTs retain the source height lattice and conservative cutout
 
 Baked textures are capped at 1024 pixels per side. This is an expensive CPU shader replay; large maps can take a long time. The integrated route permits up to 4096 planned sections and rejects larger plans before baking. It requires runtime layer records for every sector and a captured/empty decal inventory. Missing records are an error, not a reason to copy another sector's material parameters. Inspect failures and `package_audit.json`; a successful source capture is not proof of a complete bake.
 
+For the completed Mansion patch experiment, output counts, material matching and
+measured collision limitations, see [Mansion patch and CAST handoff](bo4-terrain-research.md#mansion-patch-and-cast-handoff). Those patches were generated downstream;
+Greyhound does not create them or enforce their control budgets.
+
 ## CLI
 
 From your checkout, use the CLI binary you built:

@@ -92,6 +92,60 @@ order. Keep the source package for these checks. Radiant patch generation and
 collision/non-colliding control budgets belong to **TerrainReconstructor**, not
 Greyhound.
 
+## Mansion patch and CAST handoff
+
+The 2026-10-12 Mansion work produced a full five-sector source folder, Radiant
+terrain patches and an original-material CAST alternative. This was a downstream
+reconstruction experiment, not recovery of authored Radiant patches from BO4.
+Greyhound supplies the source/model packages; **TerrainReconstructor remains the
+separate application responsible for patch generation and control budgets**.
+The numbers below describe this saved handoff, not Greyhound defaults or universal
+BO3 compiler limits.
+
+| Saved output | Measured contents |
+| --- | --- |
+| `source/` | All five sectors, raw height/cutout/weight arrays, layer/shader records and original PNG/DDS textures |
+| `zm_mansion_visual_only.map` | 6,497 visual patches, 810,236 controls, explicitly `nonColliding` |
+| `zm_mansion_collision_only.map` | 567 collision patches, 47,241 controls, invisible `clip` material |
+| `zm_mansion_full_patches.map` | Both sets: 7,064 patches and 857,477 total controls |
+| `models/bocw/` | 2,564 CAST models, `_mat_info` and `_images` |
+| `zm_mansion_models.map` / `zm_mansion_models_with_collision.map` | Model placements, without / with the collision patches |
+
+The requested downstream budgets were 48,000 collision controls and 1,000,000
+non-colliding visual controls. The final visual surface sampled every third
+native height-grid sample while retaining cutout edges. Collision used a coarser
+shared bilinear surface with an 18-source-sample step. Neither surface includes
+runtime tessellation displacement. Cutouts use a conservative four-solid-corner
+rule; the output is an approximation of the source terrain, not exact draw geometry.
+
+Visual patches retain source UVs and independent vertex-alpha fields. The parsed
+CAST surfaces use the same material references as the patches. `_blend` aliases
+reuse original source images; no composited terrain textures or baked lighting
+were created for this handoff. Material identity agreement does not establish
+that BO3 or a CAST importer reproduces BO4's reveal blending.
+
+The saved `validation.json` records 756 matching source-file hashes, 156 matching
+image-file hashes, all 2,564 CASTs parsed, matching patch/CAST material references,
+and structural validation of the three patch maps. It explicitly records
+`compiled: false`. Collision's maximum sampled height error against the raw source
+was **450.36 game inches**, with per-sector RMS errors of **15.97–55.13 inches**.
+Meeting the requested control budget therefore did not establish usable gameplay
+collision. Further fitting and in-engine testing are needed before treating that
+collision as accurate.
+
+For a similar handoff, retain the complete source folder containing `capture/`
+and `materials/` and select that folder in TerrainReconstructor. Import the original
+materials from `materials/superterrain_materials.json` and its image metadata.
+Generate and report visual/collision outputs separately, including control counts,
+cutout handling and height errors. Use either the visual patch set or the CAST
+placement set; avoid duplicating visual surfaces or adding collision twice.
+Keep source-world placement separate from any map-specific alignment offset.
+
+The saved Mansion report and assets are local research outputs, not repository
+fixtures or downloadable sample content. These historical counts do not describe
+every new export. Recheck each new handoff and distinguish structural validation,
+Radiant loading, BO3 compilation and gameplay verification.
+
 ## Terrain source packaging
 
 [package_bo4_terrain.py](../tools/black_ops_4/capture/package_bo4_terrain.py)
