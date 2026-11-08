@@ -4,6 +4,12 @@ The mod's copy of a script replaces a map's own copy of it. Two ways that stops 
 - MISSING: another map script calls a function only the map's copy has: Unresolved external "XXXXXXXX".
 - PARAMS: the function exists in ours, but the map calls it with more arguments than ours takes:
   Unresolved external "XXXXXXXX" with N parameters. Fix by adding optional arguments to ours (`arg = default`).
+And one way that stops it on connect:
+- SPLIT: the map ships both halves of a script (.gsc and .csc) and the mod zones only one. The map's other half then
+  pairs with ours, and any clientfield only one side registers gives "Server Disconnected - Clientfield Mismatch".
+  Fix by zoning both halves, or neither.
+
+Only scripts the mod's zones actually list (core_mod.zone, zm_mod.zone and the zpkgs they include) count as ours.
 
 Input is the folder acts writes with `acts ffrbo3 <map.ff>`:
     python map_script_check.py E:\\MZO_backups\\work\\<run>\\scriptparsetree_t7ff\\1c000a0d43534780
@@ -19,6 +25,26 @@ import sys
 MOD = pathlib.Path(r'D:\SteamLibrary\steamapps\common\Call of Duty Black Ops III\mods\modern_zombies_overhaul')
 FUNCTION = re.compile(r'^\s*function\s+(?:autoexec\s+|private\s+)*([A-Za-z_]\w*)\s*\(([^)]*)\)', re.M)
 COMMENTS = re.compile(r'/\*.*?\*/|//[^\n]*', re.S)
+ZONES = ('core_mod.zone', 'zm_mod.zone')
+
+
+def zoned_scripts(zone_source=None):
+    """Script paths ('scripts/zm/x.gsc') the mod's zones list, following include,<name> to <name>.zpkg."""
+    zone_source = zone_source or MOD / 'zone_source'
+    found, seen = set(), set()
+    pending = [zone_source / name for name in ZONES]
+    while pending:
+        path = pending.pop()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        for line in path.read_text(encoding='latin1').splitlines():
+            parts = [part.strip() for part in line.split('//')[0].split(',')]
+            if len(parts) >= 2 and parts[0] == 'scriptparsetree':
+                found.add(parts[1].replace('\\', '/').lower())
+            elif len(parts) >= 2 and parts[0] == 'include':
+                pending.append(zone_source / (parts[1] + '.zpkg'))
+    return found
 
 
 def script_hash(text):
@@ -71,12 +97,19 @@ def main():
     scripts = {}
     for path in list(root.rglob('*.gscc')) + list(root.rglob('*.cscc')):
         scripts[path.relative_to(root).as_posix()[:-1]] = read_script(path)
-    shared = {name: mod_functions(MOD / name) for name in scripts if (MOD / name).exists()}
+    zoned = zoned_scripts()
+    shared = {name: mod_functions(MOD / name) for name in scripts
+              if name.lower() in zoned and (MOD / name).exists()}
     print(f'{len(scripts)} map scripts, {len(shared)} also in the mod:')
     for name in sorted(shared):
         print(f'  {name}')
 
     found = 0
+    for name in sorted(shared):
+        other = name[:-3] + ('csc' if name.endswith('.gsc') else 'gsc')
+        if other in scripts and other not in shared:
+            found += 1
+            print(f'SPLIT   {name} is ours but the map\'s {other} is not replaced (clientfield mismatch risk)')
     for name, ours in sorted(shared.items()):
         for namespace, function in sorted(scripts[name][0]):
             calls = {other: imports[(namespace, function)] for other, (_, imports) in scripts.items()
